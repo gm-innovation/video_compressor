@@ -5,3 +5,5 @@ bench/saida/_tmp/
 __pycache__/
 *.pyc
 bench/saida/_*
+db/*.db
+db/*.db-journal

@@ -1,0 +1,85 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<title>Pipeline de vídeo — acompanhamento</title>
+<style>
+  :root{color-scheme:light dark}
+  body{font-family:inherit;color:var(--foreground);margin:0;padding:0;font-size:13px}
+  header{display:flex;justify-content:space-between;align-items:baseline;gap:16px;flex-wrap:wrap;
+         border-bottom:1px solid var(--border);padding-bottom:10px}
+  h1{font-size:18px;margin:0}
+  .sub{color:var(--muted-foreground);font-size:12px}
+  h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted-foreground);margin:22px 0 6px}
+  table{border-collapse:collapse;width:100%;font-size:12.5px}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{color:var(--muted-foreground);font-weight:600;white-space:nowrap}
+  .pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;border:1px solid var(--border)}
+  .concluida{background:#16a34a22;border-color:#16a34a55;color:#15803d}
+  .andamento{background:#f59e0b22;border-color:#f59e0b55;color:#b45309}
+  .bloqueada{background:#dc262622;border-color:#dc262655;color:#b91c1c}
+  .pendente{color:var(--muted-foreground)}
+  form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;max-width:760px;margin-top:8px}
+  label{display:block;font-size:11.5px;color:var(--muted-foreground)}
+  input{width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;background:transparent;color:inherit}
+  button{grid-column:1/-1;width:max-content;padding:7px 14px;border-radius:6px;border:1px solid var(--border);
+         background:var(--accent);color:inherit;cursor:pointer}
+  .msg{margin-top:8px;font-size:12.5px}
+  .erro{color:#b91c1c} .ok{color:#15803d}
+  code{background:var(--accent);padding:1px 4px;border-radius:3px}
+</style></head><body>
+<header>
+  <div><h1>Pipeline de vídeo bordo→terra</h1>
+  <div class="sub">Acompanhamento do projeto — dados lidos do banco (<code>db/pipeline.db</code>), nenhum número digitado à mão</div></div>
+  <div class="sub" id="stamp"></div>
+</header>
+
+<h2>Fases</h2><table id="t-fases"></table>
+<h2>Medições da bancada (valor + fonte + data + hardware/versão + comando)</h2><table id="t-med"></table>
+<h2>Inventário de câmeras</h2><table id="t-inv"></table>
+<h2>Evidências</h2><table id="t-ev"></table>
+
+<h2>Registrar medição (o schema rejeita campo obrigatório vazio)</h2>
+<form id="f">
+  <div><label>valor</label><input name="valor" placeholder="bitrate 5,51 Mbps; corte 99,26%; VMAF 94,87"></div>
+  <div><label>fonte</label><input name="fonte" placeholder="bench/saida/resultado-fase0.json"></div>
+  <div><label>data</label><input name="data" placeholder="2026-11-06"></div>
+  <div><label>hardware/versão</label><input name="hardware_versao" placeholder="RTX 4050 · ffmpeg 9.0.1"></div>
+  <div><label>comando</label><input name="comando" placeholder="ffmpeg -i ... -c:v libx264 ..."></div>
+  <button>gravar</button>
+</form>
+<div class="msg" id="msg"></div>
+
+<script>
+const cel = (t) => `<td>${t ?? ''}</td>`;
+const esc = (t) => String(t ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+async function carregar(){
+  const d = await (await fetch('/api/resumo')).json();
+  document.getElementById('stamp').textContent = 'consultado ' + d.gerado_em;
+  document.getElementById('t-fases').innerHTML =
+    '<tr><th>Fase</th><th>Prio</th><th>Status</th><th>Critério de aceite</th><th>Evidência</th></tr>' +
+    d.fases.map(f => '<tr><td>'+esc(f.nome)+'</td><td>'+esc(f.prioridade)+'</td>'+
+      '<td><span class="pill '+f.status.replace(/ /g,'')+'">'+esc(f.status)+'</span></td>'+
+      cel(esc(f.criterio_aceite)) + cel(f.evidencia ? '<code>'+esc(f.evidencia)+'</code>' : '—')+'</tr>').join('');
+  document.getElementById('t-med').innerHTML =
+    '<tr><th>valor</th><th>fonte</th><th>data</th><th>hardware/versão</th><th>comando</th></tr>' +
+    (d.medicoes.length ? d.medicoes.map(m => '<tr>'+cel(esc(m.valor))+cel('<code>'+esc(m.fonte)+'</code>')+
+      cel(esc(m.data))+cel(esc(m.hardware_versao))+cel('<code>'+esc((m.comando||'').slice(0,120))+'…</code>')+'</tr>').join('')
+      : '<tr><td colspan="5">nenhuma medição gravada</td></tr>');
+  document.getElementById('t-inv').innerHTML =
+    '<tr><th>câmera</th><th>IP</th><th>protocolo</th><th>resolução</th><th>FPS</th><th>credencial (referência)</th></tr>' +
+    (d.inventario.length ? d.inventario.map(c => '<tr>'+cel(esc(c.id))+cel(esc(c.ip)||'—')+cel(esc(c.protocolo)||'—')+
+      cel(esc(c.resolucao)||'—')+cel(esc(c.fps)||'—')+cel(esc(c.credencial_ref)||'—')+'</tr>').join('')
+      : '<tr><td colspan="6">inventário vazio — aguardando dados das câmeras (TI)</td></tr>');
+  document.getElementById('t-ev').innerHTML =
+    '<tr><th>fase</th><th>caminho</th><th>descrição</th><th>data</th></tr>' +
+    d.evidencias.map(e => '<tr>'+cel(esc(e.fase_id))+cel('<code>'+esc(e.caminho)+'</code>')+cel(esc(e.descricao))+cel(esc(e.data))+'</tr>').join('');
+}
+document.getElementById('f').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const dados = Object.fromEntries(new FormData(ev.target).entries());
+  const r = await fetch('/api/medicoes', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(dados)});
+  const j = await r.json();
+  const m = document.getElementById('msg');
+  if (r.status === 201) { m.className='msg ok'; m.textContent = 'gravada (id '+j.id+')'; ev.target.reset(); carregar(); }
+  else { m.className='msg erro'; m.textContent = j.erro + ' → faltando: ' + (j.campos_faltando||[]).join(', '); }
+});
+carregar();
+</script></body></html>
