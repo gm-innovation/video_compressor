@@ -2,7 +2,15 @@
 # Fase 0-A: gera o clipe proprio e roda as medicoes de corte, VMAF e velocidade.
 set -euo pipefail
 cd "$(dirname "$0")"
+
+# trava: duas execucoes ao mesmo tempo escrevem os mesmos arquivos e produzem numero invalido
+trava="saida/.trava-run"
 mkdir -p saida
+if ! mkdir "$trava" 2>/dev/null; then
+  echo "[erro] ja existe uma execucao em andamento ($trava). Aguarde ou remova a trava." >&2
+  exit 3
+fi
+trap 'rmdir "$trava" 2>/dev/null || true' EXIT
 fonte="saida/fonte-1080p30.mp4"
 if [ ! -f "$fonte" ]; then
   echo "[1/3] gerando clipe proprio 1080p30 10s (testsrc2 + movimento)"

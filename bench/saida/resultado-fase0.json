@@ -1,6 +1,6 @@
 {
   "fase": "0-A",
-  "gerado_em": "2026-11-06T15:21:22-03:00",
+  "gerado_em": "2026-11-06T15:24:50-03:00",
   "entrada": {
     "arquivo": "C:\\Users\\EngenhariaGoogleMari\\lecsor-pipeline-video\\bench\\saida\\fonte-1080p30.mp4",
     "largura": 1920,
@@ -31,7 +31,7 @@
       "rotulo": "x264 CRF23",
       "valor_bruto_mbps": 746.5,
       "fonte": "clip proprio: fonte-1080p30.mp4",
-      "data": "2026-11-06T15:21:22-03:00",
+      "data": "2026-11-06T15:24:50-03:00",
       "hardware": {
         "so": "Windows 11",
         "cpu": "AMD64 Family 25 Model 68 Stepping 1, AuthenticAMD",
@@ -47,8 +47,8 @@
       "bitrate_cod_bps": 5509888,
       "bitrate_cod_mbps": 5.51,
       "corte_pct": 99.26,
-      "segundos_encode": 1.31,
-      "vezes_tempo_real": 7.64,
+      "segundos_encode": 1.05,
+      "vezes_tempo_real": 9.52,
       "tamanho_bytes": 6887361,
       "vmaf": 94.87
     },
@@ -60,7 +60,7 @@
       "rotulo": "x264 CRF28",
       "valor_bruto_mbps": 746.5,
       "fonte": "clip proprio: fonte-1080p30.mp4",
-      "data": "2026-11-06T15:21:22-03:00",
+      "data": "2026-11-06T15:24:50-03:00",
       "hardware": {
         "so": "Windows 11",
         "cpu": "AMD64 Family 25 Model 68 Stepping 1, AuthenticAMD",
@@ -76,8 +76,8 @@
       "bitrate_cod_bps": 2682771,
       "bitrate_cod_mbps": 2.683,
       "corte_pct": 99.64,
-      "segundos_encode": 1.08,
-      "vezes_tempo_real": 9.27,
+      "segundos_encode": 0.99,
+      "vezes_tempo_real": 10.11,
       "tamanho_bytes": 3353464,
       "vmaf": 90.45
     },
@@ -89,7 +89,7 @@
       "rotulo": "x265 CRF28",
       "valor_bruto_mbps": 746.5,
       "fonte": "clip proprio: fonte-1080p30.mp4",
-      "data": "2026-11-06T15:21:22-03:00",
+      "data": "2026-11-06T15:24:50-03:00",
       "hardware": {
         "so": "Windows 11",
         "cpu": "AMD64 Family 25 Model 68 Stepping 1, AuthenticAMD",
@@ -105,8 +105,8 @@
       "bitrate_cod_bps": 3459671,
       "bitrate_cod_mbps": 3.46,
       "corte_pct": 99.54,
-      "segundos_encode": 1.69,
-      "vezes_tempo_real": 5.93,
+      "segundos_encode": 1.64,
+      "vezes_tempo_real": 6.11,
       "tamanho_bytes": 4324589,
       "vmaf": 87.74
     },
@@ -118,7 +118,7 @@
       "rotulo": "NVENC H.264 CQ28",
       "valor_bruto_mbps": 746.5,
       "fonte": "clip proprio: fonte-1080p30.mp4",
-      "data": "2026-11-06T15:21:22-03:00",
+      "data": "2026-11-06T15:24:50-03:00",
       "hardware": {
         "so": "Windows 11",
         "cpu": "AMD64 Family 25 Model 68 Stepping 1, AuthenticAMD",
@@ -129,7 +129,7 @@
         "ffprobe": "ffprobe version n9.0.1-11-ge47273f4d9-20260831 Copyright (c) 2007-2026 the FFmpeg developers"
       },
       "comando": "ffmpeg -y -hide_banner -loglevel error -i C:\\Users\\EngenhariaGoogleMari\\lecsor-pipeline-video\\bench\\saida\\fonte-1080p30.mp4 -c:v h264_nvenc -preset p4 -cq 28 -rc vbr saida\\cod-h264_nvenc-CQ28.mp4",
-      "erro": "[h264_nvenc @ 000001a814067cc0] Driver does not support the required nvenc API version. Required: 13.1 Found: 12.2\n[h264_nvenc @ 000001a814067cc0] The minimum required Nvidia driver for nvenc is 610.00 or newer\n[vost#0:0/h264_nvenc @ 000001a81643f400] [enc:h264_nvenc @ 000001a81405f040] Error while opening encoder - maybe incorrect parameters such as bit_rate, rate, width or height.\n[vf#0:0 @ 0000",
+      "erro": "[h264_nvenc @ 0000023137432540] Driver does not support the required nvenc API version. Required: 13.1 Found: 12.2\n[h264_nvenc @ 0000023137432540] The minimum required Nvidia driver for nvenc is 610.00 or newer\n[vost#0:0/h264_nvenc @ 0000023139614d80] [enc:h264_nvenc @ 0000023137431f40] Error while opening encoder - maybe incorrect parameters such as bit_rate, rate, width or height.\n[vf#0:0 @ 0000",
       "status": "erro"
     },
     {
@@ -140,7 +140,7 @@
       "rotulo": "NVENC HEVC CQ28",
       "valor_bruto_mbps": 746.5,
       "fonte": "clip proprio: fonte-1080p30.mp4",
-      "data": "2026-11-06T15:21:22-03:00",
+      "data": "2026-11-06T15:24:50-03:00",
       "hardware": {
         "so": "Windows 11",
         "cpu": "AMD64 Family 25 Model 68 Stepping 1, AuthenticAMD",
@@ -151,7 +151,7 @@
         "ffprobe": "ffprobe version n9.0.1-11-ge47273f4d9-20260831 Copyright (c) 2007-2026 the FFmpeg developers"
       },
       "comando": "ffmpeg -y -hide_banner -loglevel error -i C:\\Users\\EngenhariaGoogleMari\\lecsor-pipeline-video\\bench\\saida\\fonte-1080p30.mp4 -c:v hevc_nvenc -preset p4 -cq 28 -rc vbr saida\\cod-hevc_nvenc-CQ28.mp4",
-      "erro": "[hevc_nvenc @ 000002b085fbf280] Driver does not support the required nvenc API version. Required: 13.1 Found: 12.2\n[hevc_nvenc @ 000002b085fbf280] The minimum required Nvidia driver for nvenc is 610.00 or newer\n[vost#0:0/hevc_nvenc @ 000002b085fbf040] [enc:hevc_nvenc @ 000002b083aedac0] Error while opening encoder - maybe incorrect parameters such as bit_rate, rate, width or height.\n[vf#0:0 @ 0000",
+      "erro": "[hevc_nvenc @ 00000169ccdef280] Driver does not support the required nvenc API version. Required: 13.1 Found: 12.2\n[hevc_nvenc @ 00000169ccdef280] The minimum required Nvidia driver for nvenc is 610.00 or newer\n[vost#0:0/hevc_nvenc @ 00000169ccdef040] [enc:hevc_nvenc @ 00000169ca8c3100] Error while opening encoder - maybe incorrect parameters such as bit_rate, rate, width or height.\n[vf#0:0 @ 0000",
       "status": "erro"
     }
   ],
