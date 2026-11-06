@@ -1,0 +1,4 @@
+[
+  {"id": "cam-01", "srt_port": 8891, "rotulo": "Bancada — câmera 1"},
+  {"id": "cam-02", "srt_port": 8892, "rotulo": "Bancada — câmera 2"}
+]

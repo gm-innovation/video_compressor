@@ -54,12 +54,13 @@ def inicializar() -> None:
                 valor = (f"bitrate {m.get('bitrate_cod_mbps')} Mbps; corte {m.get('corte_pct')}%; "
                          f"VMAF {m.get('vmaf')}; {m.get('vezes_tempo_real')}x tempo real")
                 comando = m.get("comando", "")
+                fonte_rel = str(jp.relative_to(RAIZ).as_posix())
                 ja = c.execute("SELECT 1 FROM medicoes WHERE valor=? AND fonte=? AND comando=?",
-                               (valor, jp.name, comando)).fetchone()
+                               (valor, fonte_rel, comando)).fetchone()
                 if not ja:
                     c.execute("""INSERT INTO medicoes (valor,fonte,data,hardware_versao,comando,fase_id)
                                  VALUES (?,?,?,?,?,?)""",
-                              (valor, str(jp.relative_to(RAIZ).as_posix()), d["gerado_em"], hw, comando, "fase-0a"))
+                              (valor, fonte_rel, d["gerado_em"], hw, comando, "fase-0a"))
         # evidencias
         ev = [("fase-0a","bench/EVIDENCIA-fase0a.md","Evidencia da Fase 0-A (medicoes, SRT e teste negativo)","2026-11-06"),
               ("fase-0a","bench/saida/resultado-fase0.json","Registro bruto das medicoes","2026-11-06"),
@@ -116,6 +117,12 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(200, {"medicoes": ler_tudo()["medicoes"]})
         if rota == "/api/inventario":
             return self._json(200, {"inventario": ler_tudo()["inventario"]})
+        if rota == "/api/fluxos":
+            st = RAIZ / "ground" / "status.json"
+            dados = json.loads(st.read_text(encoding="utf-8")) if st.exists() else {"fluxos": [], "atualizado_em": None}
+            for f in dados.get("fluxos", []):
+                f["link_hls"] = "/" + f.get("manifesto", "")
+            return self._json(200, dados)
         if rota == "/api/saude":
             return self._json(200, {"ok": True, "banco": str(BANCO), "python": sys.version.split()[0]})
         return super().do_GET()

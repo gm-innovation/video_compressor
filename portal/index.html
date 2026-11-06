@@ -31,6 +31,9 @@
   <div class="sub" id="stamp"></div>
 </header>
 
+<h2>Fluxos ao vivo (encode de bordo → SRT → lado terra → navegador)</h2>
+<div id="fluxos" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;margin-top:6px"></div>
+
 <h2>Fases</h2><table id="t-fases"></table>
 <h2>Medições da bancada (valor + fonte + data + hardware/versão + comando)</h2><table id="t-med"></table>
 <h2>Inventário de câmeras</h2><table id="t-inv"></table>
@@ -81,5 +84,25 @@ document.getElementById('f').addEventListener('submit', async (ev) => {
   if (r.status === 201) { m.className='msg ok'; m.textContent = 'gravada (id '+j.id+')'; ev.target.reset(); carregar(); }
   else { m.className='msg erro'; m.textContent = j.erro + ' → faltando: ' + (j.campos_faltando||[]).join(', '); }
 });
-carregar();
-</script></body></html>
+async function carregarFluxos(){
+  const d = await (await fetch('/api/fluxos')).json();
+  const alvo = document.getElementById('fluxos');
+  if (!d.fluxos || !d.fluxos.length){ alvo.innerHTML = '<div class="sub">nenhum fluxo no lado terra (rode <code>python ground/receiver.py</code>)</div>'; return; }
+  alvo.innerHTML = d.fluxos.map(f => `
+    <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+      <div style="padding:6px 8px;font-size:12px;display:flex;justify-content:space-between;gap:8px">
+        <b>${esc(f.rotulo)}</b>
+        <span class="sub">SRT ${f.srt_port} · ${f.manifesto_existe ? '<span class="pill concluida">no ar</span>' : '<span class="pill bloqueada">sem sinal</span>'}${f.reinicios ? ' · reinícios '+f.reinicios : ''}</span>
+      </div>
+      <video id="v-${f.id}" muted playsinline autoplay style="width:100%;background:#000;aspect-ratio:16/9"></video>
+    </div>`).join('');
+  d.fluxos.forEach(f => {
+    const v = document.getElementById('v-'+f.id);
+    if (!f.manifesto_existe) return;
+    if (v.canPlayType('application/vnd.apple.mpegurl')) { v.src = f.link_hls; }
+    else if (window.Hls && window.Hls.isSupported()) { const h = new window.Hls({lowLatencyMode:true}); h.loadSource(f.link_hls); h.attachMedia(v); }
+  });
+}
+carregar(); carregarFluxos(); setInterval(carregarFluxos, 5000);
+</script>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script></body></html>

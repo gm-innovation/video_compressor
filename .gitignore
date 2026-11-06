@@ -7,3 +7,7 @@ __pycache__/
 bench/saida/_*
 db/*.db
 db/*.db-journal
+portal/streams/
+ground/status.json
+ground/*.log
+board/*.log
