@@ -18,6 +18,7 @@ import os
 import secrets
 import sqlite3
 import subprocess
+import time
 import sys
 import urllib.error
 import urllib.request
@@ -31,6 +32,7 @@ BANCO = RAIZ / "db" / "pipeline.db"
 CAMPOS_OBRIGATORIOS = ("valor", "fonte", "data", "hardware_versao", "comando")
 PORTA_WEBRTC, PORTA_HLS, PORTA_API_MEDIAMTX = 8889, 8888, 9997
 DURACAO_SESSAO_H = 12
+INICIADO_EM = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
 PAPEL_ADMIN = ("operador", "admin")
 
 
@@ -356,6 +358,37 @@ class Handler(SimpleHTTPRequestHandler):
             if not u:
                 return self._json(401, {"erro": "entre no sistema"})
             return self._json(200, {"decisoes": ler_tudo()["decisoes"]})
+        if rota == "/api/usuarios":
+            if not (u and u["papel"] == "admin"):
+                return self._json(401, {"erro": "so o administrador do sistema"})
+            with conexao() as c:
+                linhas = c.execute("""SELECT u.id,u.email,u.nome,u.papel,u.cliente_id,u.ativo,u.criado_em,
+                                      (SELECT count(*) FROM sessoes s WHERE s.usuario_id=u.id) AS sessoes
+                                      FROM usuarios u ORDER BY u.papel, u.email""").fetchall()
+            return self._json(200, {"usuarios": [dict(x) for x in linhas]})
+        if rota == "/api/clientes":
+            if not (u and u["papel"] in PAPEL_ADMIN):
+                return self._json(401, {"erro": "entre no sistema"})
+            with conexao() as c:
+                linhas = c.execute("""SELECT cl.*, (SELECT count(*) FROM embarcacoes e WHERE e.cliente_id=cl.id) AS embarcacoes,
+                                      (SELECT count(*) FROM usuarios us WHERE us.cliente_id=cl.id) AS usuarios
+                                      FROM clientes cl ORDER BY cl.nome""").fetchall()
+            return self._json(200, {"clientes": [dict(x) for x in linhas]})
+        if rota == "/api/sistema":
+            if not (u and u["papel"] == "admin"):
+                return self._json(401, {"erro": "so o administrador do sistema"})
+            with conexao() as c:
+                contagens = {t_: c.execute(f"SELECT count(*) FROM {t_}").fetchone()[0] for t_ in
+                             ("usuarios", "clientes", "embarcacoes", "cameras", "sessoes", "medicoes", "decisoes",
+                              "evidencias", "documentos", "analytics_eventos", "analytics_contagens", "auditoria_acesso")}
+            return self._json(200, {"sistema": {
+                "api": "Fase 4", "banco": str(BANCO), "python": sys.version.split()[0],
+                "iniciado_em": INICIADO_EM,
+                "uptime_s": int((dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(INICIADO_EM)).total_seconds()),
+                "mediamtx": bool(mediamtx_json("/v3/paths/list").get("items") is not None),
+                "chave_analytics_configurada": bool(os.environ.get("LECSOR_CHAVE_ANALYTICS")),
+                "retencao_dias": os.environ.get("LECSOR_RETENCAO_DIAS", "nao definida"),
+                "contagens": contagens}})
         if rota == "/api/auditoria":
             if not (u and u["papel"] in PAPEL_ADMIN):
                 return self._json(401, {"erro": "so operador/admin"})
@@ -410,6 +443,102 @@ class Handler(SimpleHTTPRequestHandler):
             if codigo == 201 and u:
                 auditar(u, "gravar_medicao", str(corpo.get("id")), self.client_address[0])
             return self._json(codigo, corpo)
+        if rota == "/api/usuarios":
+            if not (u and u["papel"] == "admin"):
+                return self._json(401, {"erro": "so o administrador do sistema"})
+            d = self._corpo()
+            faltando = [k for k in ("email", "nome", "papel") if not str(d.get(k, "")).strip()]
+            if faltando:
+                return self._json(422, {"erro": "usuario incompleto", "campos_faltando": faltando})
+            if d["papel"] not in ("cliente", "operador", "admin"):
+                return self._json(422, {"erro": "papel invalido", "aceitos": ["cliente", "operador", "admin"]})
+            if d["papel"] == "cliente" and not d.get("cliente_id"):
+                return self._json(422, {"erro": "usuario de cliente precisa de cliente_id"})
+            if d["papel"] != "cliente":
+                d["cliente_id"] = None
+            email = str(d["email"]).strip().lower()
+            with conexao() as c:
+                if c.execute("SELECT 1 FROM usuarios WHERE email=?", (email,)).fetchone():
+                    return self._json(409, {"erro": "e-mail ja cadastrado"})
+                if d.get("cliente_id") and not c.execute("SELECT 1 FROM clientes WHERE id=?", (d["cliente_id"],)).fetchone():
+                    return self._json(422, {"erro": "cliente_id inexistente"})
+                senha = secrets.token_urlsafe(9)
+                salt = secrets.token_hex(16)
+                uid = email.split("@")[0][:24] + "-" + secrets.token_hex(3)
+                c.execute("""INSERT INTO usuarios (id,email,nome,papel,cliente_id,senha_hash,salt)
+                             VALUES (?,?,?,?,?,?,?)""",
+                          (uid, email, d["nome"], d["papel"], d.get("cliente_id"), hash_senha(senha, salt), salt))
+            auditar(u, "criar_usuario", email, self.client_address[0])
+            # a senha inicial aparece UMA vez, para quem criou entregar; o banco guarda so o hash
+            return self._json(201, {"id": uid, "email": email, "papel": d["papel"], "senha_inicial": senha})
+        if rota.startswith("/api/usuarios/") and rota.endswith("/ativo"):
+            if not (u and u["papel"] == "admin"):
+                return self._json(401, {"erro": "so o administrador do sistema"})
+            uid = rota[len("/api/usuarios/"):-len("/ativo")]
+            novo = 1 if self._corpo().get("ativo", True) else 0
+            with conexao() as c:
+                if not c.execute("SELECT 1 FROM usuarios WHERE id=?", (uid,)).fetchone():
+                    return self._json(404, {"erro": "usuario inexistente"})
+                c.execute("UPDATE usuarios SET ativo=? WHERE id=?", (novo, uid))
+                if not novo:
+                    c.execute("DELETE FROM sessoes WHERE usuario_id=?", (uid,))
+            auditar(u, "ativar_usuario" if novo else "desativar_usuario", uid, self.client_address[0])
+            return self._json(200, {"id": uid, "ativo": bool(novo)})
+        if rota == "/api/clientes":
+            if not (u and u["papel"] in PAPEL_ADMIN):
+                return self._json(401, {"erro": "entre no sistema"})
+            d = self._corpo()
+            faltando = [k for k in ("id", "nome") if not str(d.get(k, "")).strip()]
+            if faltando:
+                return self._json(422, {"erro": "cliente incompleto", "campos_faltando": faltando})
+            with conexao() as c:
+                if c.execute("SELECT 1 FROM clientes WHERE id=?", (d["id"],)).fetchone():
+                    return self._json(409, {"erro": "cliente ja existe"})
+                c.execute("INSERT INTO clientes (id,nome) VALUES (?,?)", (d["id"], d["nome"]))
+            auditar(u, "criar_cliente", d["id"], self.client_address[0])
+            return self._json(201, {"id": d["id"], "nome": d["nome"]})
+        if rota == "/api/embarcacoes":
+            if not (u and u["papel"] in PAPEL_ADMIN):
+                return self._json(401, {"erro": "entre no sistema"})
+            d = self._corpo()
+            faltando = [k for k in ("id", "cliente_id", "nome") if not str(d.get(k, "")).strip()]
+            if faltando:
+                return self._json(422, {"erro": "embarcacao incompleta", "campos_faltando": faltando})
+            with conexao() as c:
+                if not c.execute("SELECT 1 FROM clientes WHERE id=?", (d["cliente_id"],)).fetchone():
+                    return self._json(422, {"erro": "cliente_id inexistente"})
+                if c.execute("SELECT 1 FROM embarcacoes WHERE id=?", (d["id"],)).fetchone():
+                    return self._json(409, {"erro": "embarcacao ja existe"})
+                c.execute("INSERT INTO embarcacoes (id,cliente_id,nome,imo,estado) VALUES (?,?,?,?,?)",
+                          (d["id"], d["cliente_id"], d["nome"], d.get("imo", ""), d.get("estado", "em operacao")))
+            auditar(u, "criar_embarcacao", d["id"], self.client_address[0])
+            return self._json(201, {"id": d["id"]})
+        if rota == "/api/cameras":
+            if not (u and u["papel"] in PAPEL_ADMIN):
+                return self._json(401, {"erro": "entre no sistema"})
+            d = self._corpo()
+            faltando = [k for k in ("id", "embarcacao_id", "rotulo", "fluxo_id") if not str(d.get(k, "")).strip()]
+            if faltando:
+                return self._json(422, {"erro": "camera incompleta", "campos_faltando": faltando})
+            with conexao() as c:
+                if not c.execute("SELECT 1 FROM embarcacoes WHERE id=?", (d["embarcacao_id"],)).fetchone():
+                    return self._json(422, {"erro": "embarcacao_id inexistente"})
+                c.execute("""INSERT OR REPLACE INTO cameras (id,embarcacao_id,rotulo,fluxo_id,local,ativo)
+                             VALUES (?,?,?,?,?,1)""",
+                          (d["id"], d["embarcacao_id"], d["rotulo"], d["fluxo_id"], d.get("local", "")))
+            auditar(u, "criar_camera", d["id"], self.client_address[0])
+            return self._json(201, {"id": d["id"]})
+        if rota.startswith("/api/cameras/") and rota.endswith("/ativo"):
+            if not (u and u["papel"] in PAPEL_ADMIN):
+                return self._json(401, {"erro": "entre no sistema"})
+            cid = rota[len("/api/cameras/"):-len("/ativo")]
+            novo = 1 if self._corpo().get("ativo", True) else 0
+            with conexao() as c:
+                if not c.execute("SELECT 1 FROM cameras WHERE id=?", (cid,)).fetchone():
+                    return self._json(404, {"erro": "camera inexistente"})
+                c.execute("UPDATE cameras SET ativo=? WHERE id=?", (novo, cid))
+            auditar(u, "ativar_camera" if novo else "desativar_camera", cid, self.client_address[0])
+            return self._json(200, {"id": cid, "ativo": bool(novo)})
         if rota == "/api/decisoes":
             if not (u and u["papel"] in PAPEL_ADMIN):
                 return self._json(401, {"erro": "so operador/admin registra decisao"})

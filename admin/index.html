@@ -1,116 +1,70 @@
 <!doctype html>
 <html lang="pt-BR"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Admin / Operação — pipeline de vídeo LECSOR</title>
-<link rel="stylesheet" href="/fronts/estilo.css">
+<title>Admin do projeto e do sistema — LECSOR</title>
+<link rel="stylesheet" href="/fronts/vms.css">
+<link rel="stylesheet" href="/fronts/admin.css">
 </head><body>
-<header class="topo">
-  <span class="nome">LECSOR · operação e acompanhamento do projeto</span>
-  <span class="dir">
-    <a href="/app" target="_blank" rel="noopener">tela do cliente</a>
-    <span id="relogio"></span>
-    <span id="quem"></span>
-    <button class="solta oculto" id="sair">sair</button>
-  </span>
-</header>
 
-<main>
-  <section id="entrada" class="entrada">
-    <h1>Entrar — operação LECSOR</h1>
-    <div id="entrada-erro" class="erro oculto"></div>
-    <form id="form-entrar">
-      <label for="email">E-mail</label>
-      <input id="email" type="email" autocomplete="username" required>
-      <label for="senha">Senha</label>
-      <input id="senha" type="password" autocomplete="current-password" required>
-      <button class="principal" type="submit">Entrar</button>
-    </form>
-  </section>
+<section id="entrada" class="entrada">
+  <h1>LECSOR · administração</h1>
+  <p class="sub">Área da operação: acompanhamento do projeto e administração do sistema.</p>
+  <div id="entrada-erro" class="erro oculto"></div>
+  <form id="form-entrar">
+    <label for="email">E-mail</label>
+    <input id="email" type="email" autocomplete="username" required>
+    <label for="senha">Senha</label>
+    <input id="senha" type="password" autocomplete="current-password" required>
+    <button class="principal" type="submit">Entrar</button>
+  </form>
+</section>
 
-  <section id="painel" class="oculto">
-    <nav class="abas" id="abas">
-      <button data-aba="painel" class="on">Painel do projeto</button>
-      <button data-aba="medicoes">Medições</button>
-      <button data-aba="decisoes">Decisões</button>
-      <button data-aba="frota">Frota e câmeras</button>
-      <button data-aba="analises">Análises de vídeo</button>
-      <button data-aba="documentos">Documentos</button>
-      <button data-aba="auditoria">Auditoria</button>
-    </nav>
+<div class="sistema oculto" id="sistema">
+  <aside class="lateral">
+    <div class="marca"><span class="simbolo">L</span><span class="nome">LECSOR · ADMIN</span></div>
 
-    <div data-tela="painel">
-      <div class="grade cols-3" id="cartoes"></div>
-      <h2>Fases</h2>
-      <table id="tab-fases"></table>
-      <h2>Evidências</h2>
-      <table id="tab-evidencias"></table>
+    <div class="grupo">Projeto</div>
+    <button class="item on" data-tela="painel"><span class="ic">📈</span>Painel</button>
+    <button class="item" data-tela="fases"><span class="ic">🧭</span>Fases</button>
+    <button class="item" data-tela="medicoes"><span class="ic">📐</span>Medições</button>
+    <button class="item" data-tela="decisoes"><span class="ic">📌</span>Decisões</button>
+    <button class="item" data-tela="evidencias"><span class="ic">🗂</span>Evidências</button>
+    <button class="item" data-tela="documentos"><span class="ic">📄</span>Documentos</button>
+
+    <div class="grupo">Sistema</div>
+    <button class="item" data-tela="clientes"><span class="ic">🏢</span>Clientes</button>
+    <button class="item" data-tela="embarcacoes"><span class="ic">🚢</span>Embarcações</button>
+    <button class="item" data-tela="cameras"><span class="ic">🎥</span>Câmeras</button>
+    <button class="item" data-tela="usuarios"><span class="ic">👥</span>Usuários</button>
+    <button class="item" data-tela="analises"><span class="ic">🧠</span>Análises</button>
+    <button class="item" data-tela="auditoria"><span class="ic">🛡</span>Auditoria</button>
+    <button class="item" data-tela="saude"><span class="ic">⚙</span>Saúde do sistema</button>
+
+    <div class="chip-conta">
+      <span class="bolinha" id="iniciais">··</span>
+      <span style="min-width:0">
+        <span class="email" id="conta-email"></span>
+        <span id="conta-papel" style="display:block;font-size:11px"></span>
+      </span>
     </div>
+  </aside>
 
-    <div data-tela="medicoes" class="oculto">
-      <div class="cartao">
-        <h2 style="margin-top:0">Registrar medição</h2>
-        <div class="aviso">Medição sem valor + fonte + data + hardware/versão + comando é recusada pelo banco (422).</div>
-        <form id="form-medicao" class="grade cols-2">
-          <div><label for="m-valor">Valor</label><input id="m-valor" required></div>
-          <div><label for="m-fonte">Fonte</label><input id="m-fonte" required></div>
-          <div><label for="m-data">Data</label><input id="m-data" required></div>
-          <div><label for="m-hw">Hardware/versão</label><input id="m-hw" required></div>
-          <div style="grid-column:1/-1"><label for="m-comando">Comando</label><input id="m-comando" required></div>
-          <div style="grid-column:1/-1"><button class="principal" type="submit">Gravar medição</button></div>
-        </form>
-        <div id="medicao-recado" class="oculto"></div>
+  <main class="principal">
+    <header class="cabecalho">
+      <div>
+        <h1 id="titulo-tela">Painel do projeto</h1>
+        <div class="sub" id="sub-tela">Acompanhamento do projeto e estado do sistema, tudo lido do banco.</div>
       </div>
-      <h2>Medições registradas</h2>
-      <table id="tab-medicoes"></table>
-    </div>
-
-    <div data-tela="decisoes" class="oculto">
-      <div class="cartao">
-        <h2 style="margin-top:0">Registrar decisão (ADR)</h2>
-        <form id="form-decisao" class="grade cols-2">
-          <div><label for="d-titulo">Título</label><input id="d-titulo" required></div>
-          <div><label for="d-data">Data</label><input id="d-data" required></div>
-          <div style="grid-column:1/-1"><label for="d-texto">Decisão</label><textarea id="d-texto" rows="4" required></textarea></div>
-          <div style="grid-column:1/-1"><button class="principal" type="submit">Registrar decisão</button></div>
-        </form>
-        <div id="decisao-recado" class="oculto"></div>
+      <div class="controles">
+        <a class="pil" href="/app" target="_blank" rel="noopener" style="text-decoration:none">tela do cliente</a>
+        <span class="pil" id="relogio-servidor">—</span>
+        <button class="pil" id="btn-atualizar">Atualizar</button>
+        <button class="pil" id="btn-sair">sair</button>
       </div>
-      <h2>Decisões registradas</h2>
-      <table id="tab-decisoes"></table>
-    </div>
+    </header>
+    <div class="area-tela" id="tela"></div>
+  </main>
+</div>
 
-    <div data-tela="frota" class="oculto">
-      <h2 style="margin-top:0">Embarcações</h2>
-      <table id="tab-embarcacoes"></table>
-      <h2>Câmeras e estado do link</h2>
-      <table id="tab-cameras"></table>
-      <h2>Ao vivo (operador)</h2>
-      <div id="grade-ops" class="grade cols-2"></div>
-    </div>
-
-    <div data-tela="analises" class="oculto">
-      <div class="aviso">Os números desta tela vêm do agente de análise <strong>de bordo</strong> (Fase 5): ele sobe
-      evento, contagem e clipe curto — não o vídeo. Contagem sem fonte/evidência é recusada pelo banco.</div>
-      <h2>Contagens</h2>
-      <table id="tab-contagens"></table>
-      <h2>Eventos</h2>
-      <table id="tab-eventos"></table>
-    </div>
-
-    <div data-tela="documentos" class="oculto">
-      <h2 style="margin-top:0">Documentos do projeto</h2>
-      <table id="tab-documentos"></table>
-      <p class="rodape">O PDF é gerado pelo próprio sistema, a partir do documento vigente.</p>
-    </div>
-
-    <div data-tela="auditoria" class="oculto">
-      <h2 style="margin-top:0">Auditoria de acesso (quem viu qual câmera, quando)</h2>
-      <table id="tab-auditoria"></table>
-    </div>
-  </section>
-</main>
-
-<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js" onerror="window.Hls=null"></script>
-<script src="/fronts/video.js"></script>
 <script src="/admin/admin.js"></script>
 </body></html>

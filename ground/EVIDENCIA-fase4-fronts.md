@@ -67,3 +67,27 @@ O dono mostrou uma referência de VMS e pediu o front do cliente "dessa forma". 
   espectadores por câmera + contagens), Câmeras (inventário liberado), Pessoas (explica que o reconhecimento está
   desligado por LGPD), Gravações (explica que a retenção é Fase 3, P1) e Avisos (preferência do usuário no navegador).
 - **Caixas de detecção** só são desenhadas quando existe evento real com caixa nos metadados (nada inventado na tela).
+
+## Área do admin do projeto e do sistema (06/11/2026)
+
+O dono pediu que a área dele também existisse: **admin do sistema e do projeto** no mesmo lugar. O `admin/` foi refeito
+no mesmo tema escuro do VMS, com duas seções na barra lateral:
+
+- **Projeto:** Painel (cartões + fases), Fases, Medições (formulário que grava e lê), Decisões (ADR), Evidências, Documentos (exportação PDF pelo sistema).
+- **Sistema:** Clientes, Embarcações, Câmeras (cadastro + ativar/desativar), Usuários (criação com papel e cliente, senha inicial mostrada **uma única vez**), Análises (contagens e eventos da Fase 5), Auditoria (quem viu qual câmera, quando, e o que foi negado) e Saúde do sistema (API, lado terra, contagens do banco, retenção, sessões abertas).
+
+Rotas novas na API (todas com papel verificado): `GET/POST /api/usuarios`, `POST /api/usuarios/<id>/ativo`,
+`GET/POST /api/clientes`, `POST /api/embarcacoes`, `POST /api/cameras`, `POST /api/cameras/<id>/ativo`,
+`GET /api/sistema`. Cliente autenticado recebe `401`; operador recebe `401` no que é exclusivo do administrador
+(usuários e saúde) — verificado.
+
+**Verificação automatizada:** `tests/e2e-fronts.py` (Playwright, Chrome instalado) — 18 checagens, todas passando:
+front do cliente (barra lateral com as três seções, 2 janelas de vídeo com `srcObject` e `readyState>=2`, rótulo da
+câmera, relógio na janela, rodapé de seleção, telas Alertas/Relatórios/Câmeras) e front do admin (seções PROJETO e
+SISTEMA, 6 cartões, tabela de 9 fases, formulário e tabela de usuários, saúde do sistema, cadastro de cliente pela
+tela com confirmação na tela). Prints em `bench/saida/_front-cliente-live.png`, `_front-admin-painel.png`,
+`_front-admin-usuarios.png`, `_front-admin-saude.png`, `_front-admin-clientes.png`.
+
+**Defeito corrigido nesta rodada:** a mensagem de confirmação era apagada pelo redesenho da tela logo depois da escrita
+(e a senha inicial do usuário novo sumia com ela) — agora o recado é inserido **depois** do redesenho e a senha
+aparece uma única vez de forma visível.
