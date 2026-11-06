@@ -17,3 +17,7 @@ tools/mediamtx/
 tools/*.zip
 
 ground/mediamtx.log
+ground/api.log
+bench/saida/_*
+bench/saida/doc-*.pdf
+bench/saida/doc-*.html
