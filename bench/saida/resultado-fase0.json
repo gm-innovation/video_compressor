@@ -1,0 +1,159 @@
+{
+  "fase": "0-A",
+  "gerado_em": "2026-11-06T15:21:22-03:00",
+  "entrada": {
+    "arquivo": "C:\\Users\\EngenhariaGoogleMari\\lecsor-pipeline-video\\bench\\saida\\fonte-1080p30.mp4",
+    "largura": 1920,
+    "altura": 1080,
+    "fps": 30.0,
+    "pix_fmt": "yuv420p",
+    "quadros": 300,
+    "duracao_s": 10.0,
+    "tamanho_bytes": 25009640,
+    "bitrate_cru_bps": 746496000,
+    "bitrate_cru_mbps": 746.5
+  },
+  "hardware": {
+    "so": "Windows 11",
+    "cpu": "AMD64 Family 25 Model 68 Stepping 1, AuthenticAMD",
+    "gpu": "NVIDIA GeForce RTX 4050 Laptop GPU, 6141 MiB, 551.76"
+  },
+  "versoes": {
+    "ffmpeg": "ffmpeg version n9.0.1-11-ge47273f4d9-20260831 Copyright (c) 2000-2026 the FFmpeg developers",
+    "ffprobe": "ffprobe version n9.0.1-11-ge47273f4d9-20260831 Copyright (c) 2007-2026 the FFmpeg developers"
+  },
+  "medicoes": [
+    {
+      "fase": "0-A",
+      "codec": "libx264",
+      "preset": "veryfast",
+      "parametros": "-crf 23",
+      "rotulo": "x264 CRF23",
+      "valor_bruto_mbps": 746.5,
+      "fonte": "clip proprio: fonte-1080p30.mp4",
+      "data": "2026-11-06T15:21:22-03:00",
+      "hardware": {
+        "so": "Windows 11",
+        "cpu": "AMD64 Family 25 Model 68 Stepping 1, AuthenticAMD",
+        "gpu": "NVIDIA GeForce RTX 4050 Laptop GPU, 6141 MiB, 551.76"
+      },
+      "versoes": {
+        "ffmpeg": "ffmpeg version n9.0.1-11-ge47273f4d9-20260831 Copyright (c) 2000-2026 the FFmpeg developers",
+        "ffprobe": "ffprobe version n9.0.1-11-ge47273f4d9-20260831 Copyright (c) 2007-2026 the FFmpeg developers"
+      },
+      "comando": "ffmpeg -y -hide_banner -loglevel error -i C:\\Users\\EngenhariaGoogleMari\\lecsor-pipeline-video\\bench\\saida\\fonte-1080p30.mp4 -c:v libx264 -preset veryfast -crf 23 saida\\cod-libx264-CRF23.mp4",
+      "status": "ok",
+      "arquivo_saida": "cod-libx264-CRF23.mp4",
+      "bitrate_cod_bps": 5509888,
+      "bitrate_cod_mbps": 5.51,
+      "corte_pct": 99.26,
+      "segundos_encode": 1.31,
+      "vezes_tempo_real": 7.64,
+      "tamanho_bytes": 6887361,
+      "vmaf": 94.87
+    },
+    {
+      "fase": "0-A",
+      "codec": "libx264",
+      "preset": "veryfast",
+      "parametros": "-crf 28",
+      "rotulo": "x264 CRF28",
+      "valor_bruto_mbps": 746.5,
+      "fonte": "clip proprio: fonte-1080p30.mp4",
+      "data": "2026-11-06T15:21:22-03:00",
+      "hardware": {
+        "so": "Windows 11",
+        "cpu": "AMD64 Family 25 Model 68 Stepping 1, AuthenticAMD",
+        "gpu": "NVIDIA GeForce RTX 4050 Laptop GPU, 6141 MiB, 551.76"
+      },
+      "versoes": {
+        "ffmpeg": "ffmpeg version n9.0.1-11-ge47273f4d9-20260831 Copyright (c) 2000-2026 the FFmpeg developers",
+        "ffprobe": "ffprobe version n9.0.1-11-ge47273f4d9-20260831 Copyright (c) 2007-2026 the FFmpeg developers"
+      },
+      "comando": "ffmpeg -y -hide_banner -loglevel error -i C:\\Users\\EngenhariaGoogleMari\\lecsor-pipeline-video\\bench\\saida\\fonte-1080p30.mp4 -c:v libx264 -preset veryfast -crf 28 saida\\cod-libx264-CRF28.mp4",
+      "status": "ok",
+      "arquivo_saida": "cod-libx264-CRF28.mp4",
+      "bitrate_cod_bps": 2682771,
+      "bitrate_cod_mbps": 2.683,
+      "corte_pct": 99.64,
+      "segundos_encode": 1.08,
+      "vezes_tempo_real": 9.27,
+      "tamanho_bytes": 3353464,
+      "vmaf": 90.45
+    },
+    {
+      "fase": "0-A",
+      "codec": "libx265",
+      "preset": "ultrafast",
+      "parametros": "-crf 28",
+      "rotulo": "x265 CRF28",
+      "valor_bruto_mbps": 746.5,
+      "fonte": "clip proprio: fonte-1080p30.mp4",
+      "data": "2026-11-06T15:21:22-03:00",
+      "hardware": {
+        "so": "Windows 11",
+        "cpu": "AMD64 Family 25 Model 68 Stepping 1, AuthenticAMD",
+        "gpu": "NVIDIA GeForce RTX 4050 Laptop GPU, 6141 MiB, 551.76"
+      },
+      "versoes": {
+        "ffmpeg": "ffmpeg version n9.0.1-11-ge47273f4d9-20260831 Copyright (c) 2000-2026 the FFmpeg developers",
+        "ffprobe": "ffprobe version n9.0.1-11-ge47273f4d9-20260831 Copyright (c) 2007-2026 the FFmpeg developers"
+      },
+      "comando": "ffmpeg -y -hide_banner -loglevel error -i C:\\Users\\EngenhariaGoogleMari\\lecsor-pipeline-video\\bench\\saida\\fonte-1080p30.mp4 -c:v libx265 -preset ultrafast -crf 28 saida\\cod-libx265-CRF28.mp4",
+      "status": "ok",
+      "arquivo_saida": "cod-libx265-CRF28.mp4",
+      "bitrate_cod_bps": 3459671,
+      "bitrate_cod_mbps": 3.46,
+      "corte_pct": 99.54,
+      "segundos_encode": 1.69,
+      "vezes_tempo_real": 5.93,
+      "tamanho_bytes": 4324589,
+      "vmaf": 87.74
+    },
+    {
+      "fase": "0-A",
+      "codec": "h264_nvenc",
+      "preset": "p4",
+      "parametros": "-cq 28 -rc vbr",
+      "rotulo": "NVENC H.264 CQ28",
+      "valor_bruto_mbps": 746.5,
+      "fonte": "clip proprio: fonte-1080p30.mp4",
+      "data": "2026-11-06T15:21:22-03:00",
+      "hardware": {
+        "so": "Windows 11",
+        "cpu": "AMD64 Family 25 Model 68 Stepping 1, AuthenticAMD",
+        "gpu": "NVIDIA GeForce RTX 4050 Laptop GPU, 6141 MiB, 551.76"
+      },
+      "versoes": {
+        "ffmpeg": "ffmpeg version n9.0.1-11-ge47273f4d9-20260831 Copyright (c) 2000-2026 the FFmpeg developers",
+        "ffprobe": "ffprobe version n9.0.1-11-ge47273f4d9-20260831 Copyright (c) 2007-2026 the FFmpeg developers"
+      },
+      "comando": "ffmpeg -y -hide_banner -loglevel error -i C:\\Users\\EngenhariaGoogleMari\\lecsor-pipeline-video\\bench\\saida\\fonte-1080p30.mp4 -c:v h264_nvenc -preset p4 -cq 28 -rc vbr saida\\cod-h264_nvenc-CQ28.mp4",
+      "erro": "[h264_nvenc @ 000001a814067cc0] Driver does not support the required nvenc API version. Required: 13.1 Found: 12.2\n[h264_nvenc @ 000001a814067cc0] The minimum required Nvidia driver for nvenc is 610.00 or newer\n[vost#0:0/h264_nvenc @ 000001a81643f400] [enc:h264_nvenc @ 000001a81405f040] Error while opening encoder - maybe incorrect parameters such as bit_rate, rate, width or height.\n[vf#0:0 @ 0000",
+      "status": "erro"
+    },
+    {
+      "fase": "0-A",
+      "codec": "hevc_nvenc",
+      "preset": "p4",
+      "parametros": "-cq 28 -rc vbr",
+      "rotulo": "NVENC HEVC CQ28",
+      "valor_bruto_mbps": 746.5,
+      "fonte": "clip proprio: fonte-1080p30.mp4",
+      "data": "2026-11-06T15:21:22-03:00",
+      "hardware": {
+        "so": "Windows 11",
+        "cpu": "AMD64 Family 25 Model 68 Stepping 1, AuthenticAMD",
+        "gpu": "NVIDIA GeForce RTX 4050 Laptop GPU, 6141 MiB, 551.76"
+      },
+      "versoes": {
+        "ffmpeg": "ffmpeg version n9.0.1-11-ge47273f4d9-20260831 Copyright (c) 2000-2026 the FFmpeg developers",
+        "ffprobe": "ffprobe version n9.0.1-11-ge47273f4d9-20260831 Copyright (c) 2007-2026 the FFmpeg developers"
+      },
+      "comando": "ffmpeg -y -hide_banner -loglevel error -i C:\\Users\\EngenhariaGoogleMari\\lecsor-pipeline-video\\bench\\saida\\fonte-1080p30.mp4 -c:v hevc_nvenc -preset p4 -cq 28 -rc vbr saida\\cod-hevc_nvenc-CQ28.mp4",
+      "erro": "[hevc_nvenc @ 000002b085fbf280] Driver does not support the required nvenc API version. Required: 13.1 Found: 12.2\n[hevc_nvenc @ 000002b085fbf280] The minimum required Nvidia driver for nvenc is 610.00 or newer\n[vost#0:0/hevc_nvenc @ 000002b085fbf040] [enc:hevc_nvenc @ 000002b083aedac0] Error while opening encoder - maybe incorrect parameters such as bit_rate, rate, width or height.\n[vf#0:0 @ 0000",
+      "status": "erro"
+    }
+  ],
+  "observacao": "Clip sintetico (video proprio gerado por ffmpeg) - o corte medido aqui nao substitui o numero sobre video real de camera, que entra na Fase 0-B."
+}

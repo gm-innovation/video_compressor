@@ -1,0 +1,6 @@
+rotulo,codec,preset,parametros,valor_bruto_mbps,bitrate_cod_mbps,corte_pct,vmaf,segundos_encode,vezes_tempo_real,status,data
+x264 CRF23,libx264,veryfast,-crf 23,746.5,5.51,99.26,94.87,1.31,7.64,ok,2026-11-06T15:21:22-03:00
+x264 CRF28,libx264,veryfast,-crf 28,746.5,2.683,99.64,90.45,1.08,9.27,ok,2026-11-06T15:21:22-03:00
+x265 CRF28,libx265,ultrafast,-crf 28,746.5,3.46,99.54,87.74,1.69,5.93,ok,2026-11-06T15:21:22-03:00
+NVENC H.264 CQ28,h264_nvenc,p4,-cq 28 -rc vbr,746.5,,,,,,erro,2026-11-06T15:21:22-03:00
+NVENC HEVC CQ28,hevc_nvenc,p4,-cq 28 -rc vbr,746.5,,,,,,erro,2026-11-06T15:21:22-03:00

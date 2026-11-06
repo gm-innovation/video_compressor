@@ -1,0 +1,7 @@
+# Bancada: servidor de terra (mediamtx) para o teste ponta a ponta.
+# Rodar no servidor de terra / VPS já existente - não é tarefa do TI.
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    network_mode: host
+    restart: unless-stopped

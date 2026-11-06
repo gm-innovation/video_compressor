@@ -1,0 +1,7 @@
+.env
+bench/saida/*.mp4
+bench/saida/*.mkv
+bench/saida/_tmp/
+__pycache__/
+*.pyc
+bench/saida/_*
