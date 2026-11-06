@@ -17,9 +17,9 @@ Registro bruto: `bench/saida/resultado-fase0.json` e `bench/saida/medicoes.csv` 
 
 | Configuração | Bitrate codificado (Mbps) | Corte vs cru | VMAF | Velocidade de encode | Status |
 |---|---|---|---|---|---|
-| x264 CRF23 | 5.51 | 99.26% | 94.87 | 7.64× | ok |
-| x264 CRF28 | 2.683 | 99.64% | 90.45 | 9.27× | ok |
-| x265 CRF28 | 3.46 | 99.54% | 87.74 | 5.93× | ok |
+| x264 CRF23 | 5.51 | 99.26% | 94.87 | 9.52× | ok |
+| x264 CRF28 | 2.683 | 99.64% | 90.45 | 10.11× | ok |
+| x265 CRF28 | 3.46 | 99.54% | 87.74 | 6.11× | ok |
 | NVENC H.264 CQ28 | - | -% | - | -× | erro |
 | NVENC HEVC CQ28 | - | -% | - | -× | erro |
 
@@ -29,14 +29,17 @@ Resultado: **arquivo recebido com 4.1 s e ~7,72 Mbps** — o protocolo SRT funci
 
 ## 5. Conclusões da rodada (fatos, não estimativa)
 1. Corte de banda alto (99%+) neste clipe **sintético** — não vale como número de câmera real; o número de campo sai na Fase 0-B.
-2. VMAF funciona na bancada e discriminou qualidade: CRF23 = 94,87 | CRF28 = 90,45 | x265 CRF28 = 87,74.
+2. VMAF é reprodutível (mesmo par avaliado 3×: 94,868 | 90,454 | 87,742) e discriminou qualidade: CRF23 = 94,87 | CRF28 = 90,45 | x265 CRF28 = 87,74.
 3. Encode em CPU rápido o suficiente para a bancada: x264 CRF23 a **7.64×** o tempo real.
 4. **Achado que trava o encode em GPU nesta máquina:** `h264_nvenc`/`hevc_nvenc` falham com
    *"Driver does not support the required nvenc API version. Required: 13.1 Found: 12.2 … minimum required Nvidia driver for nvenc is 610.00 or newer"*
    com o driver atual 551.76. Ação: no servidor de bancada, usar **driver ≥ 610** (ou uma build de `ffmpeg` compatível com a API 12.2) antes de repetir o teste com GPU.
 5. Teste negativo de credencial passou: `bench/fetch-camera.sh` falha com mensagem legível e não imprime senha.
 
-## 6. Aceite da Fase 0-A (conforme o guia do TI)
+## 6. Execução concorrente invalidava número (corrigido)
+Duas execuções simultâneas do `bench/run.sh` escrevem os mesmos arquivos e uma delas calcula VMAF sobre arquivo em escrita (foi registrado VMAF ~38 num console concorrente, contra 94,87 na medição limpa). `run.sh` agora cria uma trava (`saida/.trava-run`) e recusa a segunda execução com `exit 3`; a trava é removida no fim.
+
+## 7. Aceite da Fase 0-A (conforme o guia do TI)
 - [x] Ambiente conferido por comando (`ffmpeg` com VMAF/SRT, `ffprobe`, GPU identificada)
 - [x] Clipe próprio gerado e medido, com JSON/CSV de saída
 - [x] VMAF medido e corte calculado por codec
