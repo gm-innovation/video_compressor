@@ -15,3 +15,5 @@ board/*.log
 # binarios de bancada (baixados por tools/baixar-mediamtx.sh)
 tools/mediamtx/
 tools/*.zip
+
+ground/mediamtx.log

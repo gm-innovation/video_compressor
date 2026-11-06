@@ -24,6 +24,7 @@
   .msg{margin-top:8px;font-size:12.5px}
   .erro{color:#b91c1c} .ok{color:#15803d}
   code{background:var(--accent);padding:1px 4px;border-radius:3px}
+video.reconectando{opacity:.45;border:1px solid #b45309}
 </style></head><body>
 <header>
   <div><h1>Pipeline de vídeo bordo→terra</h1>
@@ -84,16 +85,45 @@ document.getElementById('f').addEventListener('submit', async (ev) => {
   if (r.status === 201) { m.className='msg ok'; m.textContent = 'gravada (id '+j.id+')'; ev.target.reset(); carregar(); }
   else { m.className='msg erro'; m.textContent = j.erro + ' → faltando: ' + (j.campos_faltando||[]).join(', '); }
 });
-async function whep(url, video){
+// Player resiliente: se a sessao WebRTC cair (publicador reiniciou, rede oscilou),
+// reagenda sozinho; se o WebRTC nem abrir, cai para o HLS.
+const ligados = new Map();
+async function ligar(id, url, video, urlHls){
+  const est = ligados.get(id) || {tentativa: 0};
+  if (est.pc) { try { est.pc.close(); } catch(e){} }
+  if (est.hls) { try { est.hls.destroy(); } catch(e){} est.hls = null; }
+  ligados.set(id, est);
   const pc = new RTCPeerConnection({iceServers: []});
+  est.pc = pc;
   pc.addTransceiver('video', {direction: 'recvonly'});
-  pc.addTransceiver('audio', {direction: 'recvonly'});
-  pc.ontrack = (ev) => { video.srcObject = ev.streams[0]; video.play().catch(()=>{}); };
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
-  const res = await fetch(url + '?', {method: 'POST', headers: {'Content-Type': 'application/sdp'}, body: offer.sdp});
-  if (!res.ok) throw new Error('WHEP ' + res.status);
-  await pc.setRemoteDescription({type: 'answer', sdp: await res.text()});
+  pc.ontrack = (ev) => { video.srcObject = ev.streams[0] || new MediaStream([ev.track]); video.play().catch(()=>{}); };
+  pc.onconnectionstatechange = () => {
+    if (['failed','disconnected','closed'].includes(pc.connectionState)) reagendar(id, url, video, urlHls);
+  };
+  try {
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    const res = await fetch(url + '?', {method:'POST', headers:{'Content-Type':'application/sdp'}, body: offer.sdp});
+    if (!res.ok) throw new Error('WHEP ' + res.status);
+    await pc.setRemoteDescription({type:'answer', sdp: await res.text()});
+    est.tentativa = 0;
+  } catch (e) {
+    if (window.Hls && window.Hls.isSupported() && urlHls) {
+      est.hls = new window.Hls({lowLatencyMode:true}); est.hls.loadSource(urlHls); est.hls.attachMedia(video);
+      est.hls.on(window.Hls.Events.ERROR, () => reagendar(id, url, video, urlHls));
+    } else { reagendar(id, url, video, urlHls); }
+  }
+}
+function reagendar(id, url, video, urlHls){
+  const est = ligados.get(id) || {tentativa: 0};
+  est.video = video;
+  if (est.timer) return;
+  est.tentativa = (est.tentativa || 0) + 1;
+  video.classList.add('reconectando');
+  est.timer = setTimeout(() => {
+    est.timer = null; ligados.set(id, est); ligar(id, url, video, urlHls);
+  }, Math.min(1000 * est.tentativa, 8000));
+  ligados.set(id, est);
 }
 
 const criados = new Set();
@@ -102,7 +132,7 @@ function cartao(f){
       <div style="padding:6px 8px;font-size:12px;display:flex;justify-content:space-between;gap:8px">
         <b>${esc(f.rotulo)}</b><span class="sub" id="st-${f.id}">…</span>
       </div>
-      <video id="v-${f.id}" muted playsinline autoplay style="width:100%;background:#000;aspect-ratio:16/9"></video>
+      <video id="v-${f.id}" muted playsinline autoplay controls style="width:100%;background:#000;aspect-ratio:16/9"></video>
     </div>`;
 }
 function status(f){
@@ -119,10 +149,9 @@ async function carregarFluxos(){
       alvo.insertAdjacentHTML('beforeend', cartao(f));
       criados.add(f.id);
       const v = document.getElementById('v-'+f.id);
-      if (f.link_webrtc) whep(f.link_webrtc, v).catch(() => {
-        if (window.Hls && window.Hls.isSupported()) { const h = new window.Hls({lowLatencyMode:true}); h.loadSource(f.link_hls_mediamtx||f.link_hls); h.attachMedia(v); }
-      });
-      v.muted = true; v.play().catch(()=>{});
+      v.muted = true;
+      v.onclick = () => v.play().catch(()=>{});
+      if (f.link_webrtc) ligar(f.id, f.link_webrtc, v, f.link_hls_mediamtx || f.link_hls);
     }
     const el = document.getElementById('st-'+f.id);
     if (el) el.innerHTML = status(f);

@@ -1,8 +1,8 @@
 {
  "id": "cam-02",
- "pid": 470032,
- "evento": "reinicio #5",
- "iniciado_em": "2026-11-06T15:49:52.124-03:00",
+ "pid": 496648,
+ "evento": "reinicio #6",
+ "iniciado_em": "2026-11-06T16:05:50.737-03:00",
  "fps": 30,
- "comando": "ffmpeg -hide_banner -loglevel warning -re -f lavfi -i testsrc2=size=1280x720:rate=30 -vf drawtext=font=Consolas:text='%{localtime\\:%T}.%{eif\\:mod(t*1000\\,1000)\\:d\\:3} f%{n}':fontsize=34:fontcolor=white:box=1:boxcolor=black@0.6:x=18:y=18 -output_ts_offset 1793990992.124 -c:v libx264 -preset ultrafast -tune zerolatency -b:v 800k -maxrate 800k -bufsize 1M -g 30 -pix_fmt yuv420p -f mpegts srt://127.0.0.1:8890?mode=caller&latency=200&pkt_size=1316&streamid=publish:cam-02"
+ "comando": "ffmpeg -hide_banner -loglevel warning -re -f lavfi -i testsrc2=size=1280x720:rate=30 -vf drawtext=font=Consolas:text='%{localtime\\:%T}.%{eif\\:mod(t*1000\\,1000)\\:d\\:3} f%{n}':fontsize=34:fontcolor=white:box=1:boxcolor=black@0.6:x=18:y=18 -output_ts_offset 1793991950.738 -c:v libx264 -preset ultrafast -tune zerolatency -b:v 800k -maxrate 800k -bufsize 1M -g 30 -pix_fmt yuv420p -f mpegts srt://127.0.0.1:8890?mode=caller&latency=200&pkt_size=1316&streamid=publish:cam-02"
 }

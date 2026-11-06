@@ -16,7 +16,8 @@ webrtc: yes
 webrtcAddress: 127.0.0.1:8889
 webrtcEncryption: no
 webrtcAllowOrigins: ["*"]
-webrtcLocalUDPAddress: 127.0.0.1:8189
+# WebRTC precisa do UDP alcancavel pelo navegador do cliente (o WHEP HTTP fica local):
+webrtcLocalUDPAddress: :8189
 
 srt: yes
 srtAddress: 127.0.0.1:8890
