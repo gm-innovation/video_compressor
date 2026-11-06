@@ -49,3 +49,21 @@ Autor: Hermes (Marina) · tudo abaixo foi executado, não descrito de memória.
 - Fase 5: as tabelas e as rotas de evento/contagem existem, mas **nenhum agente de análise está a bordo** — a tela de análises mostra o vazio.
 - Login sem limite de tentativas; contas de demonstração são de bancada (senha gerada na hora, só o hash no banco).
 - Papéis exercitados: `cliente` e `operador`. O papel `admin` não foi exercitado em tela nesta rodada.
+
+## Revisão do front do cliente no formato VMS (06/11/2026)
+
+O dono mostrou uma referência de VMS e pediu o front do cliente "dessa forma". Refeito:
+
+- **Casca escura com barra lateral**: marca LECSOR, grupos EVENTOS (Visualizar, Alertas, Gravações, Relatórios),
+  CADASTROS (Pessoas, Câmeras) e CONFIGURAÇÃO (Avisos), com o usuário logado no rodapé da barra.
+- **Cabeçalho**: título "Transmissões ao vivo", subtítulo, seletor de embarcação, `Automático`, `2×2`, `3×3`, `4×4`,
+  pílula `IA · Análises`, `Tela cheia` e `sair`.
+- **Grade**: janelas 16:9 que preenchem o espaço (sem tarja), relógio do navegador no canto superior direito de cada
+  janela e nome da câmera com indicador de estado no canto inferior esquerdo; clique na janela tira/põe a câmera na
+  seleção, duplo clique abre em tela cheia.
+- **Paginação** por página de câmeras (só aparece com mais de uma página) e **rodapé** com "Ver todos os alertas",
+  "Relatórios", "Mostrando 1-N de M câmeras selecionadas" e "Limpar seleção".
+- **Telas ligadas a dado real**: Alertas (câmera fora do ar + eventos da Fase 5), Relatórios (estado, bitrate e
+  espectadores por câmera + contagens), Câmeras (inventário liberado), Pessoas (explica que o reconhecimento está
+  desligado por LGPD), Gravações (explica que a retenção é Fase 3, P1) e Avisos (preferência do usuário no navegador).
+- **Caixas de detecção** só são desenhadas quando existe evento real com caixa nos metadados (nada inventado na tela).

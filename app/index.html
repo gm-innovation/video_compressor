@@ -2,55 +2,82 @@
 <html lang="pt-BR"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Acompanhamento das câmeras — LECSOR</title>
-<link rel="stylesheet" href="/fronts/estilo.css">
+<link rel="stylesheet" href="/fronts/vms.css">
 </head><body>
-<header class="topo">
-  <span class="nome">LECSOR · acompanhamento das câmeras</span>
-  <span class="dir">
-    <span id="emb-nome"></span>
-    <span id="relogio"></span>
-    <span id="quem"></span>
-    <button class="solta oculto" id="sair">sair</button>
-  </span>
-</header>
 
-<main>
-  <section id="entrada" class="entrada">
-    <h1>Entrar</h1>
-    <div id="entrada-erro" class="erro oculto"></div>
-    <form id="form-entrar">
-      <label for="email">E-mail</label>
-      <input id="email" type="email" autocomplete="username" required>
-      <label for="senha">Senha</label>
-      <input id="senha" type="password" autocomplete="current-password" required>
-      <button class="principal" type="submit">Entrar</button>
-    </form>
-    <p class="rodape">Se você não tem acesso, fale com a operação da LECSOR.</p>
-  </section>
+<section id="entrada" class="entrada">
+  <h1>LECSOR · acompanhamento das câmeras</h1>
+  <p class="sub">Entre com o acesso da sua empresa para ver as embarcações liberadas.</p>
+  <div id="entrada-erro" class="erro oculto"></div>
+  <form id="form-entrar">
+    <label for="email">E-mail</label>
+    <input id="email" type="email" autocomplete="username" required>
+    <label for="senha">Senha</label>
+    <input id="senha" type="password" autocomplete="current-password" required>
+    <button class="principal" type="submit">Entrar</button>
+  </form>
+</section>
 
-  <section id="painel" class="oculto">
-    <div class="cartao" style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap">
-      <div style="min-width:280px">
-        <label for="embarcacao">Embarcação</label>
-        <select id="embarcacao"></select>
-      </div>
-      <div>
-        <label>Layout</label>
-        <nav class="abas" style="margin:0">
-          <button data-layout="1">1</button>
-          <button data-layout="2">2</button>
-          <button data-layout="4" class="on">4</button>
-          <button data-layout="9">9</button>
-        </nav>
-      </div>
-      <div style="margin-left:auto" id="resumo-topo" class="rodape"></div>
+<div class="sistema oculto" id="sistema">
+  <aside class="lateral">
+    <div class="marca"><span class="simbolo">L</span><span class="nome">LECSOR</span></div>
+
+    <div class="grupo">Eventos</div>
+    <button class="item on" data-tela="visualizar"><span class="ic">▦</span>Visualizar</button>
+    <button class="item" data-tela="alertas"><span class="ic">🔔</span>Alertas</button>
+    <button class="item" data-tela="gravacoes"><span class="ic">🎬</span>Gravações</button>
+    <button class="item" data-tela="relatorios"><span class="ic">📊</span>Relatórios</button>
+
+    <div class="grupo">Cadastros</div>
+    <button class="item" data-tela="pessoas"><span class="ic">👤</span>Pessoas</button>
+    <button class="item" data-tela="cameras"><span class="ic">🎥</span>Câmeras</button>
+
+    <div class="grupo">Configuração</div>
+    <button class="item" data-tela="avisos"><span class="ic">📣</span>Avisos</button>
+
+    <div class="chip-conta">
+      <span class="bolinha" id="iniciais">··</span>
+      <span style="min-width:0">
+        <span class="email" id="conta-email"></span>
+        <span id="conta-papel" style="display:block;font-size:11px"></span>
+      </span>
     </div>
-    <div id="sem-camera" class="aviso oculto">Esta embarcação ainda não tem câmera cadastrada.</div>
-    <div id="grade" class="grade cols-2"></div>
-    <p class="rodape">O vídeo chega por WebRTC com reconexão automática; se a rede bloquear, o sistema
-    cai sozinho para o modo de reserva. Toda visualização fica registrada na auditoria.</p>
-  </section>
-</main>
+  </aside>
+
+  <main class="principal">
+    <header class="cabecalho">
+      <div>
+        <h1 id="titulo-tela">Transmissões ao vivo</h1>
+        <div class="sub" id="sub-tela">Monitoramento em tempo real das câmeras selecionadas.</div>
+      </div>
+      <div class="controles" id="controles">
+        <select class="pil" id="embarcacao" title="Embarcação"></select>
+        <button class="pil on" id="btn-auto">Automático</button>
+        <button class="pil" data-layout="2">2×2</button>
+        <button class="pil" data-layout="3">3×3</button>
+        <button class="pil" data-layout="4">4×4</button>
+        <button class="pil ia" id="btn-ia" title="Análises de vídeo (Fase 5)"><span class="avatar-ia">IA</span>Análises</button>
+        <button class="pil" id="btn-cheia">Tela cheia</button>
+        <button class="pil" id="btn-sair">sair</button>
+      </div>
+    </header>
+
+    <div class="palco" id="palco"></div>
+
+    <div class="paginacao oculto" id="paginacao"></div>
+
+    <footer class="rodape" id="rodape">
+      <div class="esq">
+        <button class="acao" id="todos-alertas"><span class="icone">⚠</span>Ver todos os alertas</button>
+        <button class="acao" id="ir-relatorios"><span class="icone" style="color:var(--azul)">📊</span>Relatórios</button>
+      </div>
+      <div class="dir">
+        <span id="contagem-selecao"></span>
+        <button class="limpar" id="limpar">Limpar seleção</button>
+      </div>
+    </footer>
+  </main>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js" onerror="window.Hls=null"></script>
 <script src="/fronts/video.js"></script>

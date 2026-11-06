@@ -1,0 +1,96 @@
+/* Tema do front do cliente no formato VMS (grade de transmissões ao vivo). */
+:root{
+  --fundo:#0a0f1a;--painel:#111826;--painel2:#0d1420;--borda:#1e293b;--borda2:#243044;
+  --texto:#e6edf7;--texto2:#94a3b8;--marca:#E2604A;--azul:#3b82f6;--ok:#22c55e;--ruim:#ef4444;--aviso:#f59e0b;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--fundo);color:var(--texto);
+  font-family:'Inter','DM Sans',system-ui,Segoe UI,sans-serif;font-size:14px;overflow:hidden}
+button{font:inherit;color:inherit;cursor:pointer}
+.sistema{display:flex;height:100vh}
+
+/* ---------- barra lateral ---------- */
+.lateral{width:216px;flex:0 0 216px;background:var(--painel2);border-right:1px solid var(--borda);
+  display:flex;flex-direction:column;padding:12px 10px 10px}
+.marca{display:flex;align-items:center;gap:9px;padding:6px 6px 14px}
+.marca .simbolo{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,var(--marca),#b03a28);
+  display:grid;place-items:center;font-weight:800;font-size:14px;color:#fff}
+.marca .nome{font-family:'Space Grotesk',sans-serif;font-weight:700;letter-spacing:.04em;font-size:15px}
+.grupo{margin:10px 0 4px;font-size:10.5px;letter-spacing:.14em;color:var(--texto2);padding:0 8px;text-transform:uppercase}
+.item{display:flex;align-items:center;gap:10px;padding:8px 9px;border-radius:8px;color:var(--texto2);font-size:13.5px;
+  width:100%;background:none;border:0;text-align:left}
+.item:hover{background:#16202f;color:var(--texto)}
+.item.on{background:#16233a;color:#fff;box-shadow:inset 3px 0 0 var(--azul)}
+.item .ic{width:16px;text-align:center;opacity:.9}
+.chip-conta{margin-top:auto;display:flex;align-items:center;gap:9px;background:#16202f;border:1px solid var(--borda);
+  border-radius:9px;padding:8px 9px;font-size:12px;color:var(--texto2)}
+.chip-conta .bolinha{width:26px;height:26px;border-radius:50%;background:var(--marca);color:#fff;display:grid;
+  place-items:center;font-weight:700;font-size:11px}
+.chip-conta .email{color:var(--texto);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---------- area principal ---------- */
+.principal{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--fundo)}
+.cabecalho{display:flex;align-items:flex-start;gap:14px;padding:14px 18px 10px}
+.cabecalho h1{font-family:'Space Grotesk',sans-serif;font-size:21px;margin:0}
+.cabecalho .sub{color:var(--texto2);font-size:12.5px;margin-top:3px}
+.controles{margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.pil{border:1px solid var(--borda2);background:#131c2b;border-radius:9px;padding:7px 11px;font-size:12.5px;
+  display:flex;align-items:center;gap:7px}
+.pil:hover{background:#182338}
+.pil.on{border-color:var(--azul);color:#fff;background:#16233a}
+.pil.ia{border-color:var(--azul)}
+select.pil{padding:7px 9px}
+.avatar-ia{width:22px;height:22px;border-radius:50%;background:var(--azul);display:grid;place-items:center;font-size:10.5px;font-weight:700}
+
+/* ---------- grade ---------- */
+.palco{flex:1;padding:0 18px 8px;overflow:hidden;min-height:0;display:flex;flex-direction:column}
+.grade-vms{display:grid;gap:5px;grid-auto-rows:minmax(0,1fr);align-content:center}
+.g3{grid-template-columns:repeat(3,1fr)}
+.g4{grid-template-columns:repeat(4,1fr)}
+.g2{grid-template-columns:repeat(2,1fr)}
+.g1{grid-template-columns:1fr}
+/* a janela preenche a celula: a grade ocupa a altura toda (como num VMS de verdade) */
+.grade-vms{height:100%;align-content:stretch}
+.g1{grid-template-rows:1fr}.g2{grid-template-rows:repeat(2,1fr)}
+.g3{grid-template-rows:repeat(3,1fr)}.g4{grid-template-rows:repeat(4,1fr)}
+.janela{position:relative;background:#000;border:1px solid #16202f;border-radius:5px;overflow:hidden;min-height:0;
+  width:100%;aspect-ratio:16/9;max-height:100%;margin:auto}
+.janela.selecionada{outline:2px solid var(--azul);outline-offset:1px}
+.janela video{width:100%;height:100%;object-fit:contain;display:block;background:#000}
+.marca-dagua{position:absolute;top:5px;right:7px;font-family:'JetBrains Mono',Consolas,monospace;font-size:10.5px;
+  color:#e8eef8;text-shadow:0 1px 2px #000;background:rgba(0,0,0,.35);padding:1px 5px;border-radius:3px}
+.rotulo-cam{position:absolute;bottom:5px;left:7px;font-size:11.5px;color:#dbe6f6;text-shadow:0 1px 2px #000;
+  background:rgba(0,0,0,.42);padding:1px 6px;border-radius:3px;display:flex;gap:7px;align-items:center}
+.rotulo-cam .ponto{width:7px;height:7px;border-radius:50%;background:var(--ok)}
+.rotulo-cam .ponto.ruim{background:var(--ruim)}
+.caixas{position:absolute;inset:0;pointer-events:none}
+.caixa{position:absolute;border:2px solid var(--ok);border-radius:3px}
+.caixa span{position:absolute;top:-16px;left:-2px;background:var(--ok);color:#04120a;font-size:10px;font-weight:700;
+  padding:0 4px;border-radius:2px;white-space:nowrap}
+.vazio{color:var(--texto2);font-size:13px;padding:26px 4px}
+
+/* ---------- paginacao e rodape ---------- */
+.paginacao{display:flex;align-items:center;justify-content:center;gap:9px;padding:9px 18px;color:var(--texto2);font-size:12.5px}
+.paginacao button{background:#131c2b;border:1px solid var(--borda2);border-radius:7px;min-width:29px;padding:5px 8px}
+.paginacao button.on{background:var(--marca);border-color:var(--marca);color:#fff;font-weight:700}
+.rodape{display:flex;align-items:center;gap:12px;padding:10px 18px 12px;border-top:1px solid var(--borda);background:var(--painel2)}
+.rodape .esq{display:flex;gap:10px}
+.rodape .dir{margin-left:auto;display:flex;align-items:center;gap:14px;color:var(--texto2);font-size:12.5px}
+.rodape button.acao{background:#1b2330;border:1px solid var(--borda2);border-radius:9px;padding:9px 14px;font-weight:600;font-size:13px}
+.rodape .icone{color:var(--aviso);margin-right:6px}
+.limpar{background:none;border:0;color:var(--texto2);text-decoration:underline}
+
+/* ---------- entrada ---------- */
+.entrada{max-width:392px;margin:9vh auto;background:var(--painel);border:1px solid var(--borda);border-radius:14px;padding:24px}
+.entrada h1{font-family:'Space Grotesk',sans-serif;font-size:19px;margin:0 0 4px}
+.entrada p.sub{color:var(--texto2);font-size:12.5px;margin:0 0 14px}
+label{display:block;font-size:12px;color:var(--texto2);margin:10px 0 4px}
+input,textarea{width:100%;padding:9px 10px;background:#0b1220;border:1px solid var(--borda2);border-radius:9px;color:var(--texto);font:inherit}
+button.principal{background:var(--marca);color:#fff;border:0;border-radius:9px;padding:10px 16px;font-weight:700;width:100%;margin-top:14px}
+.erro{background:#2a1214;border-left:3px solid var(--ruim);padding:9px 12px;border-radius:0 8px 8px 0;font-size:13px}
+.oculto{display:none!important}
+.painel-lateral{position:absolute;inset:0 0 0 216px;background:rgba(8,12,20,.72);display:grid;place-items:center;z-index:5}
+.ficha{background:var(--painel);border:1px solid var(--borda2);border-radius:12px;padding:18px 20px;max-width:520px;color:var(--texto)}
+.ficha h2{margin:0 0 5px;font-size:16px}
+.ficha p{color:var(--texto2);font-size:13px;margin:6px 0}
