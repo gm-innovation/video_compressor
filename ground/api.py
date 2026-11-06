@@ -94,6 +94,7 @@ def inicializar(semear_demo: bool = False) -> None:
     with conexao() as c:
         c.executescript((RAIZ / "db" / "schema.sql").read_text(encoding="utf-8"))
         c.executescript((RAIZ / "db" / "schema-fase4.sql").read_text(encoding="utf-8"))
+        c.executescript((RAIZ / "db" / "schema-fase5.sql").read_text(encoding="utf-8"))
         for f in json.loads((RAIZ / "db" / "fases-seed.json").read_text(encoding="utf-8")):
             c.execute("""INSERT INTO fases (id,numero,nome,prioridade,status,criterio_aceite,evidencia)
                          VALUES (:id,:numero,:nome,:prioridade,:status,:criterio_aceite,:evidencia)
@@ -247,7 +248,70 @@ def ler_tudo() -> dict:
                                "LEFT JOIN usuarios u ON u.id = auditoria_acesso.usuario_id ORDER BY auditoria_acesso.id DESC LIMIT 200"),
                 "eventos": q("SELECT * FROM analytics_eventos ORDER BY id DESC LIMIT 200"),
                 "contagens": q("SELECT * FROM analytics_contagens ORDER BY id DESC LIMIT 200"),
+                "agentes": q("SELECT * FROM analytics_agentes ORDER BY camera_id"),
                 "gerado_em": dt.datetime.now().astimezone().isoformat(timespec="seconds")}
+
+
+# --------------------------------------------------------------------------- Fase 5: analises
+def analises() -> dict:
+    """O que a tela precisa saber das analises: estado do agente, ultimas caixas, contagens e eventos."""
+    with conexao() as c:
+        q = lambda sql, *a: [dict(r) for r in c.execute(sql, a).fetchall()]
+        agentes = q("SELECT * FROM analytics_agentes ORDER BY camera_id")
+        for ag in agentes:
+            for campo in ("caixas", "linhas"):
+                try:
+                    ag[campo] = json.loads(ag[campo] or "[]")
+                except json.JSONDecodeError:
+                    ag[campo] = []
+        return {"agentes": agentes,
+                "contagens": q("SELECT * FROM analytics_contagens ORDER BY id DESC LIMIT 60"),
+                "eventos": q("SELECT * FROM analytics_eventos ORDER BY id DESC LIMIT 60"),
+                "gerado_em": dt.datetime.now().astimezone().isoformat(timespec="seconds")}
+
+
+def registrar_eventos(camera_id: str, eventos: list) -> int:
+    """Grava eventos de analise da camera. O video NAO sobe: so o evento e a contagem."""
+    agora = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+    with conexao() as c:
+        if not c.execute("SELECT 1 FROM cameras WHERE id=?", (camera_id,)).fetchone():
+            raise LookupError(f"camera {camera_id!r} nao cadastrada")
+        for ev in eventos[:500]:
+            inicio = str(ev.get("em") or agora)
+            c.execute("""INSERT INTO analytics_eventos (camera_id,tipo,inicio,fim,confianca,clipe,metadados)
+                         VALUES (?,?,?,?,?,?,?)""",
+                      (camera_id, str(ev.get("tipo") or "contagem"), inicio, ev.get("fim"),
+                       float(ev.get("confianca") or 0.0), str(ev.get("clipe") or ""),
+                       json.dumps(ev.get("metadados") or {}, ensure_ascii=False)))
+    return len(eventos[:500])
+
+
+def registrar_contagem(camera_id: str, d: dict) -> int:
+    """Grava a contagem da janela e atualiza o estado do agente (inclusive as ultimas caixas)."""
+    agora = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+    inicio = str(d.get("janela_inicio") or agora)
+    fim = str(d.get("janela_fim") or agora)
+    with conexao() as c:
+        if not c.execute("SELECT 1 FROM cameras WHERE id=?", (camera_id,)).fetchone():
+            raise LookupError(f"camera {camera_id!r} nao cadastrada")
+        cur = c.execute("""INSERT INTO analytics_contagens (camera_id,janela_inicio,janela_fim,entrou,saiu,pico,fonte)
+                           VALUES (?,?,?,?,?,?,?)""",
+                        (camera_id, inicio, fim, int(d.get("entrou") or 0), int(d.get("saiu") or 0),
+                         int(d.get("pico") or 0), str(d.get("fonte") or "")))
+        ident = cur.lastrowid
+        estado = str(d.get("estado") or "no ar")
+        c.execute("""INSERT INTO analytics_agentes (camera_id,nome,modelo,fonte,fps,quadros,estado,caixas,linhas,erros,ultimo_visto)
+                     VALUES (:camera_id,:nome,:modelo,:fonte,:fps,:quadros,:estado,:caixas,:linhas,:erros,:ultimo_visto)
+                     ON CONFLICT(camera_id) DO UPDATE SET nome=:nome, modelo=:modelo, fonte=:fonte, fps=:fps,
+                       quadros=:quadros, estado=:estado, caixas=:caixas, linhas=:linhas, erros=:erros,
+                       ultimo_visto=:ultimo_visto""",
+                  {"camera_id": camera_id, "nome": str(d.get("agente") or "agente-bordo"),
+                   "modelo": str(d.get("modelo") or ""), "fonte": str(d.get("fonte") or ""),
+                   "fps": float(d.get("fps") or 0.0), "quadros": int(d.get("quadros") or 0),
+                   "estado": estado, "caixas": json.dumps(d.get("caixas") or [], ensure_ascii=False),
+                   "linhas": json.dumps(d.get("linhas") or [], ensure_ascii=False),
+                   "erros": int(d.get("erros") or 0), "ultimo_visto": agora})
+    return ident
 
 
 # --------------------------------------------------------------------------- servidor
@@ -287,6 +351,13 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _local(self) -> bool:
         return self.client_address[0] in ("127.0.0.1", "::1")
+
+    def _chave_analytics(self) -> bool:
+        """A ingestao de analise exige a chave do agente (variavel de ambiente no servidor).
+        Sem chave configurada, a porta fica fechada — nao existe caminho sem credencial."""
+        esperada = os.environ.get("LECSOR_CHAVE_ANALYTICS", "")
+        recebida = self.headers.get("X-Chave-Analytics", "")
+        return bool(esperada) and secrets.compare_digest(esperada, recebida)
 
     def end_headers(self) -> None:
         if self.path.endswith((".html", ".css", ".js")) or urlparse(self.path).path in ("/", "/app", "/admin"):
@@ -397,6 +468,10 @@ class Handler(SimpleHTTPRequestHandler):
             if not u:
                 return self._json(401, {"erro": "entre no sistema"})
             return self._json(200, {"eventos": ler_tudo()["eventos"]})
+        if rota == "/api/analises":
+            if not (u or self._local()):
+                return self._json(401, {"erro": "entre no sistema"})
+            return self._json(200, analises())
         if rota.startswith("/hls/"):
             return self._hls(rota[len("/hls/"):], u)
         if rota.startswith("/api/relatorios/") and rota.endswith(".pdf"):
@@ -429,6 +504,28 @@ class Handler(SimpleHTTPRequestHandler):
                     with conexao() as c:
                         c.execute("DELETE FROM sessoes WHERE token=?", (ck["sessao"].value,))
             return self._json(200, {"ok": True}, {"Set-Cookie": "sessao=; Max-Age=0; Path=/"})
+        if rota == "/api/analytics/eventos":
+            if not self._chave_analytics():
+                return self._json(401, {"erro": "chave do agente de analise ausente ou invalida"})
+            d = self._corpo()
+            try:
+                n = registrar_eventos(str(d.get("camera_id") or ""), list(d.get("eventos") or []))
+            except LookupError as e:
+                return self._json(422, {"erro": str(e)})
+            except Exception as e:  # banco recusou: responde explicando, nunca fecha a conexao
+                return self._json(400, {"erro": f"evento recusado: {e}"})
+            return self._json(201, {"ok": True, "gravados": n})
+        if rota == "/api/analytics/contagens":
+            if not self._chave_analytics():
+                return self._json(401, {"erro": "chave do agente de analise ausente ou invalida"})
+            d = self._corpo()
+            try:
+                ident = registrar_contagem(str(d.get("camera_id") or ""), d)
+            except LookupError as e:
+                return self._json(422, {"erro": str(e)})
+            except Exception as e:  # banco recusou: responde explicando, nunca fecha a conexao
+                return self._json(400, {"erro": f"contagem recusada: {e}"})
+            return self._json(201, {"ok": True, "id": ident})
         if rota.startswith("/whep/"):
             return self._whep(rota[len("/whep/"):], u)
         if rota == "/api/medicoes":

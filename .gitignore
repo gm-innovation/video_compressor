@@ -21,3 +21,9 @@ ground/api.log
 bench/saida/_*
 bench/saida/doc-*.pdf
 bench/saida/doc-*.html
+.env.local
+analytics/modelos/
+analytics/midia/
+analytics/saida/
+.venv/
+analytics/*.log

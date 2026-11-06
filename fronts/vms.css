@@ -94,3 +94,13 @@ button.principal{background:var(--marca);color:#fff;border:0;border-radius:9px;p
 .ficha{background:var(--painel);border:1px solid var(--borda2);border-radius:12px;padding:18px 20px;max-width:520px;color:var(--texto)}
 .ficha h2{margin:0 0 5px;font-size:16px}
 .ficha p{color:var(--texto2);font-size:13px;margin:6px 0}
+
+/* analises de video (Fase 5): linha de contagem e selo com a contagem por camera */
+.linha-ia{position:absolute;background:repeating-linear-gradient(90deg,var(--azul) 0 6px,transparent 6px 12px);
+  pointer-events:none}
+.selo-ia{position:absolute;top:8px;left:8px;background:rgba(8,14,24,.82);border:1px solid var(--azul);
+  border-radius:8px;padding:4px 9px;font-size:11.5px;color:#e6f0ff;pointer-events:none;font-variant-numeric:tabular-nums}
+.selo-ia b{color:#7dd3fc}
+.agente-linha{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--texto2);margin:0 0 10px}
+.agente-linha .sinal{width:8px;height:8px;border-radius:50%;background:var(--ruim)}
+.agente-linha .sinal.noar{background:var(--ok)}

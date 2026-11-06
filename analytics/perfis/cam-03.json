@@ -1,0 +1,53 @@
+{
+  "camera_id": "cam-03-analitico",
+  "nome": "agente-bordo-01",
+  "fonte": "rtsp://127.0.0.1:8554/cam-03",
+  "modelo": "analytics/modelos/yolov10n.onnx",
+  "tamanho": 640,
+  "confianca": 0.35,
+  "classes": [
+    0
+  ],
+  "decimar": 2,
+  "anuncio_s": 5.0,
+  "fps_nominal": 12,
+  "linha": {
+    "a": [
+      384,
+      0
+    ],
+    "b": [
+      384,
+      432
+    ],
+    "confirmacao": 3,
+    "espera_s": 1.5,
+    "sentido_positivo": "entrada"
+  },
+  "zonas": [
+    {
+      "nome": "faixa de maquinas",
+      "poligono": [
+        [
+          0,
+          300
+        ],
+        [
+          768,
+          300
+        ],
+        [
+          768,
+          432
+        ],
+        [
+          0,
+          432
+        ]
+      ],
+      "segundos": 2.0,
+      "espera_s": 30
+    }
+  ],
+  "fluxo_id": "cam-03"
+}

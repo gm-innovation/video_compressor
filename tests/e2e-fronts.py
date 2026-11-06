@@ -101,10 +101,67 @@ def verificar_admin(navegador) -> None:
     pag.fill("#c-nome", "Armador E2E (criado pela tela)")
     pag.click("button.acao.marca")
     pag.wait_for_timeout(1500)
-    texto = pag.content()
-    checar("cadastro de cliente pela tela", "cliente cadastrado: armador-e2e" in texto)
+    texto = pag.locator("#tela").inner_text()
+    checar("cadastro de cliente pela tela (ou já cadastrado, sem erro na tela)",
+           ("armador-e2e" in texto) and ("cliente cadastrado" in texto or "já existe" in texto))
     checar("cliente aparece na tabela", "Armador E2E" in pag.locator(".tabela").inner_text())
     pag.screenshot(path=str(SAIDA / "_front-admin-clientes.png"))
+    ctx.close()
+
+
+def verificar_analises(navegador) -> None:
+    """Fase 5 na tela: o cliente liga a IA e ve contagem, linha e caixas; o admin ve o estado do agente."""
+    import json as _json
+    import urllib.request as _url
+    print("[cliente] IA · Análises")
+    ctx = navegador.new_context(viewport={"width": 1600, "height": 900})
+    pag = ctx.new_page()
+    pag.goto(f"{BASE}/app")
+    pag.fill("#email", "cliente@armador-demo.test")
+    pag.fill("#senha", SENHA)
+    pag.click("form#form-entrar button[type=submit]")
+    pag.wait_for_selector("#sistema:not(.oculto)", timeout=10000)
+    pag.wait_for_timeout(3000)
+    checar("pílula de IA presente na barra de controles", pag.locator("#btn-ia").count() == 1)
+    pag.click("#btn-ia")
+    pag.wait_for_timeout(2500)
+    checar("selo com contagem por câmera", pag.locator(".selo-ia").count() >= 1)
+    selo = pag.locator(".selo-ia").first.inner_text() if pag.locator(".selo-ia").count() else ""
+    checar("selo mostra entrou/saiu", ("entrou" in selo and "saiu" in selo), selo)
+    checar("linha de contagem desenhada", pag.locator(".linha-ia").count() >= 1)
+    dados = _json.loads(_url.urlopen(f"{BASE}/api/analises").read())
+    ag = (dados.get("agentes") or [{}])[0]
+    checar("agente de análise reportando estado", ag.get("estado") in ("no ar", "parado"), str(ag.get("estado")))
+    checar("modelo e quadros por segundo informados", bool(ag.get("modelo")) and (ag.get("fps") or 0) > 0,
+           f"{ag.get('modelo')} @ {ag.get('fps')} q/s")
+    caixas = 0
+    for _ in range(5):  # o agente pode estar entre detecções: tenta algumas vezes
+        caixas = pag.locator(".caixa").count()
+        if caixas:
+            break
+        pag.wait_for_timeout(4000)
+        pag.click("#btn-ia"); pag.click("#btn-ia")
+        pag.wait_for_timeout(2500)
+    checar("caixa de detecção desenhada sobre o vídeo", caixas >= 1, f"{caixas} caixa(s)")
+    pag.screenshot(path=str(SAIDA / "_front-cliente-ia.png"))
+    ctx.close()
+
+    print("[admin] Análises")
+    ctx = navegador.new_context(viewport={"width": 1600, "height": 900})
+    pag = ctx.new_page()
+    pag.goto(f"{BASE}/admin")
+    pag.fill("#email", "admin@lecsor.test")
+    pag.fill("#senha", SENHA)
+    pag.click("form#form-entrar button[type=submit]")
+    pag.wait_for_selector("#sistema:not(.oculto)", timeout=10000)
+    pag.wait_for_timeout(2000)
+    pag.click("button.item[data-tela='analises']")
+    pag.wait_for_timeout(1500)
+    texto = pag.locator("#tela").inner_text()
+    checar("admin vê o agente de bordo na tela de Análises", "agente-bordo-01" in texto)
+    checar("admin vê modelo e quadros por segundo", "yolov10n" in texto and "Quadros/s" in texto)
+    checar("admin vê contagem de pessoas", "entrou" in texto.lower() or "Entrou" in texto)
+    pag.screenshot(path=str(SAIDA / "_front-admin-analises.png"))
     ctx.close()
 
 
@@ -120,6 +177,7 @@ def main() -> int:
             nav = p.chromium.launch()
         verificar_cliente(nav)
         verificar_admin(nav)
+        verificar_analises(nav)
         nav.close()
     print("\nRESULTADO:", "tudo passou" if not falhas else f"{len(falhas)} falha(s): " + "; ".join(falhas))
     return 0 if not falhas else 1

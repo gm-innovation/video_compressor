@@ -3,12 +3,14 @@
 const S = {
   usuario: null, embarcacoes: [], cameras: [], embarcacaoId: null,
   tela: 'visualizar', layout: 3, auto: true, pagina: 1, selecionadas: new Set(), ia: false,
-  eventos: [], contagens: [], relatorios: null, timer: null
+  eventos: [], contagens: [], relatorios: null, timer: null,
+  analises: { agentes: [], contagens: [], eventos: [] }, agentesPorCamera: {}
 };
 const $ = (id) => document.getElementById(id);
 const limpar = (el) => { while (el.firstChild) el.removeChild(el.firstChild); };
 const esc = (s) => String(s === null || s === undefined ? '' : s);
 const dois = (n) => String(n).padStart(2, '0');
+const rotuloDe = (id) => { const achou = (S.cameras || []).find((c) => c.id === id); return achou ? achou.rotulo : id; };
 
 async function api(rota, opcoes) {
   const r = await fetch(rota, Object.assign({ credentials: 'same-origin', headers: { 'Content-Type': 'application/json' } }, opcoes));
@@ -54,8 +56,18 @@ async function atualizar() {
   S.cameras = novas;
   if (S.selecionadas.size === 0) S.cameras.forEach((c) => S.selecionadas.add(c.id));
   for (const id of Array.from(S.selecionadas)) if (!S.cameras.some((c) => c.id === id)) S.selecionadas.delete(id);
+  const an = await api('/api/analises');
+  if (an.ok && an.corpo) {
+    S.analises = an.corpo;
+    S.agentesPorCamera = {};
+    for (const ag of (an.corpo.agentes || [])) S.agentesPorCamera[ag.camera_id] = ag;
+  }
   if (S.tela === 'alertas' || S.tela === 'relatorios') await dadosExtras();
-  if (S.tela === 'visualizar') { if (mudouLista || !$('palco').dataset.montado) desenharVisualizar(); else pintarEstados(); }
+  if (S.tela === 'visualizar') {
+    if (mudouLista || !$('palco').dataset.montado) desenharVisualizar();
+    else { pintarEstados(); S.cameras.forEach((c) => desenharCaixas(c.id)); }
+    atualizarSeloIA();
+  }
   else desenharTela();
   atualizarRodape();
 }
@@ -143,24 +155,50 @@ function pintarEstados() {
   }
 }
 
-/* caixas de deteccao: SO desenha o que existe de verdade (evento da Fase 5 com caixa em metadados) */
+/* Analises de video (Fase 5): a caixa vem do agente (metadado), nunca do video do cliente.
+   O que a tela recebe e o resultado (caixa, contagem, linha), nao o video analisado nem credencial. */
 function desenharCaixas(cameraId) {
   const alvo = $('caixas-' + cameraId);
   if (!alvo) return;
   limpar(alvo);
   if (!S.ia) return;
-  for (const e of S.eventos.filter((x) => x.camera_id === cameraId)) {
-    let meta = {};
-    try { meta = JSON.parse(e.metadados || '{}'); } catch (err) { meta = {}; }
-    for (const c of (meta.caixas || [])) {
-      const d = document.createElement('div');
-      d.className = 'caixa';
-      d.style.left = (c.x * 100) + '%'; d.style.top = (c.y * 100) + '%';
-      d.style.width = (c.l * 100) + '%'; d.style.height = (c.a * 100) + '%';
-      const s = document.createElement('span'); s.textContent = esc(c.rotulo || e.tipo);
-      d.appendChild(s); alvo.appendChild(d);
-    }
+  const ag = S.agentesPorCamera[cameraId];
+  if (!ag) return;
+  const jan = $('palco').querySelector(`[data-cam="${cameraId}"]`);
+  for (const l of (ag.linhas || [])) {
+    if (!l || !l.a || !l.b) continue;
+    const marca = document.createElement('div');
+    marca.className = 'linha-ia';
+    const horizontal = l.a[1] === l.b[1];
+    if (horizontal) { marca.style.left = '0'; marca.style.right = '0'; marca.style.top = '50%'; marca.style.height = '2px'; }
+    else { marca.style.top = '0'; marca.style.bottom = '0'; marca.style.left = '50%'; marca.style.width = '2px';
+           marca.style.background = 'repeating-linear-gradient(0deg,var(--azul) 0 6px,transparent 6px 12px)'; }
+    alvo.appendChild(marca);
   }
+  for (const c of (ag.caixas || [])) {
+    const d = document.createElement('div');
+    d.className = 'caixa';
+    d.style.left = (c.caixa[0] * 100) + '%'; d.style.top = (c.caixa[1] * 100) + '%';
+    d.style.width = ((c.caixa[2] - c.caixa[0]) * 100) + '%'; d.style.height = ((c.caixa[3] - c.caixa[1]) * 100) + '%';
+    const s = document.createElement('span'); s.textContent = `${esc(c.classe)} ${Math.round((c.confianca || 0) * 100)}%`;
+    d.appendChild(s); alvo.appendChild(d);
+  }
+  const ultima = (S.analises.contagens || []).find((x) => x.camera_id === cameraId);
+  if (ultima && jan) {
+    const selo = document.createElement('span');
+    selo.className = 'selo-ia';
+    selo.innerHTML = `👤 <b>${(ag.caixas || []).length}</b> agora · entrou <b>${ultima.entrou}</b> · saiu <b>${ultima.saiu}</b>`;
+    jan.appendChild(selo);
+  }
+}
+
+function atualizarSeloIA() {
+  const b = $('btn-ia');
+  if (!b) return;
+  const ags = S.analises.agentes || [];
+  const noar = ags.filter((a) => a.estado === 'no ar').length;
+  b.classList.toggle('on', S.ia);
+  b.textContent = S.ia ? `IA · Análises (${noar} câmera${noar === 1 ? '' : 's'})` : 'IA · Análises';
 }
 
 function montarPaginacao() {
@@ -228,10 +266,16 @@ function desenharTela() {
   const t = S.tela;
   if (t === 'alertas') {
     const caidas = S.cameras.filter((c) => !c.no_ar).map((c) => ({ tipo: 'camera_fora_do_ar', camera_id: c.rotulo, inicio: 'agora', confianca: '', clipe: '' }));
-    const ev = S.eventos.map((e) => ({ tipo: e.tipo, camera_id: e.camera_id, inicio: e.inicio, confianca: e.confianca, clipe: e.clipe }));
+    const rotulos = {};
+    for (const c of S.cameras) rotulos[c.id] = c.rotulo;
+    const daAnalise = (S.analises.eventos || []).map((e) => ({
+      tipo: e.tipo === 'entrada' ? 'contagem · entrada' : e.tipo === 'saida' ? 'contagem · saída' : e.tipo,
+      camera_id: rotulos[e.camera_id] || e.camera_id, inicio: e.inicio,
+      confianca: e.confianca ? Math.round(e.confianca * 100) + '%' : '', clipe: e.clipe }));
+    const ev = S.eventos.map((e) => ({ tipo: e.tipo, camera_id: rotulos[e.camera_id] || e.camera_id, inicio: e.inicio, confianca: e.confianca, clipe: e.clipe }));
     tabelaEmPalco([{ rotulo: 'Quando', campo: 'inicio' }, { rotulo: 'Tipo', campo: 'tipo' },
                    { rotulo: 'Câmera', campo: 'camera_id' }, { rotulo: 'Confiança', campo: 'confianca' },
-                   { rotulo: 'Clipe', campo: 'clipe' }], caidas.concat(ev),
+                   { rotulo: 'Clipe', campo: 'clipe' }], caidas.concat(daAnalise).concat(ev),
       'Nenhum alerta: todas as câmeras da sua embarcação estão no ar.');
   } else if (t === 'gravacoes') {
     tabelaEmPalco([{ rotulo: 'Trecho', campo: 'inicio' }, { rotulo: 'Câmera', campo: 'camera_id' }], [],
@@ -239,13 +283,24 @@ function desenharTela() {
   } else if (t === 'relatorios') {
     const linhas = S.cameras.map((c) => ({ camera: c.rotulo, estado: c.no_ar ? 'no ar' : 'fora do ar',
       encoder: c.encoder && c.encoder.bitrate ? c.encoder.bitrate : '', leitores: c.leitores }));
-    const contagens = S.contagens.map((x) => ({ camera: x.camera_id, entrou: x.entrou, saiu: x.saiu, pico: x.pico, fonte: x.fonte }));
+    const contagens = (S.analises.contagens || []).map((x) => ({ camera: rotuloDe(x.camera_id), entrou: x.entrou, saiu: x.saiu,
+      pico: x.pico, fonte: x.fonte, quando: (x.janela_fim || '').replace('T', ' ').slice(0, 19) }));
     tabelaEmPalco([{ rotulo: 'Câmera', campo: 'camera' }, { rotulo: 'Estado', campo: 'estado' },
                    { rotulo: 'Bitrate', campo: 'encoder' }, { rotulo: 'Espectadores', campo: 'leitores' }], linhas,
       'Sem dado de relatório.');
+    const p = $('palco');
+    const ags = S.analises.agentes || [];
+    for (const ag of ags) {
+      const h2 = document.createElement('div'); h2.className = 'agente-linha';
+      const sinal = document.createElement('span'); sinal.className = 'sinal' + (ag.estado === 'no ar' ? ' noar' : '');
+      h2.appendChild(sinal);
+      const txt = document.createElement('span');
+      txt.textContent = `Agente de análise em ${rotuloDe(ag.camera_id)}: ${ag.estado} · modelo ${ag.modelo} · ${ag.fps} quadros/s · ${ag.quadros} quadros analisados`;
+      h2.appendChild(txt); p.appendChild(h2);
+    }
     if (contagens.length) {
-      const p = $('palco'); const h = document.createElement('div'); h.className = 'vazio';
-      h.textContent = 'Contagens de pessoas (análises de vídeo): ' + contagens.map((c) => `${c.camera}: ${c.entrou} entrada(s) / ${c.saiu} saída(s)`).join(' · ');
+      const h = document.createElement('div'); h.className = 'vazio';
+      h.textContent = 'Contagens de pessoas: ' + contagens.slice(0, 4).map((c) => `${c.camera}: ${c.entrou} entrada(s) / ${c.saiu} saída(s) · pico ${c.pico}`).join(' · ');
       p.appendChild(h);
     }
   } else if (t === 'pessoas') {
@@ -308,8 +363,10 @@ $('btn-auto').addEventListener('click', () => {
   $('btn-auto').classList.add('on'); desenharVisualizar();
 });
 $('btn-ia').addEventListener('click', () => {
-  S.ia = !S.ia; $('btn-ia').classList.toggle('on', S.ia);
+  S.ia = !S.ia;
+  $('palco').querySelectorAll('.selo-ia').forEach((s) => s.remove());
   S.cameras.forEach((c) => desenharCaixas(c.id));
+  atualizarSeloIA();
 });
 $('btn-cheia').addEventListener('click', () => {
   const alvo = $('palco');

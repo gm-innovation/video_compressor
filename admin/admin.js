@@ -314,11 +314,26 @@ function telaUsuarios(t) {
 
 function telaAnalises(t) {
   const d = A.resumo || {};
+  const agentes = d.agentes || [];
+  const cart = document.createElement('div'); cart.className = 'cartoes';
+  cart.appendChild(cartao('Agentes a bordo', agentes.length, 'um por câmera analisada'));
+  cart.appendChild(cartao('No ar agora', agentes.filter((a) => a.estado === 'no ar').length, 'estado do agente'));
+  cart.appendChild(cartao('Quadros analisados', agentes.reduce((s, a) => s + (a.quadros || 0), 0), 'soma dos agentes'));
+  cart.appendChild(cartao('Quadros por segundo', agentes.length ? (agentes.reduce((s, a) => s + (a.fps || 0), 0) / agentes.length).toFixed(1) : '0', 'média por câmera'));
+  cart.appendChild(cartao('Eventos', (d.eventos || []).length, 'últimos 60'));
+  t.appendChild(cart);
+  t.appendChild(tabela([{ rotulo: 'Câmera', campo: 'camera_id' }, { rotulo: 'Agente', campo: 'nome' },
+    { rotulo: 'Modelo', campo: 'modelo' }, { rotulo: 'Estado', campo: 'estado' },
+    { rotulo: 'Quadros/s', campo: 'fps' }, { rotulo: 'Quadros', campo: 'quadros' },
+    { rotulo: 'Erros', campo: 'erros' }, { rotulo: 'Última mensagem', campo: 'ultimo_visto' }],
+    agentes, 'nenhum agente a bordo: o módulo de análise (Fase 5) ainda não está publicado na embarcação'));
   t.appendChild(tabela([{ rotulo: 'Câmera', campo: 'camera_id' }, { rotulo: 'Entrou', campo: 'entrou' },
-    { rotulo: 'Saiu', campo: 'saiu' }, { rotulo: 'Pico', campo: 'pico' }, { rotulo: 'Fonte', campo: 'fonte' }],
-    d.contagens || [], 'sem contagem: o agente de análise (Fase 5) ainda não está a bordo'));
+    { rotulo: 'Saiu', campo: 'saiu' }, { rotulo: 'Pico', campo: 'pico' },
+    { rotulo: 'Janela (fim)', campo: 'janela_fim' }, { rotulo: 'Fonte', campo: 'fonte' }],
+    d.contagens || [], 'sem contagem registrada'));
   t.appendChild(tabela([{ rotulo: 'Câmera', campo: 'camera_id' }, { rotulo: 'Tipo', campo: 'tipo' },
-    { rotulo: 'Início', campo: 'inicio' }, { rotulo: 'Fim', campo: 'fim' }, { rotulo: 'Confiança', campo: 'confianca' }],
+    { rotulo: 'Início', campo: 'inicio' }, { rotulo: 'Confiança', campo: 'confianca' },
+    { rotulo: 'Metadados', campo: 'metadados' }],
     d.eventos || [], 'sem evento registrado'));
 }
 
