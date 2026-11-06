@@ -1,0 +1,28 @@
+# Config do lado terra (bancada): mediamtx recebendo SRT e publicando WebRTC (baixa latencia).
+logLevel: info
+logDestinations: [stdout]
+
+rtsp: yes
+rtspAddress: 127.0.0.1:8554
+rtmp: no
+hls: yes
+hlsAddress: 127.0.0.1:8888
+hlsVariant: lowLatency
+hlsSegmentCount: 7
+hlsSegmentDuration: 1s
+hlsPartDuration: 200ms
+
+webrtc: yes
+webrtcAddress: 127.0.0.1:8889
+webrtcEncryption: no
+webrtcAllowOrigins: ["*"]
+webrtcLocalUDPAddress: 127.0.0.1:8189
+
+srt: yes
+srtAddress: 127.0.0.1:8890
+
+api: yes
+apiAddress: 127.0.0.1:9997
+
+paths:
+  all_others:

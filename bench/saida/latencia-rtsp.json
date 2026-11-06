@@ -1,0 +1,49 @@
+{
+ "transporte": "rtsp",
+ "url": "rtsp://127.0.0.1:8554/cam-01",
+ "amostras": [
+  {
+   "n": 150,
+   "png": "C:\\Users\\EngenhariaGoogleMari\\lecsor-pipeline-video\\bench\\saida\\_q-rtsp-n150.jpg",
+   "chegada": 1793991514.568,
+   "chegada_iso": "15:58:34.568",
+   "comando": "ffmpeg -hide_banner -loglevel info -i rtsp://127.0.0.1:8554/cam-01 -frames:v 210 -vf showinfo -q:v 4 -y C:\\Users\\EngenhariaGoogleMari\\lecsor-pipeline-video\\bench\\saida\\_q-rtsp-%04d.jpg"
+  },
+  {
+   "n": 300,
+   "png": "C:\\Users\\EngenhariaGoogleMari\\lecsor-pipeline-video\\bench\\saida\\_q-rtsp-n300.jpg",
+   "chegada": 1793991527.568,
+   "chegada_iso": "15:58:47.568",
+   "comando": "ffmpeg -hide_banner -loglevel info -i rtsp://127.0.0.1:8554/cam-01 -frames:v 360 -vf showinfo -q:v 4 -y C:\\Users\\EngenhariaGoogleMari\\lecsor-pipeline-video\\bench\\saida\\_q-rtsp-%04d.jpg"
+  },
+  {
+   "n": 600,
+   "png": null,
+   "chegada": 1793991252.579,
+   "chegada_iso": "15:54:12.579",
+   "comando": "ffmpeg -hide_banner -loglevel info -i rtsp://127.0.0.1:8554/cam-01 -t 24.0 -vf showinfo,select='eq(n,600)' -fps_mode passthrough -y C:\\Users\\EngenhariaGoogleMari\\lecsor-pipeline-video\\bench\\saida\\_q-rtsp-%d.png"
+  }
+ ],
+ "quadros_carimbados": 361,
+ "leitura_quadro": [
+  {
+   "n": 150,
+   "quadro": "15:58:33.000",
+   "chegada_iso": "15:58:34.568",
+   "latencia_s": 1.568
+  },
+  {
+   "n": 300,
+   "quadro": "15:58:46.000",
+   "chegada_iso": "15:58:47.568",
+   "latencia_s": 1.568
+  }
+ ],
+ "latencia_s": {
+  "n": 2,
+  "min": 1.568,
+  "mediana": 1.568,
+  "max": 1.568,
+  "transporte": "rtsp"
+ }
+}

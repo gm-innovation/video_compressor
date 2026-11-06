@@ -81,6 +81,50 @@ def inserir_medicao(dados: dict) -> tuple[int, dict]:
                         {**{k: dados.get(k, "") for k in CAMPOS_OBRIGATORIOS}, "fase_id": dados.get("fase_id")})
         return 201, {"id": cur.lastrowid, "status": "gravada"}
 
+PORTA_WEBRTC, PORTA_HLS, PORTA_API_MEDIAMTX = 8889, 8888, 9997
+
+def mediamtx_paths() -> dict:
+    """Le o estado real do lado terra (mediamtx) pela API dele."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{PORTA_API_MEDIAMTX}/v3/paths/list", timeout=3) as r:
+            dados = json.loads(r.read().decode())
+        return {p["name"]: p for p in dados.get("items", [])}
+    except Exception:
+        return {}
+
+def ler_json(caminho: Path) -> dict:
+    """Leitura tolerante: arquivo escrito por outro processo pode estar parcial."""
+    for _ in range(3):
+        try:
+            return json.loads(caminho.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            import time as _t; _t.sleep(0.1)
+    return {}
+
+def fluxos() -> dict:
+    st = RAIZ / "ground" / "status.json"
+    dados = ler_json(st) if st.exists() else {"fluxos": [], "atualizado_em": None}
+    mt = mediamtx_paths()
+    cfg = json.loads((RAIZ / "ground" / "receivers.json").read_text(encoding="utf-8"))
+    for c in cfg:
+        p = mt.get(c["id"], {})
+        dados.setdefault("fluxos", [])
+        item = next((f for f in dados["fluxos"] if f["id"] == c["id"]), None)
+        if item is None:
+            item = {"id": c["id"], "rotulo": c["rotulo"], "srt_port": c["srt_port"]}
+            dados["fluxos"].append(item)
+        item.update({
+            "no_ar": bool(p.get("ready")),
+            "tracks": p.get("tracks", []),
+            "leitores": p.get("readers", []),
+            "link_webrtc": f"http://127.0.0.1:{PORTA_WEBRTC}/{c['id']}/whep",
+            "link_hls_mediamtx": f"http://127.0.0.1:{PORTA_HLS}/{c['id']}/index.m3u8",
+        })
+    dados["mediamtx"] = {"porta_webrtc": PORTA_WEBRTC, "porta_hls": PORTA_HLS, "porta_api": PORTA_API_MEDIAMTX,
+                         "ativo": bool(mt)}
+    return dados
+
 def ler_tudo() -> dict:
     with conexao() as c:
         q = lambda sql, *a: [dict(r) for r in c.execute(sql, a).fetchall()]
@@ -98,6 +142,12 @@ class Handler(SimpleHTTPRequestHandler):
 
     def log_message(self, *a):  # silencio
         pass
+
+    def end_headers(self) -> None:  # o HTML do portal nao pode ficar em cache:
+        # pagina antiga em cache ja ficou rodando em paralelo e abriu sessao de video a cada ciclo
+        if self.path.endswith((".html", ".css", ".js")) or self.path in ("/", ""):
+            self.send_header("Cache-Control", "no-store, must-revalidate")
+        super().end_headers()
 
     def _json(self, codigo: int, corpo: dict) -> None:
         b = json.dumps(corpo, ensure_ascii=False).encode()
@@ -118,11 +168,7 @@ class Handler(SimpleHTTPRequestHandler):
         if rota == "/api/inventario":
             return self._json(200, {"inventario": ler_tudo()["inventario"]})
         if rota == "/api/fluxos":
-            st = RAIZ / "ground" / "status.json"
-            dados = json.loads(st.read_text(encoding="utf-8")) if st.exists() else {"fluxos": [], "atualizado_em": None}
-            for f in dados.get("fluxos", []):
-                f["link_hls"] = "/" + f.get("manifesto", "")
-            return self._json(200, dados)
+            return self._json(200, fluxos())
         if rota == "/api/saude":
             return self._json(200, {"ok": True, "banco": str(BANCO), "python": sys.version.split()[0]})
         return super().do_GET()

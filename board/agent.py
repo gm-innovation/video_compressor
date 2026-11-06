@@ -24,11 +24,38 @@ def hw() -> str:
 
 def comando(c: dict) -> list[str]:
     destino = f"srt://{c['srt_host']}:{c['srt_port']}?mode=caller&latency=200&pkt_size=1316"
-    return ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-re",
-            "-f", "lavfi", "-i", c["fonte"],
-            "-c:v", c["codec"], "-preset", "ultrafast", "-tune", "zerolatency",
+    if c.get("streamid"):
+        destino += f"&streamid=publish:{c['streamid']}"
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-re",
+           "-f", "lavfi", "-i", c["fonte"]]
+    if c.get("relogio"):
+        # relogio local + numero do quadro queimados na imagem: permite medir a latencia ponta a ponta
+        filtro = (r"drawtext=font=Consolas:"
+                  r"text='%{localtime\:%T}.%{eif\:mod(t*1000\,1000)\:d\:3} f%{n}':"
+                  r"fontsize=34:fontcolor=white:box=1:boxcolor=black@0.6:x=18:y=18")
+        cmd += ["-vf", filtro]
+    # PTS de saida = relogio de parede (epoch): da para medir a latencia lendo numeros, sem OCR
+    cmd += ["-output_ts_offset", f"{time.time():.3f}"]
+    cmd += ["-c:v", c["codec"], "-preset", "ultrafast", "-tune", "zerolatency",
             "-b:v", c["bitrate"], "-maxrate", c["bitrate"], "-bufsize", "1M",
             "-g", "30", "-pix_fmt", "yuv420p", "-f", "mpegts", destino]
+    return cmd
+
+def marco(c: dict, pid: int, evento: str) -> None:
+    """Grava o instante do lancamento do encoder (com ms).
+
+    O relogio queimado no quadro so tem resolucao de 1 s; com o instante do
+    lancamento mais o numero do quadro (n/30, encode em tempo real) a latencia
+    ponta a ponta fica determinada com ~0,2 s de erro.
+    """
+    d = RAIZ / "board" / "telemetria"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{c['id']}.json").write_text(json.dumps({
+        "id": c["id"], "pid": pid, "evento": evento,
+        "iniciado_em": dt.datetime.now().astimezone().isoformat(timespec="milliseconds"),
+        "fps": int(str(c["fonte"]).split("rate=")[-1].split(":")[0].split(",")[0]) if "rate=" in str(c["fonte"]) else 30,
+        "comando": " ".join(comando(c)),
+    }, ensure_ascii=False, indent=1), encoding="utf-8")
 
 def telemetria(c: dict, evento: str) -> None:
     if not BANCO.exists():
@@ -62,11 +89,13 @@ def principal() -> int:
                 if st is None:
                     p = subprocess.Popen(comando(c))
                     procs[c["id"]] = {"proc": p, "reinicios": 0}
+                    marco(c, p.pid, "encode iniciado")
                     telemetria(c, "encode iniciado")
                     print(f"[agent] {c['id']} -> srt://{c['srt_host']}:{c['srt_port']} (pid {p.pid})")
                 elif st["proc"].poll() is not None:
                     st["reinicios"] += 1
                     st["proc"] = subprocess.Popen(comando(c))
+                    marco(c, st["proc"].pid, f"reinicio #{st['reinicios']}")
                     telemetria(c, f"reinicio #{st['reinicios']} apos queda")
                     print(f"[agent] {c['id']} reiniciado (#{st['reinicios']})")
             time.sleep(2)

@@ -28,7 +28,7 @@
 <header>
   <div><h1>Pipeline de vídeo bordo→terra</h1>
   <div class="sub">Acompanhamento do projeto — dados lidos do banco (<code>db/pipeline.db</code>), nenhum número digitado à mão</div></div>
-  <div class="sub" id="stamp"></div>
+  <div class="sub" style="text-align:right"><div>relógio deste navegador: <b id="relogio" style="font-size:15px">--:--:--</b></div><div id="stamp"></div></div>
 </header>
 
 <h2>Fluxos ao vivo (encode de bordo → SRT → lado terra → navegador)</h2>
@@ -84,25 +84,51 @@ document.getElementById('f').addEventListener('submit', async (ev) => {
   if (r.status === 201) { m.className='msg ok'; m.textContent = 'gravada (id '+j.id+')'; ev.target.reset(); carregar(); }
   else { m.className='msg erro'; m.textContent = j.erro + ' → faltando: ' + (j.campos_faltando||[]).join(', '); }
 });
+async function whep(url, video){
+  const pc = new RTCPeerConnection({iceServers: []});
+  pc.addTransceiver('video', {direction: 'recvonly'});
+  pc.addTransceiver('audio', {direction: 'recvonly'});
+  pc.ontrack = (ev) => { video.srcObject = ev.streams[0]; video.play().catch(()=>{}); };
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  const res = await fetch(url + '?', {method: 'POST', headers: {'Content-Type': 'application/sdp'}, body: offer.sdp});
+  if (!res.ok) throw new Error('WHEP ' + res.status);
+  await pc.setRemoteDescription({type: 'answer', sdp: await res.text()});
+}
+
+const criados = new Set();
+function cartao(f){
+  return `<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+      <div style="padding:6px 8px;font-size:12px;display:flex;justify-content:space-between;gap:8px">
+        <b>${esc(f.rotulo)}</b><span class="sub" id="st-${f.id}">…</span>
+      </div>
+      <video id="v-${f.id}" muted playsinline autoplay style="width:100%;background:#000;aspect-ratio:16/9"></video>
+    </div>`;
+}
+function status(f){
+  const s = (f.no_ar ? '<span class="pill concluida">no ar (WebRTC)</span>' : '<span class="pill bloqueada">sem sinal</span>');
+  return `SRT ${f.srt_port} · ${s}` + ((f.tracks||[]).length ? ' · '+f.tracks.join('/') : '')
+       + ((f.leitores||[]).length ? ' · '+f.leitores.length+' leitor(es)' : '');
+}
 async function carregarFluxos(){
   const d = await (await fetch('/api/fluxos')).json();
   const alvo = document.getElementById('fluxos');
-  if (!d.fluxos || !d.fluxos.length){ alvo.innerHTML = '<div class="sub">nenhum fluxo no lado terra (rode <code>python ground/receiver.py</code>)</div>'; return; }
-  alvo.innerHTML = d.fluxos.map(f => `
-    <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
-      <div style="padding:6px 8px;font-size:12px;display:flex;justify-content:space-between;gap:8px">
-        <b>${esc(f.rotulo)}</b>
-        <span class="sub">SRT ${f.srt_port} · ${f.manifesto_existe ? '<span class="pill concluida">no ar</span>' : '<span class="pill bloqueada">sem sinal</span>'}${f.reinicios ? ' · reinícios '+f.reinicios : ''}</span>
-      </div>
-      <video id="v-${f.id}" muted playsinline autoplay style="width:100%;background:#000;aspect-ratio:16/9"></video>
-    </div>`).join('');
+  if (!d.fluxos || !d.fluxos.length){ alvo.innerHTML = '<div class="sub">nenhum fluxo no lado terra (rode <code>ground/start-mediamtx.sh</code>)</div>'; return; }
   d.fluxos.forEach(f => {
-    const v = document.getElementById('v-'+f.id);
-    if (!f.manifesto_existe) return;
-    if (v.canPlayType('application/vnd.apple.mpegurl')) { v.src = f.link_hls; }
-    else if (window.Hls && window.Hls.isSupported()) { const h = new window.Hls({lowLatencyMode:true}); h.loadSource(f.link_hls); h.attachMedia(v); }
+    if (!criados.has(f.id)) {                     // cria o player UMA vez: recriar a cada ciclo abre sessao nova
+      alvo.insertAdjacentHTML('beforeend', cartao(f));
+      criados.add(f.id);
+      const v = document.getElementById('v-'+f.id);
+      if (f.link_webrtc) whep(f.link_webrtc, v).catch(() => {
+        if (window.Hls && window.Hls.isSupported()) { const h = new window.Hls({lowLatencyMode:true}); h.loadSource(f.link_hls_mediamtx||f.link_hls); h.attachMedia(v); }
+      });
+      v.muted = true; v.play().catch(()=>{});
+    }
+    const el = document.getElementById('st-'+f.id);
+    if (el) el.innerHTML = status(f);
   });
 }
+setInterval(()=>{document.getElementById('relogio').textContent = new Date().toLocaleTimeString('pt-BR', {hour12:false}) + '.' + String(new Date().getMilliseconds()).padStart(3,'0');}, 100);
 carregar(); carregarFluxos(); setInterval(carregarFluxos, 5000);
 </script>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script></body></html>

@@ -1,0 +1,49 @@
+{
+ "transporte": "hls",
+ "url": "http://127.0.0.1:8888/cam-01/index.m3u8",
+ "amostras": [
+  {
+   "n": 150,
+   "png": "C:\\Users\\EngenhariaGoogleMari\\lecsor-pipeline-video\\bench\\saida\\_q-hls-n150.jpg",
+   "chegada": 1793991533.087,
+   "chegada_iso": "15:58:53.087",
+   "comando": "ffmpeg -hide_banner -loglevel info -i http://127.0.0.1:8888/cam-01/index.m3u8 -frames:v 210 -vf showinfo -q:v 4 -y C:\\Users\\EngenhariaGoogleMari\\lecsor-pipeline-video\\bench\\saida\\_q-hls-%04d.jpg"
+  },
+  {
+   "n": 300,
+   "png": "C:\\Users\\EngenhariaGoogleMari\\lecsor-pipeline-video\\bench\\saida\\_q-hls-n300.jpg",
+   "chegada": 1793991542.596,
+   "chegada_iso": "15:59:02.596",
+   "comando": "ffmpeg -hide_banner -loglevel info -i http://127.0.0.1:8888/cam-01/index.m3u8 -frames:v 360 -vf showinfo -q:v 4 -y C:\\Users\\EngenhariaGoogleMari\\lecsor-pipeline-video\\bench\\saida\\_q-hls-%04d.jpg"
+  },
+  {
+   "n": 600,
+   "png": null,
+   "chegada": 1793991319.027,
+   "chegada_iso": "15:55:19.027",
+   "comando": "ffmpeg -hide_banner -loglevel info -i http://127.0.0.1:8888/cam-01/index.m3u8 -t 26.0 -vf showinfo,select='eq(n,600)' -fps_mode passthrough -y C:\\Users\\EngenhariaGoogleMari\\lecsor-pipeline-video\\bench\\saida\\_q-hls-%d.png"
+  }
+ ],
+ "quadros_carimbados": 361,
+ "leitura_quadro": [
+  {
+   "n": 150,
+   "quadro": "15:58:50.000",
+   "chegada_iso": "15:58:53.087",
+   "latencia_s": 3.087
+  },
+  {
+   "n": 300,
+   "quadro": "15:59:00.000",
+   "chegada_iso": "15:59:02.596",
+   "latencia_s": 2.596
+  }
+ ],
+ "latencia_s": {
+  "n": 2,
+  "min": 2.596,
+  "mediana": 3.087,
+  "max": 3.087,
+  "transporte": "hls"
+ }
+}
