@@ -1,0 +1,33 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Bancada — Fase 0-A</title>
+<style>
+ body{font-family:inherit;color:var(--foreground);font-size:13px;line-height:1.45}
+ h1{font-size:17px;margin:0 0 2px} h2{font-size:13px;margin:18px 0 6px;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:.08em}
+ .sub{color:var(--muted-foreground);font-size:12px}
+ table{border-collapse:collapse;width:100%;margin-top:6px;font-size:12.5px}
+ th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)}
+ th{color:var(--muted-foreground);font-weight:600}
+ .kpi{display:flex;gap:22px;margin-top:10px;flex-wrap:wrap}
+ .kpi div b{display:block;font-size:19px} .kpi div span{color:var(--muted-foreground);font-size:11.5px}
+ .erro{color:#c2410c} .ok{color:#15803d}
+ code{background:var(--accent);padding:1px 4px;border-radius:3px;font-size:12px}
+</style></head><body>
+<h1>Bancada — Fase 0-A</h1>
+<div class="sub">Vídeo próprio 1920×1080 @ 30.0 fps · 10.0 s · gerado em 2026-11-06T15:24:50-03:00 · NVIDIA GeForce RTX 4050 Laptop GPU, 6141 MiB, 551.76</div>
+<div class="kpi">
+  <div><b>746.5 Mbps</b><span>bitrate cru (sem compressão)</span></div>
+  <div><b>99,26%</b><span>corte do x264 CRF23</span></div>
+  <div><b>94,87</b><span>VMAF do x264 CRF23</span></div>
+  <div><b>9,52×</b><span>encode vs tempo real</span></div>
+</div>
+<h2>Medições gravadas em bench/saida/resultado-fase0.json</h2>
+<table><tr><th>Configuração</th><th>Bitrate cod.</th><th>Corte vs cru</th><th>VMAF</th><th>Encode</th><th>Status</th></tr>
+<tr><td>x264 CRF23</td><td>5.51</td><td>99.26%</td><td>94.87</td><td>9.52×</td><td>ok</td></tr>
+<tr><td>x264 CRF28</td><td>2.683</td><td>99.64%</td><td>90.45</td><td>10.11×</td><td>ok</td></tr>
+<tr><td>x265 CRF28</td><td>3.46</td><td>99.54%</td><td>87.74</td><td>6.11×</td><td>ok</td></tr>
+<tr><td>NVENC H.264 CQ28</td><td>—</td><td>—</td><td>—</td><td>—</td><td>erro: driver/API NVENC</td></tr>
+<tr><td>NVENC HEVC CQ28</td><td>—</td><td>—</td><td>—</td><td>—</td><td>erro: driver/API NVENC</td></tr></table>
+<h2>Transporte</h2>
+<div>SRT validado ponta a ponta na bancada (<code>srt://127.0.0.1:8890?mode=caller</code> ↔ <code>mode=listener</code>): 4,1 s recebidos a ~7,72 Mbps.</div>
+<h2>Reprodutibilidade</h2>
+<div>VMAF do mesmo arquivo recalculado 3× fora do script: <b>94,868 · 90,454 · 87,742</b> (idêntico em cada repetição). Entre 5 configurações, 3 mediram e 2 falharam por driver de GPU: <span class="erro">exige NVENC API 13.1 (driver ≥ 610), instalado 551.76</span>.</div>
+</body></html>
