@@ -124,7 +124,7 @@ def sonda(fonte: str) -> dict:
 
 def _comando(fonte: str, fluxo_id: str, bitrate: str, codec: str, repetir: bool, tipo: str,
              srt_host: str, srt_port: int, audio: bool = False, fonte2: str | None = None,
-             fps: int = 30, arquivo_saida: str | None = None) -> list[str]:
+             fps: int = 30, arquivo_saida: str | None = None, copiar: bool = False) -> list[str]:
     destino = (f"srt://{srt_host}:{srt_port}?mode=caller&latency=200&pkt_size=1316&streamid=publish:{fluxo_id}")
     cmd = ["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "warning", "-re"]
     if tipo == "arquivo" and repetir:
@@ -132,12 +132,18 @@ def _comando(fonte: str, fluxo_id: str, bitrate: str, codec: str, repetir: bool,
     cmd += ["-i", fonte]
     if fonte2 and audio:   # yt-dlp entrega video e audio em enderecos separados: junta os dois
         cmd += ["-i", fonte2, "-map", "0:v:0", "-map", "1:a:0?"]
-    cmd += ["-c:v", codec, "-preset", "ultrafast", "-tune", "zerolatency",
-            "-b:v", bitrate, "-maxrate", bitrate, "-bufsize", "1M",
-            "-r", str(fps), "-g", str(fps), "-pix_fmt", "yuv420p"]   # 30 fps: menos de 30 fica ruim, 60 gasta banda
+    if copiar:
+        # arquivo JA comprimido que vai direto para o ar: sem re-codificar (nao gastar banda a toa)
+        cmd += ["-c:v", "copy"]
+    else:
+        cmd += ["-c:v", codec, "-preset", "ultrafast", "-tune", "zerolatency",
+                "-b:v", bitrate, "-maxrate", bitrate, "-bufsize", "1M",
+                "-r", str(fps), "-g", str(fps), "-pix_fmt", "yuv420p"]   # 30 fps: menos de 30 fica ruim, 60 gasta banda
     # Audio do clipe de teste pesa mais que o video comprimido (MP2 padrao ~224 kbps): por padrao
     # vai sem audio, para o numero medido ser o do video; quem quiser mantem a 48 kbps mono.
-    if audio:
+    if copiar:
+        cmd += ["-c:a", "copy"]        # arquivo comprimido: audio vai como esta (se houver)
+    elif audio:
         cmd += ["-c:a", "aac", "-b:a", "48k", "-ac", "1"]
     else:
         cmd += ["-an"]
@@ -159,7 +165,7 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
             codec: str = "libx264", repetir: bool = True, tipo: str | None = None, audio: bool = False,
             embarcacao_id: str = "psv-exemplo", srt_host: str = "127.0.0.1", srt_port: int = 8890,
             registrar_camera: bool = True, abrir_log: bool = True, fps: int = 30,
-            guardar_arquivo: bool = False) -> dict:
+            guardar_arquivo: bool = False, copiar: bool = False) -> dict:
     """Sobe a ingestao. Devolve o registro (com id) para a tela acompanhar."""
     garantir_schema()
     ENVIOS.mkdir(parents=True, exist_ok=True); LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -196,7 +202,7 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
                  f"Para comprimir, use alvo abaixo da entrada (ex.: {alvo_automatico(ent)}) — o numero medido e o total do fluxo (video + audio + MPEG-TS).")
     arquivo_saida = str(ENVIOS / "log" / f"{fluxo_id}-{int(time.time())}.ts") if guardar_arquivo else None
     cmd = _comando(fonte, fluxo_id, bitrate, codec, repetir, tipo, srt_host, srt_port, audio=audio,
-                   fonte2=fonte2, fps=fps, arquivo_saida=arquivo_saida)
+                   fonte2=fonte2, fps=fps, arquivo_saida=arquivo_saida, copiar=copiar)
     log = LOG_DIR / f"{fluxo_id}-{int(time.time())}.log"
     saida = open(log, "ab", buffering=0) if abrir_log else subprocess.DEVNULL
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=saida, cwd=str(RAIZ))

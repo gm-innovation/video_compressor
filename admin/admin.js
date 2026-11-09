@@ -42,6 +42,7 @@ function digitandoNaTela() {
 }
 
 async function atualizar() {
+  try { const rc = await fetch('/api/cameras/detalhe'); if (rc.ok) A.camerasInterno = await rc.json(); } catch (e) {}
   const rs = await api('/api/resumo'); if (rs.ok) A.resumo = rs.corpo;
   const em = await api('/api/embarcacoes'); A.embarcacoes = (em.corpo && em.corpo.embarcacoes) || [];
   const cm = await api('/api/cameras'); A.cameras = (cm.corpo && cm.corpo.cameras) || [];
@@ -128,6 +129,7 @@ const SUBS = {
   clientes: ['Clientes', 'Empresas (armadores) atendidas pelo sistema.'],
   embarcacoes: ['Embarcações', 'Cada embarcação pertence a um cliente.'],
   cameras: ['Câmeras', 'Câmera do produto aponta para um fluxo publicado; nunca guarda credencial de câmera.'],
+  tempo: ['Tempo real', 'Como está a compressão, a velocidade de envio e a banda consumida e economizada, atualizando a cada 2 segundos.'],
   usuarios: ['Usuários', 'Papéis: cliente (vê a própria empresa), operador e administrador.'],
   analises: ['Análises de vídeo', 'Contagem e eventos sobem de bordo (Fase 5) — sem agente a bordo a tela fica vazia.'],
   auditoria: ['Auditoria', 'Quem viu qual câmera, quando — e o que foi negado.'],
@@ -142,9 +144,10 @@ function desenhar() {
   $('titulo-tela').textContent = titulo; $('sub-tela').textContent = sub;
   const tela = $('tela'); limpar(tela);
   if (timerEnvios) { clearInterval(timerEnvios); timerEnvios = null; }
+  if (timerTempo) { clearInterval(timerTempo); timerTempo = null; }
   const despacho = { painel: telaPainel, fases: telaFases, medicoes: telaMedicoes, decisoes: telaDecisoes,
     evidencias: telaEvidencias, documentos: telaDocumentos, clientes: telaClientes, embarcacoes: telaEmbarcacoes,
-    cameras: telaCameras, usuarios: telaUsuarios, analises: telaAnalises, marcas: telaMarcas, envios: telaEnvios,
+    cameras: telaCameras, usuarios: telaUsuarios, tempo: telaTempoReal, analises: telaAnalises, marcas: telaMarcas, envios: telaEnvios,
     auditoria: telaAuditoria, saude: telaSaude };
   (despacho[A.tela] || telaPainel)(tela);
 }
@@ -265,35 +268,99 @@ function telaEmbarcacoes(t) {
 }
 
 function telaCameras(t) {
-  if (A.usuario.papel === 'admin') {
+  if (A.usuario.papel === 'admin' || A.usuario.papel === 'operador') {
     const caixa = document.createElement('div'); caixa.className = 'caixa-form';
-    caixa.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Nova câmera do produto' }));
-    const aviso = document.createElement('div'); aviso.className = 'nota'; aviso.style.color = 'var(--texto2)'; aviso.style.fontSize = '12px';
-    aviso.textContent = 'A câmera aponta para um fluxo publicado pelo agente de bordo. Credencial de câmera não entra aqui.';
+    caixa.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Câmera: onde ela está e por onde entra' }));
+    const aviso = document.createElement('div'); aviso.className = 'nota';
+    aviso.textContent = 'IP e porta ficam só aqui (operação/LECSOR) e no servidor de captura; o app do cliente nunca recebe ' +
+      'endereço de câmera nem senha. A senha entra por variável de ambiente no servidor de captura, não neste formulário.';
     caixa.appendChild(aviso);
     const linha = document.createElement('div'); linha.className = 'linha-form'; caixa.appendChild(linha);
-    const id = campo(linha, 'k-id', 'Identificador da câmera', '');
-    const emb = campo(linha, 'k-emb', 'Embarcação (identificador)', '');
     const rot = campo(linha, 'k-rot', 'Rótulo na tela', '');
     const flu = campo(linha, 'k-fluxo', 'Fluxo publicado (ex.: cam-01)', '');
-    const loc = campo(linha, 'k-local', 'Local', '');
-    const onde = document.createElement('div'); caixa.appendChild(onde);
+    const ip = campo(linha, 'k-ip', 'IP da câmera ou gravador', '');
+    const porta = campo(linha, 'k-porta', 'Porta', '554');
+    const canal = campo(linha, 'k-canal', 'Canal do gravador (opcional)', '');
     caixa.appendChild(botao('Cadastrar câmera', 'marca', async () => {
-      const r = await api('/api/cameras', { method: 'POST', body: JSON.stringify({ id: id.value.trim(), embarcacao_id: emb.value.trim(),
-        rotulo: rot.value, fluxo_id: flu.value.trim(), local: loc.value }) });
+      const r = await api('/api/cameras', { method: 'POST', body: JSON.stringify({
+        rotulo: rot.value.trim() || flu.value.trim(), fluxo_id: flu.value.trim(),
+        ip: ip.value.trim(), porta: (porta.value || '').trim(), canal: (canal.value || '').trim() }) });
       await atualizar();
       mostrarRecado(r.ok ? 'câmera cadastrada: ' + r.corpo.id : 'recusado: ' + JSON.stringify(r.corpo), !r.ok);
     }));
     t.appendChild(caixa);
   }
-  t.appendChild(tabela([{ rotulo: 'Câmera', campo: 'rotulo' }, { rotulo: 'Identificador', campo: 'id' },
-    { rotulo: 'Embarcação', campo: 'embarcacao_id' }, { rotulo: 'No ar', valor: (l) => (l.no_ar ? 'sim' : 'não') },
+  const interno = (A.camerasInterno && A.camerasInterno.cameras) || [];
+  const porId = {};
+  for (const c of interno) porId[c.id] = c;
+  t.appendChild(tabela([{ rotulo: 'Câmera', campo: 'rotulo' }, { rotulo: 'Fluxo', campo: 'fluxo_id' },
+    { rotulo: 'Endereço (operação)', valor: (l) => { const c = porId[l.id] || {};
+        return c.ip ? c.ip + ':' + (c.porta || '554') + (c.canal ? ' · canal ' + c.canal : '') : '—'; } },
+    { rotulo: 'Como o agente pega', valor: (l) => { const c = porId[l.id] || {}; return c.captura || '—'; } },
+    { rotulo: 'No ar', valor: (l) => (l.no_ar ? 'sim' : 'não') },
     { rotulo: 'Encoder', valor: (l) => { const e = l.encoder || {}; return [e.codec, e.resolucao, e.fps ? e.fps + ' fps' : '', e.bitrate].filter(Boolean).join(' · '); } },
     { rotulo: 'Espectadores', campo: 'leitores' },
     { rotulo: 'Ação', valor: (l) => botao('ativar/desativar', 'mini', async () => {
         const r = await api('/api/cameras/' + encodeURIComponent(l.id) + '/ativo', { method: 'POST', body: JSON.stringify({ ativo: !l.ativo }) });
         if (!r.ok) alert(JSON.stringify(r.corpo)); await atualizar();
       }) }], A.cameras, 'nenhuma câmera cadastrada'));
+}
+
+function telaTempoReal(t) {
+  const topo = document.createElement('div'); topo.className = 'caixa-form';
+  topo.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Streaming agora' }));
+  const linha = document.createElement('div'); linha.className = 'linha-form'; topo.appendChild(linha);
+  const resumo = document.createElement('div'); resumo.className = 'sub'; resumo.id = 'tempo-resumo';
+  linha.appendChild(resumo);
+  const tabelaBox = document.createElement('div');
+  const dizer = (txt) => { resumo.textContent = txt; };
+  t.appendChild(topo); t.appendChild(tabelaBox);
+
+  const desenharAgora = (m) => {
+    const tot = m.total || {};
+    const fmt = (v, casas) => (v === null || v === undefined) ? '—' : Number(v).toLocaleString('pt-BR', { maximumFractionDigits: casas === undefined ? 2 : casas });
+    dizer('Atualizado ' + (m.em || '').slice(11, 19) + ' · ' + (tot.fluxos || 0) + ' fluxo(s) no ar · ' +
+      'compressão agora: ' + fmt(tot.compressao_pct) + '% · ' +
+      'entrada ' + fmt(tot.entrada_mbps, 3) + ' Mbps → saída ' + fmt(tot.saida_mbps, 3) + ' Mbps · ' +
+      'economia ' + fmt(tot.economia_mbps, 3) + ' Mbps · enviado ' + fmt(tot.mb_enviados, 2) + ' MB');
+    limpar(tabelaBox);
+    const linhas = (m.fluxos || []).map((f) => ({
+      fluxo: f.fluxo_id,
+      comprimindo: f.vivo ? 'sim' : 'sem sinal',
+      entrada: (f.entrada_mbps === null ? '—' : fmt(f.entrada_mbps, 3) + ' Mbps'),
+      saida: (f.saida_mbps === null ? '—' : fmt(f.saida_mbps, 3) + ' Mbps'),
+      compressao: (f.compressao_pct === null ? '—' : fmt(f.compressao_pct) + '%'),
+      economia: (f.economia_mbps === null ? '—' : fmt(f.economia_mbps, 3) + ' Mbps'),
+      agora: (f.mbps_agora === null || f.mbps_agora === undefined ? '—' : fmt(f.mbps_agora, 3) + ' Mbps'),
+      enviado: (f.mb_enviados === null || f.mb_enviados === undefined ? '—' : fmt(f.mb_enviados, 2) + ' MB'),
+      fps: f.fps_agora === null || f.fps_agora === undefined ? '—' : fmt(f.fps_agora, 1),
+      perdidos: f.perdidos === null || f.perdidos === undefined ? '—' : f.perdidos,
+      leitores: f.leitores === null || f.leitores === undefined ? '—' : f.leitores,
+      no_ar: (f.segundos_no_ar === null || f.segundos_no_ar === undefined ? '—' : Math.round(f.segundos_no_ar) + ' s')
+    }));
+    tabelaBox.appendChild(tabela([
+      { rotulo: 'Fluxo', campo: 'fluxo' },
+      { rotulo: 'Enviando', campo: 'comprimindo' },
+      { rotulo: 'Entrada (original)', campo: 'entrada' },
+      { rotulo: 'Saída (na rede)', campo: 'saida' },
+      { rotulo: 'Compressão agora', campo: 'compressao' },
+      { rotulo: 'Banda economizada', campo: 'economia' },
+      { rotulo: 'Taxa agora', campo: 'agora' },
+      { rotulo: 'Total enviado', campo: 'enviado' },
+      { rotulo: 'fps', campo: 'fps' },
+      { rotulo: 'Perdidos', campo: 'perdidos' },
+      { rotulo: 'Espectadores', campo: 'leitores' },
+      { rotulo: 'No ar há', campo: 'no_ar' }
+    ], linhas, 'nenhum fluxo no ar agora: publique um vídeo em "Enviar vídeo"'));
+  };
+  const carregar = async () => {
+    const r = await fetch('/api/metricas');
+    if (!r.ok) { dizer('sem permissão para ver as métricas'); return; }
+    desenharAgora(await r.json());
+  };
+  carregar();
+  if (timerTempo) { clearInterval(timerTempo); timerTempo = null; }
+  timerTempo = setInterval(() => { if (A.tela === 'tempo') carregar(); }, 2000);
 }
 
 function telaUsuarios(t) {
@@ -435,6 +502,7 @@ function telaMarcas(t) {
    O encode roda no servidor (ffmpeg libx264 -> SRT no mediamtx); a tela so mostra
    o que a API mede: bitrate de entrada, bitrate de saida, corte, fps e tempo no ar. */
 let timerEnvios = null;
+let timerTempo = null;
 const mbps = (k) => (k === null || k === undefined || k === '' ? '—' : (k / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) + ' Mbps');
 const numOu = (v, u) => (v === null || v === undefined || v === '' ? '—' : (Math.round(v * 10) / 10).toLocaleString('pt-BR') + ' ' + (u || ''));
 
@@ -501,7 +569,8 @@ function telaEnvios(t) {
   legenda.textContent = 'Entrada = tamanho do seu vídeo original · Saída = tamanho depois de comprimir · ' +
     'Compressão = quanta banda foi economizada · Tempo = quanto a compressão levou · Qualidade = semelhança com o ' +
     'original (1,000 = idêntico) · No ar = desde quando o vídeo comprimido está publicado.' +
-    ' · PISO EXIGIDO: Compressão de pelo menos 73% E qualidade de pelo menos 0,9733 — abaixo disso a linha fica com ✗.';
+        ' · PISO: compressão de pelo menos 73% e qualidade de pelo menos 0,9733 nominal, com margem de 0,002 ' +
+    '(aceita 0,9713: 0,9720 numa compressão de 78% entra) — abaixo disso a linha fica com ✗.';
   t.appendChild(legenda);
 
   const guardar = () => { A.envioForm = { modo: modo.value, url: url.value, rotulo: rotulo.value,
@@ -606,7 +675,7 @@ function telaEnvios(t) {
   const resumo = (j) => 'comprimido: ' + j.entrada.mb + ' MB → ' + j.comprimido.mb + ' MB · ' +
     (j.corte_pct > 0 ? '↓ ' : '↑ ') + Math.abs(j.corte_pct) + '% · qualidade ' + (j.ssim === null ? '—' : j.ssim) +
     ' · ' + j.tempo_encode_s + ' s' + (j.crf ? ' · CRF ' + j.crf : '') +
-    (j.passa_pisos ? ' · PISO ✓ (≥73% e ≥0,9733)' : ' · ATENÇÃO — ' + (j.aviso_pisos || 'abaixo do piso')) +
+    (j.passa_pisos ? ' · PISO ✓ (≥73% e ≥0,9713 · nominal 0,9733)' : ' · ATENÇÃO — ' + (j.aviso_pisos || 'abaixo do piso')) +
     '. Agora clique em "Publicar no ar".';
 
   btnComprimir.onclick = () => {
@@ -650,6 +719,7 @@ function telaEnvios(t) {
 
   carregar();
   if (timerEnvios) { clearInterval(timerEnvios); timerEnvios = null; }
+  if (timerTempo) { clearInterval(timerTempo); timerTempo = null; }
   timerEnvios = setInterval(() => { if (A.tela === 'envios') carregar(); }, 5000);
 }
 

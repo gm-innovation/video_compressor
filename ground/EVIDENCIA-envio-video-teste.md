@@ -156,3 +156,46 @@ compressão possível sem perder qualidade**.
   84,48% / 0,9834 ✓.
 - A linha da tabela ganha `✓` ou `✗ (abaixo do piso)`, o texto de progresso diz "PISO ✓ (≥73% e ≥0,9733)"
   e a legenda declara o piso. O banco guarda `passa_pisos`, `piso_comp` e `piso_ssim` por compressão.
+
+## Margem nos pisos (09/11/2026, pedido do dono)
+
+O dono mandou tratar 73% e 0,9733 como **mínimos com margem**: `0,9720` está a 0,0013 do nominal e não
+justifica recusar uma compressão de 78,11%. Regra agora em `ground/etapas.py`:
+
+- `PISO_COMPRESSAO_PCT = 73.0` — **piso firme** (banda é o que se quer economizar);
+- `PISO_QUALIDADE_SSIM = 0.9733` com `MARGEM_QUALIDADE_SSIM = 0.002` → `PISO_QUALIDADE_ACEITO = 0.9713`;
+- `passa_pisos(compressao_pct, ssim)` é o portão único usado pelo encode e pelos testes;
+- medido: `passa_pisos(78.11, 0.9720)` → **passa** (antes reprovava e forçava o degrau CRF 36 → 34);
+  `passa_pisos(60, 0.9713)` reprova (banda) e `passa_pisos(75, 0.9700)` reprova (qualidade).
+- efeito prático: menos tentativas de encode (não desce mais um degrau por 0,0013 de SSIM) — o que também
+  atende ao "não travar o envio das imagens".
+
+## Tempo real: compressão, velocidade e banda, medidos pelo remetente (09/11/2026)
+
+`GET /api/metricas` (só operação/admin) consolida o que está no ar AGORA. A fonte é o próprio ffmpeg que
+envia: o `-progress` é lido pela ingestão e gravado 1×/s na linha da ingestão (`bitrate_saida_kbps`, `fps`,
+`tamanho_mb`, `duracao_s`, `atualizado_em`). `atualizado_em` com menos de 6 s = envio vivo; mais que isso a
+tela diz **sem sinal** (foi assim que o teste pegou um fluxo parado, em vez de mostrar número velho).
+
+Exemplo real medido na bancada (clipe do dono publicado com `-c:v copy`, laço):
+
+    entrada (original)  0,883 Mbps
+    saida (na rede)     0,193 Mbps   compressao agora 78,14%
+    banda economizada   0,691 Mbps   enviado 0,4 MB   fps 31,2
+
+Observação honesta: a "compressão agora" (por trecho, medida na taxa do envio) difere da compressão do
+arquivo inteiro (73,64% no mesmo material) porque o material tem trechos fáceis e difíceis; as duas colunas
+existem para não confundir medição de arquivo com medição de streaming.
+
+A tela **Tempo real** do admin (`button[data-tela='tempo']`) atualiza a cada 2 s e mostra, por fluxo e no
+total: entrada, saída, compressão agora, banda economizada, taxa agora, total enviado, fps, perdidos,
+espectadores e tempo no ar.
+
+## Câmera: IP e porta (09/11/2026)
+
+O formulário pedia cinco campos e não tinha o endereço. Agora pede o essencial: **rótulo**, **fluxo
+publicado**, **IP** e **porta** (canal do gravador é opcional); o identificador é derivado do fluxo. O
+endereço fica **só do lado da operação**: `GET /api/cameras` (o que o app do cliente consome) continua sem
+IP, porta ou comando de captura; `GET /api/cameras/detalhe` (operação/admin) devolve `ip`, `porta`,
+`protocolo`, `canal` e o comando de captura com a **senha como variável** (`rtsp://$USUARIO:$SENHA@ip:porta`),
+nunca o valor. O teste `tests/e2e-envios.py` verifica os dois lados.

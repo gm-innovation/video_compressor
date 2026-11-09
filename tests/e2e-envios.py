@@ -228,8 +228,8 @@ def main() -> int:
         checar("MB" in cabecalho and "kbps" in cabecalho, "a tabela mostra o tamanho real e o bitrate de entrada e saída")
         checar("s (" in cabecalho or " s " in cabecalho, "a tabela mostra em quanto tempo a compressão foi feita")
         checar("alvo" not in cabecalho.lower(), "a coluna confusa \"alvo\" saiu da tela")
-        checar("PISO EXIGIDO" in cabecalho and "73" in cabecalho and "0,9733" in cabecalho,
-               "a tela declara o piso travado: 73% de compressão e qualidade 0,9733")
+        checar("PISO" in cabecalho and "73" in cabecalho and "0,9733" in cabecalho and "0,9713" in cabecalho,
+               "a tela declara o piso: 73% de compressão e qualidade 0,9733 nominal (aceita 0,9713 com margem)")
         checar("✓" in cabecalho, "a linha mostra que a compressão bateu o piso (✓)")
         # publicar a última compressão: etapas 2 e 3 saem do mesmo painel
         pb.evaluate("(() => { const b=[...document.querySelectorAll('button')].find(x=>/Publicar no ar/i.test(x.textContent)); b.click(); })()")
@@ -250,6 +250,65 @@ def main() -> int:
         if vazou:
             print("      vazou:", vazou[:5])
         nav.close()
+
+    # --- 7) piso com margem, metricas de tempo real e endereco da camera so na operacao
+    sys.path.insert(0, str(RAIZ / "ground"))
+    import etapas as et
+    checar(abs(et.PISO_QUALIDADE_ACEITO - 0.9713) < 1e-9,
+           "o piso de qualidade aceita 0,9713 (0,9733 nominal com margem de 0,002)")
+    ok_margem, _ = et.passa_pisos(78.11, 0.9720)
+    checar(ok_margem, "78,11% de compressão com 0,9720 passa: o dono manda tratar o valor como mínimo com margem")
+    ok_baixo, _ = et.passa_pisos(60.0, 0.9713)
+    checar(not ok_baixo, "compressão abaixo de 73% continua reprovada (a banda é piso firme)")
+    ok_qual, _ = et.passa_pisos(75.0, 0.9700)
+    checar(not ok_qual, "qualidade abaixo da margem (0,9700) é reprovada")
+
+    # tempo real: o painel do admin recebe os numeros do streaming AGORA
+    tg = None
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            bb = pw.chromium.launch(channel="chrome")
+            ctx = bb.new_context()
+            pg = ctx.new_page()
+            pg.goto(BASE + "/admin")
+            pg.fill("#email", "admin@lecsor.test"); pg.fill("#senha", SENHA)
+            pg.click("#form-entrar button")
+            pg.wait_for_selector("#sistema:not(.oculto)", timeout=15000)
+            corpo = pg.evaluate("(async () => { const r = await fetch('/api/metricas'); return r.status + '|' + JSON.stringify(await r.json()); })()")
+            checar(corpo.startswith("200|"), "a operação tem /api/metricas (tempo real) respondendo")
+            dados = json.loads(corpo.split("|", 1)[1])
+            checar("total" in dados and "fluxos" in dados and {"entrada_mbps", "saida_mbps", "economia_mbps", "compressao_pct"} <= set(dados["total"]),
+                   "as métricas trazem entrada, saída, compressão e banda economizada")
+            pg.click("button[data-tela='tempo']")
+            pg.wait_for_timeout(4000)
+            tela = pg.inner_text("#tempo-resumo")
+            checar("economia" in tela and "compressão agora" in tela,
+                   "a tela Tempo real mostra compressão agora, banda consumida e economizada")
+            # cadastra a camera com IP e porta e confere o que o cliente recebe
+            pg.click("button[data-tela='cameras']")
+            pg.wait_for_selector("#k-ip", timeout=15000)
+            pg.fill("#k-rot", "Câmera de teste (endereço)"); pg.fill("#k-fluxo", "cam-teste-ip")
+            pg.fill("#k-ip", "10.99.0.7"); pg.fill("#k-porta", "555")
+            pg.evaluate("(() => { const b=[...document.querySelectorAll('button')].find(x=>/Cadastrar câmera/i.test(x.textContent)); b.click(); })()")
+            pg.wait_for_timeout(3000)
+            det = pg.evaluate("(async () => { const r = await fetch('/api/cameras/detalhe'); const j = await r.json(); return JSON.stringify(j.cameras.filter(c=>c.ip)); })()")
+            checar("10.99.0.7" in det and "555" in det, "a operação vê o IP e a porta da câmera")
+            checar("$SENHA" in det and "rtsp://" in det, "a operação vê como o agente pega a câmera, com a senha como variável (não o valor)")
+            pg.screenshot(path=str(RAIZ / "ground" / "print-admin-tempo-real.png"), full_page=True)
+            ctx.close()
+            # cliente: a lista de cameras NAO pode trazer endereco
+            ctx2 = bb.new_context(); pc = ctx2.new_page()
+            pc.goto(BASE + "/app")
+            pc.fill("#email", "cliente@armador-demo.test"); pc.fill("#senha", SENHA)
+            pc.click("#form-entrar button")
+            pc.wait_for_selector("#grade, #sistema", timeout=15000)
+            vista = pc.evaluate("(async () => { const r = await fetch('/api/cameras'); return JSON.stringify(await r.json()); })()")
+            checar("10.99.0.7" not in vista and "rtsp" not in vista and "555" not in vista,
+                   "o app do cliente nunca recebe o endereço da câmera")
+            ctx2.close(); bb.close()
+    except Exception as e:
+        checar(False, f"tempo real / endereço da câmera: falhou ({type(e).__name__}: {e})")
 
     limpar_testes()   # nao deixa os envios do teste poluindo a grade do cliente
     print(("\nTUDO OK" if not falhas else f"\n{len(falhas)} FALHA(S): " + "; ".join(falhas)))

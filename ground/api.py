@@ -542,6 +542,26 @@ class Handler(SimpleHTTPRequestHandler):
                 else:
                     linhas = c.execute("SELECT * FROM embarcacoes WHERE cliente_id=? ORDER BY nome", (u["cliente_id"],)).fetchall()
             return self._json(200, {"embarcacoes": [dict(x) for x in linhas]})
+        if rota in ("/api/metricas", "/api/tempo-real", "/api/metricas/tempo-real"):
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so operacao e administrador veem as metricas"})
+            return self._json(200, etapas_pipeline.metricas_ao_vivo(), {"Cache-Control": "no-store"})
+        if rota in ("/api/cameras/detalhe", "/api/cameras/interno"):
+            # endereco da camera so para a operacao: o app do cliente nunca recebe isso
+            if not (u and u["papel"] in PAPEL_ADMIN) and not self._local():
+                return self._json(403, {"erro": "so a operacao ve o endereco da camera"})
+            with conexao() as c:
+                linhas = [dict(x) for x in c.execute(
+                    "SELECT id,rotulo,fluxo_id,embarcacao_id,local,ativo,ip,porta,protocolo,canal "
+                    "FROM cameras ORDER BY id")]
+            for l in linhas:
+                if l.get("ip"):
+                    canal = str(l.get("canal") or "")
+                    l["captura"] = ("rtsp://$USUARIO:$SENHA@" + l["ip"] + ":" + str(l.get("porta") or 554)
+                                    + ("/Streaming/Channels/" + canal if canal else ""))
+                else:
+                    l["captura"] = ""
+            return self._json(200, {"cameras": linhas}, {"Cache-Control": "no-store"})
         if rota == "/api/cameras":
             if not u:
                 return self._json(401, {"erro": "entre no sistema"})
@@ -879,17 +899,34 @@ class Handler(SimpleHTTPRequestHandler):
             if not (u and u["papel"] in PAPEL_ADMIN):
                 return self._json(401, {"erro": "entre no sistema"})
             d = self._corpo()
-            faltando = [k for k in ("id", "embarcacao_id", "rotulo", "fluxo_id") if not str(d.get(k, "")).strip()]
+            # identificador derivado do fluxo: menos campo para o dono preencher
+            if not str(d.get("id", "")).strip():
+                d["id"] = re.sub(r"[^a-zA-Z0-9_\\-]", "-", str(d.get("fluxo_id", "")).strip())
+            d["rotulo"] = str(d.get("rotulo") or d.get("fluxo_id", "")).strip()
+            ip = str(d.get("ip") or "").strip()
+            porta = str(d.get("porta") or "").strip()
+            if ip and not re.match(r"^[0-9a-zA-Z.:\\-]{3,64}$", ip):
+                return self._json(422, {"erro": "ip invalido"})
+            if porta and not (porta.isdigit() and 1 <= int(porta) <= 65535):
+                return self._json(422, {"erro": "porta invalida"})
+            faltando = [k for k in ("id", "rotulo", "fluxo_id") if not str(d.get(k, "")).strip()]
             if faltando:
                 return self._json(422, {"erro": "camera incompleta", "campos_faltando": faltando})
             with conexao() as c:
-                if not c.execute("SELECT 1 FROM embarcacoes WHERE id=?", (d["embarcacao_id"],)).fetchone():
+                if not str(d.get("embarcacao_id", "")).strip():
+                    linha = c.execute("SELECT id FROM embarcacoes ORDER BY id LIMIT 1").fetchone()
+                    if not linha:
+                        return self._json(422, {"erro": "cadastre uma embarcacao primeiro"})
+                    d["embarcacao_id"] = linha["id"]
+                elif not c.execute("SELECT 1 FROM embarcacoes WHERE id=?", (d["embarcacao_id"],)).fetchone():
                     return self._json(422, {"erro": "embarcacao_id inexistente"})
-                c.execute("""INSERT OR REPLACE INTO cameras (id,embarcacao_id,rotulo,fluxo_id,local,ativo)
-                             VALUES (?,?,?,?,?,1)""",
-                          (d["id"], d["embarcacao_id"], d["rotulo"], d["fluxo_id"], d.get("local", "")))
-            auditar(u, "criar_camera", d["id"], self.client_address[0])
-            return self._json(201, {"id": d["id"]})
+                c.execute("""INSERT OR REPLACE INTO cameras
+                             (id,embarcacao_id,rotulo,fluxo_id,local,ativo,ip,porta,protocolo,canal)
+                             VALUES (?,?,?,?,?,1,?,?,?,?)""",
+                          (d["id"], d["embarcacao_id"], d["rotulo"], d["fluxo_id"], d.get("local", ""),
+                           ip, porta, str(d.get("protocolo") or "rtsp"), str(d.get("canal") or "")))
+            auditar(u, "criar_camera", (d["id"] + " " + ip + ":" + porta).strip(": "), self.client_address[0])
+            return self._json(201, {"id": d["id"], "ip": ip, "porta": porta})
         if rota.startswith("/api/cameras/") and rota.endswith("/ativo"):
             if not (u and u["papel"] in PAPEL_ADMIN):
                 return self._json(401, {"erro": "entre no sistema"})
