@@ -346,3 +346,35 @@ Medido: 2º envio da mesma webcam → `422 a webcam "ACER HD User Facing" ja est
 "Webcam bancada (ao vivo)" (id 143). Pare esse envio antes de transmitir de novo.`; fonte que não abre →
 `estado='erro'` com motivo; card vivo → `Bancada de testes (propria)` / `enviando` / 1,596 Mbps.
 Suíte `e2e-envios` verde com os 4 checks novos (bloco 11 = 87 verificações, todas ok).
+
+## Entrada, compressão e banda economizada de uma fonte CRUA (09/11/2026)
+
+O dono perguntou: *"onde estão as informações de entrada, compressão e banda economizada?"* — na tela Tempo
+real, o fluxo vivo mostrava **Entrada 0 Mbps**, **Compressão agora —** e **Banda economizada 0 Mbps**.
+
+Causa: a entrada só era lida do registro de compressão (arquivo) ou da linha de ingestão. Um **arquivo**
+tem bitrate medido; uma **webcam (dshow)/`testsrc2` não tem** — a captura é crua, sem fluxo comprimido de
+entrada — então `entrada = 0`, e sem entrada não há compressão nem economia para calcular. Além disso a
+resolução do fluxo vivo era gravada como **o nome do dispositivo** no lugar de "1280x720".
+
+O que mudou (módulo novo `ground/entrada.py`):
+1. **`entrada_teorica_kbps(resolucao, fps)`** — a banda bruta equivalente da fonte crua pela regra do
+   projeto: `W x H x fps x 12 bits/pixel / 1000` (4:2:0 8 bits; 1080p30 = 746,5 Mbps; 720p30 = 331,8 Mbps).
+2. **A resolução real é sondada** depois que a fonte publica (`ffprobe` no caminho do mediamtx): a linha
+   passou a guardar `1280x720@30` em vez de `ACER HD User Facing`.
+3. **Entrada medida tem prioridade**: quando existe medição (arquivo comprimido, câmera H.264), vale a
+   medição; o bruto só entra quando não existe fonte comprimida.
+4. **A tela diz de onde veio cada número** — coluna Entrada com "(bruto)" e o rótulo
+   `bruto teorico 1280x720@30 (4:2:0 8 bits)` / `medida na fonte`, para ninguém ler 331 Mbps como banda
+   que passou no link.
+5. **O histórico (`fechar_minutos`) usa a mesma regra**, e os 45 minutos fechados antes desta correção
+   foram recompletados com a entrada do próprio fluxo.
+
+Medido agora (fluxo `vivo-webcam-bancada-ao-vivo`): entrada **331,776 Mbps (bruto 1280x720@30)** → saída
+**1,609 Mbps** = **99,52%** de compressão · banda economizada **330,167 Mbps** · 4,9 MB enviados ·
+0 perdidos · 30 fps. Card da Produção: "Banda economizada 330,178 Mbps (entrada 331,776 Mbps, bruto
+teórico da captura)".
+
+**O que este número é e o que não é:** é o bruto da captura, não banda que trafegou. Numa câmera de bordo
+que já entrega H.264 (RTSP do DVR), a entrada será o bitrate medido do próprio stream (ex.: 4 Mbps) e a
+economia será a do re-encode — que é o número do produto, comparável ao alvo de ≥73% de corte.

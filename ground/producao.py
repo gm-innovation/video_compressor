@@ -18,11 +18,15 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import re
 import subprocess
 import time
 import urllib.request
 from datetime import datetime, timedelta, timezone
+
+sys.path.insert(0, str(os.path.dirname(os.path.abspath(__file__))))
+from entrada import entrada_teorica_kbps, origem_da_entrada  # noqa: E402
 
 from etapas import RAIZ, _agora as agora, conexao_banco, envio  # reaproveita a base da bancada
 
@@ -78,6 +82,7 @@ def fechar_minutos(*, limpar_amostras: bool = False) -> dict:
     with conexao_banco() as c:
         linhas = [dict(x) for x in c.execute("""
             SELECT a.ingestao_id, i.fluxo_id, i.camera_id, i.bitrate_entrada_kbps, i.fonte,
+                   MAX(i.resolucao) AS resolucao, MAX(i.fps_nativo) AS fps_nativo,
                    substr(a.em, 1, 16) AS minuto,   -- mantem o horario LOCAL (strftime converteria para UTC)
                    AVG(a.taxa_saida_kbps) AS saida_medio, AVG(a.corte_pct) AS corte_medio,
                    COUNT(*) AS amostras
@@ -94,7 +99,8 @@ def fechar_minutos(*, limpar_amostras: bool = False) -> dict:
             entrada = comp.get("bitrate_entrada_kbps")
             if not entrada and l.get("fonte"):
                 entrada = por_arquivo.get(os.path.basename(str(l["fonte"]).replace("\\", "/")))
-            entrada = entrada or l["bitrate_entrada_kbps"]
+            if not entrada:
+                entrada = entrada_teorica_kbps(l.get("resolucao"), l.get("fps_nativo"))
             saida = l["saida_medio"] or 0
             # a compressao do minuto e' recalculada com a entrada CERTA (do arquivo original):
             # o corte gravado na amostra usa a entrada da linha de ingestao, que no caso de um
@@ -272,7 +278,9 @@ def tempo_real() -> dict:
     fluxos = []
     for d in linhas:
         comp = originais.get(d["fluxo_id"]) or {}
-        entrada = (comp.get("bitrate_entrada_kbps") or d.get("bitrate_entrada_kbps") or 0) / 1000.0
+        medida_kbps = comp.get("bitrate_entrada_kbps") or d.get("bitrate_entrada_kbps")
+        entrada_kbps = medida_kbps or entrada_teorica_kbps(d.get("resolucao"), d.get("fps_nativo") or d.get("fps"))
+        entrada = (entrada_kbps or 0) / 1000.0
         saida = (d.get("bitrate_saida_kbps") or 0) / 1000.0
         cam = cameras.get(d.get("camera_id")) or por_fluxo.get(d["fluxo_id"]) or {}
         idade = _idade(d.get("atualizado_em") or "")
@@ -286,7 +294,9 @@ def tempo_real() -> dict:
             "estado": "enviando" if vivo else "parado",
             "erro": d.get("erro"),
             "idade_s": round(idade, 1) if idade is not None else None,
-            "entrada_mbps": round(entrada, 3), "saida_mbps": round(saida, 3),
+            "entrada_mbps": round(entrada, 3) if entrada else None, "saida_mbps": round(saida, 3),
+            "entrada_fonte": origem_da_entrada(d.get("resolucao"), d.get("fps_nativo") or d.get("fps"),
+                                              bool(medida_kbps)),
             "taxa_agora_mbps": round(saida, 3),
             "banda_economizada_mbps": round(max(0.0, entrada - saida), 3),
             "compressao_agora_pct": round((1 - saida / entrada) * 100, 2) if (entrada and saida) else None,
@@ -375,6 +385,10 @@ def resumo_producao(*, dias: int = 30, embarcacao_id: str | None = None, camera_
         mb = l["mb"] or 0
         saida_mbps = round(mb * 8 / segundos, 3) if segundos else None
         entrada_mbps = round((l["entrada_medio"] or 0) / 1000, 3) if l["entrada_medio"] else None
+        # minuto fechado ANTES desta correcao ficou sem entrada (fonte crua); completa com o bruto do
+        # proprio fluxo vivo, senao o card do dono continuaria mostrando "—" e economia zero
+        if not entrada_mbps:
+            entrada_mbps = (ao_vivo.get(l["fluxo_id"]) or {}).get("entrada_mbps")
         cam = cameras.get(l["camera_id"]) or {}
         emb_id = cam.get("embarcacao_id") or l["embarcacao_id"]
         emb = embarcacoes.get(emb_id) or {}
@@ -385,6 +399,9 @@ def resumo_producao(*, dias: int = 30, embarcacao_id: str | None = None, camera_
             "compressao_medio_pct": (round(l["compressao_medio"], 2)
                                      if (l["compressao_medio"] is not None and l["compressao_medio"] >= 0) else None),
             "entrada_mbps": entrada_mbps,
+            "entrada_fonte": ("bruto teorico da fonte crua (webcam/sintetica)"
+                              if (ao_vivo.get(l["fluxo_id"]) or {}).get("tipo") in ("camera", "sintetica")
+                              else ("medida na fonte" if entrada_mbps else "sem medida")),
             "banda_utilizada_mbps": saida_mbps,
             "banda_economizada_mbps": (round(max(0.0, entrada_mbps - saida_mbps), 3)
                                        if (entrada_mbps and saida_mbps) else None),
@@ -407,9 +424,13 @@ def resumo_producao(*, dias: int = 30, embarcacao_id: str | None = None, camera_
             "embarcacao": emb.get("nome") or f.get("embarcacao_id") or "—",
             "camera_id": f.get("camera_id") or f["fluxo_id"],
             "camera": f.get("camera_rotulo") or cam.get("rotulo") or f.get("rotulo") or f["fluxo_id"],
-            "fluxo_id": f["fluxo_id"], "tipo": f.get("tipo"), "compressao_medio_pct": None,
-            "entrada_mbps": None, "banda_utilizada_mbps": f.get("saida_mbps") or None,
-            "banda_economizada_mbps": None,
+            "fluxo_id": f["fluxo_id"], "tipo": f.get("tipo"),
+            "compressao_medio_pct": (round((1 - (f.get("saida_mbps") or 0) / f["entrada_mbps"]) * 100, 2)
+                                     if f.get("entrada_mbps") and f.get("saida_mbps") else None),
+            "entrada_mbps": f.get("entrada_mbps"), "banda_utilizada_mbps": f.get("saida_mbps") or None,
+            "entrada_fonte": f.get("entrada_fonte"),
+            "banda_economizada_mbps": (round(max(0.0, (f.get("entrada_mbps") or 0) - (f.get("saida_mbps") or 0)), 3)
+                                       if (f.get("entrada_mbps") and f.get("saida_mbps")) else None),
             "horas_streaming": round((f.get("segundos_no_ar") or 0) / 3600, 2),
             "mb_enviados": round(f.get("mb_enviados") or 0, 2), "minutos_no_ar": 0,
             "disponibilidade_pct": None, "de": None, "ate": None, "estado": "enviando",

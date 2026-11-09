@@ -333,7 +333,8 @@ function telaTempoReal(t) {
     const linhas = (m.fluxos || []).map((f) => ({
       fluxo: f.fluxo_id,
       comprimindo: f.vivo ? 'sim' : (f.erro ? 'ERRO: ' + f.erro : 'sem sinal'),
-      entrada: (f.entrada_mbps === null ? '—' : fmt(f.entrada_mbps, 3) + ' Mbps'),
+      entrada: (f.entrada_mbps === null ? '—' : fmt(f.entrada_mbps, 3) + ' Mbps' +
+        ((f.entrada_fonte || '').indexOf('bruto') === 0 ? ' (bruto)' : '')),
       saida: (f.saida_mbps === null ? '—' : fmt(f.saida_mbps, 3) + ' Mbps'),
       compressao: (f.compressao_pct === null ? '—' : fmt(f.compressao_pct) + '%'),
       economia: (f.economia_mbps === null ? '—' : fmt(f.economia_mbps, 3) + ' Mbps'),
@@ -555,7 +556,8 @@ function telaProducao(t) {
       ['Média de compressão', c.compressao_medio_pct === null ? '—' : fmt(c.compressao_medio_pct) + '%'],
       ['Banda utilizada', (c.banda_utilizada_mbps === null ? '—' : fmt(c.banda_utilizada_mbps, 3) + ' Mbps')],
       ['Banda economizada', (c.banda_economizada_mbps === null ? '—' : fmt(c.banda_economizada_mbps, 3) + ' Mbps'
-        + (c.entrada_mbps ? ' (entrada ' + fmt(c.entrada_mbps, 3) + ')' : ''))],
+        + (c.entrada_mbps ? ' (entrada ' + fmt(c.entrada_mbps, 3) + ' Mbps' +
+            ((c.entrada_fonte || '').indexOf('bruto') === 0 ? ', bruto teórico da captura' : '') + ')' : ''))],
       ['Horas de streaming', fmt(c.horas_streaming) + ' h'],
       ['Disponibilidade', (c.disponibilidade_pct === null || c.disponibilidade_pct === undefined)
         ? '—' : fmt(c.disponibilidade_pct, 2) + '% (' + fmt(c.minutos_no_ar, 0) + ' de ' + fmt(A.prodJanelaMin, 0) + ' min)'],

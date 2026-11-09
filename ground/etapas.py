@@ -20,6 +20,9 @@ import argparse, json, os, re, subprocess, sys, time, urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from entrada import entrada_teorica_kbps as _entrada_teorica_kbps, origem_da_entrada as _origem_da_entrada  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 RAIZ = Path(__file__).resolve().parent.parent
 COMPRIMIDOS = RAIZ / "ground" / "envios" / "comprimido"
 MEDIAMTX_API = "http://127.0.0.1:9997"
@@ -370,13 +373,18 @@ def metricas_ao_vivo() -> dict:
                          "mb_enviados": 0.0, "fluxos": 0}
     for d in linhas:
         comp = originais.get(d["fluxo_id"]) or {}
-        entrada = (comp.get("bitrate_entrada_kbps") or d.get("bitrate_entrada_kbps") or 0) / 1000.0
+        medida_kbps = comp.get("bitrate_entrada_kbps") or d.get("bitrate_entrada_kbps")
+        # fonte crua (webcam/sintetica) nao tem entrada medida: usa o bruto equivalente a resolucao e fps
+        entrada_kbps = medida_kbps or _entrada_teorica_kbps(d.get("resolucao"), d.get("fps") or d.get("fps_nativo"))
+        entrada = (entrada_kbps or 0) / 1000.0
         saida = (d.get("bitrate_saida_kbps") or 0) / 1000.0
         idade = _segundos(d.get("atualizado_em") or "")
         d.update({
             "entrada_mbps": round(entrada, 3), "saida_mbps": round(saida, 3),
             "economia_mbps": round(max(0.0, entrada - saida), 3),
             "erro": d.get("erro"),
+            "entrada_fonte": _origem_da_entrada(d.get("resolucao"), d.get("fps") or d.get("fps_nativo"),
+                                                bool(medida_kbps)),
             "compressao_pct": round((1 - saida / entrada) * 100, 2) if (entrada and saida) else None,
             "compressao_arquivo_pct": comp.get("compressao_pct"), "ssim": comp.get("ssim"),
             "mbps_agora": round(saida, 3), "fps_agora": d.get("fps"),

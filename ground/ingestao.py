@@ -235,6 +235,9 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
              tipo, 1 if repetir else 0, codec, bitrate,
              s.get("resolucao"), s.get("fps"), s.get("bitrate_kbps"), "iniciando", proc.pid, str(log), agora(), agora()))
         ident = cur.lastrowid
+        if tipo in ("camera", "sintetica"):
+            # a resolucao real da webcam so se sabe DEPOIS que ela publica: sonda o caminho uma vez
+            threading.Thread(target=_sondar_publicado, args=(ident, fluxo_id), daemon=True).start()
         if registrar_camera:
             c.execute("""INSERT INTO cameras (id, embarcacao_id, rotulo, fluxo_id, local, ativo)
                          VALUES (?,?,?,?,?,1)
@@ -551,3 +554,36 @@ def limpar_vivos_mortos() -> int:
     if n:
         print(f"[envios] {n} envio(s) vivo(s) marcados como parados no inicio (processo morto)", flush=True)
     return n
+
+
+def _sondar_publicado(ident: int, fluxo_id: str) -> None:
+    """Corrige a resolucao/fps do fluxo vivo com o que o mediamtx REALMENTE publicou.
+
+    Sem isso a linha guardava o NOME do dispositivo no lugar da resolucao, e o bruto equivalente
+    (usado para dizer compressao e banda economizada) ficava sem base de calculo.
+    """
+    for espera in (3, 3, 4, 5, 6, 8, 10):
+        time.sleep(espera)
+        try:
+            saida = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                                    "-show_entries", "stream=width,height,avg_frame_rate", "-of", "json",
+                                    f"rtsp://127.0.0.1:8554/{fluxo_id}"],
+                                   capture_output=True, text=True, timeout=15).stdout
+            st = (json.loads(saida or "{}").get("streams") or [{}])[0]
+            if not (st.get("width") and st.get("height")):
+                continue
+            fps = None
+            taxa = st.get("avg_frame_rate") or ""
+            if "/" in taxa and taxa != "0/0":
+                cima, _, baixo = taxa.partition("/")
+                try:
+                    fps = round(float(cima) / float(baixo or 1), 2)
+                except Exception:
+                    fps = None
+            with conexao() as c:
+                c.execute("UPDATE ingestoes SET resolucao=?, fps_nativo=COALESCE(?, fps_nativo) WHERE id=?",
+                          (f"{st['width']}x{st['height']}", fps, ident))
+            print(f"[envios] {fluxo_id}: resolucao publicada {st['width']}x{st['height']}@{fps} fps", flush=True)
+            return
+        except Exception:
+            continue
