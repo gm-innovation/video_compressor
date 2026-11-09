@@ -455,14 +455,21 @@ function telaEnvios(t) {
   const rotulo = campo(linha2, 'env-rotulo', 'Rótulo na tela', '');
   const rb = document.createElement('div'); rb.appendChild(Object.assign(document.createElement('label'), { textContent: 'Bitrate do encode' }));
   const bitrate = document.createElement('select'); bitrate.id = 'env-bitrate';
-  for (const [v, r] of [['600k', '600 kbps'], ['1200k', '1,2 Mbps'], ['2500k', '2,5 Mbps'], ['5000k', '5 Mbps']]) {
-    const o = document.createElement('option'); o.value = v; o.textContent = r; if (v === '1200k') o.selected = true; bitrate.appendChild(o);
+  for (const [v, r] of [['auto', 'automático — metade do vídeo enviado (recomendado)'], ['600k', '600 kbps'],
+                        ['1200k', '1,2 Mbps'], ['2500k', '2,5 Mbps'], ['5000k', '5 Mbps']]) {
+    const o = document.createElement('option'); o.value = v; o.textContent = r; if (v === 'auto') o.selected = true; bitrate.appendChild(o);
   }
   rb.appendChild(bitrate); linha2.appendChild(rb);
   const rr = document.createElement('div'); rr.appendChild(Object.assign(document.createElement('label'), { textContent: 'Repetir em laço' }));
   const repetir = document.createElement('select'); repetir.id = 'env-repetir';
   for (const [v, r] of [['1', 'sim (parece ao vivo)'], ['0', 'não']]) { const o = document.createElement('option'); o.value = v; o.textContent = r; repetir.appendChild(o); }
   rr.appendChild(repetir); linha2.appendChild(rr);
+  const ra2 = document.createElement('div'); ra2.appendChild(Object.assign(document.createElement('label'), { textContent: 'Áudio' }));
+  const audio = document.createElement('select'); audio.id = 'env-audio';
+  for (const [v, r] of [['0', 'sem áudio (mede só o vídeo)'], ['1', 'manter áudio (48 kbps mono)']]) {
+    const o = document.createElement('option'); o.value = v; o.textContent = r; audio.appendChild(o);
+  }
+  ra2.appendChild(audio); linha2.appendChild(ra2);
 
   const acoes = document.createElement('div'); acoes.className = 'linha-form'; caixa.appendChild(acoes);
   const enviar = botao('Codificar e publicar', 'principal', () => {});
@@ -491,6 +498,7 @@ function telaEnvios(t) {
     lista.appendChild(tabela([
       { rotulo: '#', campo: 'id' }, { rotulo: 'Rótulo', campo: 'rotulo' },
       { rotulo: 'Fonte', valor: (l) => String(l.fonte || '').length > 52 ? '…' + String(l.fonte).slice(-50) : (l.fonte || '') },
+      { rotulo: 'Alvo', valor: (l) => l.bitrate_alvo || '—' },
       { rotulo: 'Entrada', valor: (l) => mbps(l.bitrate_entrada_kbps) },
       { rotulo: 'Saída', valor: (l) => mbps(l.bitrate_saida_kbps) },
       { rotulo: 'Corte', valor: (l) => l.corte_pct === null || l.corte_pct === undefined ? '—'
@@ -507,17 +515,19 @@ function telaEnvios(t) {
   };
 
   enviar.onclick = () => {
-    const r = (rotulo.value || '').trim(), b = bitrate.value, rep = repetir.value;
+    const r = (rotulo.value || '').trim(), b = bitrate.value, rep = repetir.value, aud = audio.value;
     if (modo.value === 'arquivo') {
       const f = arquivo.files && arquivo.files[0];
       if (!f) { progresso.textContent = 'escolha um arquivo de vídeo'; return; }
-      const q = new URLSearchParams({ nome: f.name, rotulo: r || f.name, bitrate: b, repetir: rep });
+      const q = new URLSearchParams({ nome: f.name, rotulo: r || f.name, bitrate: b, repetir: rep, audio: aud });
       const x = new XMLHttpRequest();
       x.open('POST', '/api/ingestao/arquivo?' + q.toString());
       x.upload.onprogress = (e) => { if (e.lengthComputable) progresso.textContent = 'enviando… ' + Math.round(e.loaded / e.total * 100) + '%'; };
       x.onload = () => {
         let j = {}; try { j = JSON.parse(x.responseText); } catch (e) {}
-        progresso.textContent = x.status === 201 ? 'no ar como "' + j.fluxo_id + '"' : ('falhou: ' + (j.erro || x.status));
+        progresso.textContent = x.status === 201
+          ? ('no ar como "' + j.fluxo_id + '" · entrada ' + mbps((j.entrada || {}).bitrate_kbps) + ' → alvo ' + j.alvo + (j.aviso ? ' · ' + j.aviso : ''))
+          : ('falhou: ' + (j.erro || x.status));
         carregar();
       };
       progresso.textContent = 'enviando ' + f.name + '…';
@@ -526,9 +536,9 @@ function telaEnvios(t) {
       const u = (url.value || '').trim();
       if (!/^https?:\/\//.test(u)) { progresso.textContent = 'cole um link http(s) válido'; return; }
       fetch('/api/ingestao/url', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: u, rotulo: r || 'vídeo por link', bitrate: b, repetir: rep === '1' }) })
+        body: JSON.stringify({ url: u, rotulo: r || 'vídeo por link', bitrate: b, repetir: rep === '1', audio: aud === '1' }) })
         .then(async (x) => ({ s: x.status, j: await x.json() }))
-        .then(({ s, j }) => { progresso.textContent = s === 201 ? 'no ar como "' + j.fluxo_id + '"' : ('falhou: ' + (j.erro || s)); carregar(); });
+        .then(({ s, j }) => { progresso.textContent = s === 201 ? ('no ar como "' + j.fluxo_id + '" · alvo ' + j.alvo + (j.aviso ? ' · ' + j.aviso : '')) : ('falhou: ' + (j.erro || s)); carregar(); });
     }
   };
 

@@ -25,17 +25,29 @@ análise (`X-Chave-Analytics`) não é usada aqui.
    economizada; `↑` = a saída ficou maior que a entrada), **fps**, **tempo no ar**, **estado**.
 6. **parar** encerra o encode; **remover** tira o fluxo da grade.
 
-## Medições reais desta rodada (clipe `people-detection.mp4`, 768×432, 12 fps, 0,75 Mbps)
+## Medições reais desta rodada (clipe `people-detection.mp4`, 768×432, 12 fps, **0,75 Mbps de entrada**)
 
-| Alvo do encode | Bitrate de saída medido | Corte | fps entregue | Tempo no ar |
-|---|---|---|---|---|
-| 1,2 Mbps (arquivo) | 1,6 Mbps | ↑ 112% | 11,7 | 43 s |
-| 2,0 Mbps (link) | 1,2 Mbps | ↑ 64% | 11,8 | 47 s |
+| Alvo do encode | Bitrate de saída medido | Corte | fps entregue |
+|---|---|---|---|
+| **automático 400 kbps (metade da entrada)** | **444 kbps** | **↓ 41%** | 11,8 |
+| automático 400 kbps, mantendo áudio 48 kbps | 446 kbps | ↓ 41% | 11,9 |
+| 1,2 Mbps (alvo escolhido à mão, acima da entrada) | 1,65 Mbps | ↑ 119% | 12,0 |
+| 2,5 Mbps (alvo à mão, acima da entrada) | 2,95 Mbps | ↑ 292% | 12,0 |
 
-Leitura honesta: **reencodar um clipe já comprimido a um alvo maior aumenta a banda** — o corte
-aparece contra fonte crua/alto bitrate, que é o caso medido na Fase 0-A (746,5 Mbps crus → 5,51 Mbps,
-corte 99,26%). O valor do teste aqui é outro: provar que o caminho **arquivo/link → encode → SRT →
-navegador** funciona de ponta a ponta e que a tela mostra o número real.
+**Por que a saída ficou maior em parte das linhas antigas (dois erros meus, já corrigidos):**
+
+1. **Alvo acima do material.** O clipe de teste já vem comprimido a 0,75 Mbps; pedir encode de 1,2 ou
+   2,5 Mbps *gasta mais* do que o original. Agora o padrão da tela é **automático = metade da entrada**
+   (ou 250 kbps de piso, 8 Mbps de teto) e a API avisa em texto quando o alvo escolhido é maior que a
+   entrada.
+2. **Áudio e contêiner entrando na conta.** O clipe tem faixa de áudio; o MPEG-TS reencodava em MP2 a
+   ~224 kbps e o `-progress` do ffmpeg mede o **total do fluxo** (vídeo + áudio + TS). Por isso um alvo
+   de 450 kbps aparecia como 889 kbps. Agora o padrão é **sem áudio** (o número medido é o do vídeo) e
+   quem quiser mantém em **48 kbps mono**.
+
+Contra fonte crua o corte é muito maior — é o caso da Fase 0-A: **746,5 Mbps crus → 5,51 Mbps (corte
+99,26%)**. O teste aqui prova o caminho **arquivo/link → encode → SRT → navegador** e que a tela mostra
+o número real.
 
 ## API (mesmo caminho que a tela usa)
 

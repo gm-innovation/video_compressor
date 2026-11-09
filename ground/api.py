@@ -612,8 +612,9 @@ class Handler(SimpleHTTPRequestHandler):
             except ValueError as e:
                 return self._json(422, {"erro": str(e)})
             r = ing_iniciar(str(destino), rotulo=_q("rotulo", Path(nome).stem), fluxo_id=_q("fluxo_id") or None,
-                            bitrate=_q("bitrate", "1200k"), codec=_q("codec", "libx264"),
+                            bitrate=_q("bitrate", "auto"), codec=_q("codec", "libx264"),
                             repetir=_q("repetir", "1") not in ("0", "false", "nao"), tipo="arquivo",
+                            audio=_q("audio", "0") in ("1", "sim", "true"),
                             embarcacao_id=_q("embarcacao", "psv-exemplo"))
             if "erro" in r:
                 return self._json(422, r)
@@ -627,8 +628,8 @@ class Handler(SimpleHTTPRequestHandler):
             if not re.match(r"^https?://", endereco):
                 return self._json(422, {"erro": "informe um link http(s) valido"})
             r = ing_iniciar(endereco, rotulo=str(d.get("rotulo") or "video por link"), fluxo_id=d.get("fluxo_id") or None,
-                            bitrate=str(d.get("bitrate") or "1200k"), codec=str(d.get("codec") or "libx264"),
-                            repetir=bool(d.get("repetir", True)), tipo="url",
+                            bitrate=str(d.get("bitrate") or "auto"), codec=str(d.get("codec") or "libx264"),
+                            repetir=bool(d.get("repetir", True)), tipo="url", audio=bool(d.get("audio", False)),
                             embarcacao_id=str(d.get("embarcacao") or "psv-exemplo"))
             if "erro" in r:
                 return self._json(422, r)

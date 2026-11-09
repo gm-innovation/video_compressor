@@ -69,13 +69,16 @@
       <div class="campo"><label>Rótulo na tela</label><input id="rotulo" placeholder="ex.: clipe do cliente — cais"></div>
       <div class="campo"><label>Bitrate do encode</label>
         <select id="bitrate">
+          <option value="auto" selected>automático — metade do vídeo enviado (recomendado)</option>
           <option value="600k">600 kbps</option>
-          <option value="1200k" selected>1,2 Mbps</option>
+          <option value="1200k">1,2 Mbps</option>
           <option value="2500k">2,5 Mbps</option>
           <option value="5000k">5 Mbps</option>
         </select></div>
       <div class="campo"><label>Repetir em laço (fica parecendo ao vivo)</label>
         <select id="repetir"><option value="1" selected>sim</option><option value="0">não</option></select></div>
+      <div class="campo"><label>Áudio</label>
+        <select id="audio"><option value="0" selected>sem áudio (o número medido é o do vídeo)</option><option value="1">manter áudio (48 kbps mono)</option></select></div>
       <button class="principal" id="btn-enviar" style="width:100%">Codificar e publicar</button>
       <div class="barra"><i id="progresso"></i></div>
       <div id="msg" class="sub" style="margin-top:10px"></div>
@@ -138,19 +141,21 @@ function aviso(t, erro) { const m = $('msg'); m.textContent = t; m.style.color =
 
 $('btn-enviar').onclick = () => {
   const rotulo = $('rotulo').value.trim();
-  const bitrate = $('bitrate').value, repetir = $('repetir').value;
+  const bitrate = $('bitrate').value, repetir = $('repetir').value, audio = $('audio').value;
   if (modo === 'arquivo') {
     const f = $('arquivo').files[0];
     if (!f) return aviso('escolha um arquivo de vídeo (ou arraste na caixa)', true);
-    const q = new URLSearchParams({nome: f.name, rotulo: rotulo || f.name, bitrate, repetir});
+    const q = new URLSearchParams({nome: f.name, rotulo: rotulo || f.name, bitrate, repetir, audio});
     const x = new XMLHttpRequest();
     x.open('POST', '/api/ingestao/arquivo?' + q.toString());
     x.upload.onprogress = (e) => { if (e.lengthComputable) $('progresso').style.width = (e.loaded / e.total * 100) + '%'; };
     x.onload = () => {
       $('progresso').style.width = '0%';
       let j = {}; try { j = JSON.parse(x.responseText); } catch (e) {}
-      if (x.status === 201) { aviso('no ar como "' + j.fluxo_id + '" — vídeo de ' + mbps((j.entrada || {}).bitrate_kbps) + ' sendo codificado'); carregar(); }
-      else aviso(j.erro || ('falhou (' + x.status + ')'), true);
+      if (x.status === 201) {
+        aviso('no ar como "' + j.fluxo_id + '" — entrada ' + mbps((j.entrada || {}).bitrate_kbps) + ' → alvo ' + j.alvo + (j.aviso ? ' · ' + j.aviso : ''));
+        carregar();
+      } else aviso(j.erro || ('falhou (' + x.status + ')'), true);
     };
     aviso('enviando ' + f.name + '…');
     x.send(f);
@@ -158,9 +163,9 @@ $('btn-enviar').onclick = () => {
     const url = $('url').value.trim();
     if (!/^https?:\/\//.test(url)) return aviso('cole um link http(s) válido', true);
     fetch('/api/ingestao/url', {method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({url, rotulo: rotulo || 'vídeo por link', bitrate, repetir: repetir === '1'})})
+      body: JSON.stringify({url, rotulo: rotulo || 'vídeo por link', bitrate, repetir: repetir === '1', audio: audio === '1'})})
       .then(async (r) => ({s: r.status, j: await r.json()}))
-      .then(({s, j}) => { if (s === 201) { aviso('no ar como "' + j.fluxo_id + '"'); carregar(); } else aviso(j.erro || ('falhou (' + s + ')'), true); });
+      .then(({s, j}) => { if (s === 201) { aviso('no ar como "' + j.fluxo_id + '" — alvo ' + j.alvo + (j.aviso ? ' · ' + j.aviso : '')); carregar(); } else aviso(j.erro || ('falhou (' + s + ')'), true); });
   }
 };
 
@@ -181,7 +186,7 @@ async function envios() {
       const cls = corte === null || corte === undefined ? '' : (corte < 0 ? 'neg' : '');
       const tempo = i.duracao_s ? Math.round(i.duracao_s) + ' s' : '—';
       return '<tr><td>' + i.id + '</td><td>' + esc(i.rotulo) + '</td>' +
-        '<td><code>' + esc((i.fonte || '').length > 46 ? '…' + esc(i.fonte.slice(-44)) : i.fonte) + '</code><br><span class="sub">' + esc(i.tipo) + ' · ' + esc(i.resolucao || '—') + '</span></td>' +
+        '<td><code>' + esc((i.fonte || '').length > 46 ? '…' + esc(i.fonte.slice(-44)) : i.fonte) + '</code><br><span class="sub">' + esc(i.tipo) + ' · ' + esc(i.resolucao || '—') + ' · alvo ' + esc(i.bitrate_alvo || '—') + '</span></td>' +
         '<td>' + mbps(i.bitrate_entrada_kbps) + '</td><td>' + mbps(i.bitrate_saida_kbps) + '</td>' +
         '<td class="' + cls + '">' + (corte === null || corte === undefined ? '—' : (corte > 0 ? '↓ ' : '↑ ') + Math.abs(corte).toLocaleString('pt-BR', {maximumFractionDigits: 1}) + '%') + '</td>' +
         '<td>' + num(i.fps) + '</td><td>' + tempo + '</td>' +

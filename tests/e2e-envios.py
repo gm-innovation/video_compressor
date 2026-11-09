@@ -58,7 +58,7 @@ def main() -> int:
         pg.goto(BASE + "/", wait_until="domcontentloaded")
         pg.wait_for_selector("#solta")
         pg.fill("#rotulo", "Envio pela tela (teste)")
-        pg.select_option("#bitrate", "1200k")
+        pg.select_option("#bitrate", "auto")   # alvo automatico (metade da entrada)
         pg.set_input_files("#arquivo", str(CLIPE))
         pg.click("#btn-enviar")
         pg.wait_for_function("() => document.getElementById('msg').textContent.includes('no ar')", timeout=60000)
@@ -72,6 +72,23 @@ def main() -> int:
         pg.click("#btn-enviar")
         pg.wait_for_function("() => document.getElementById('msg').textContent.includes('no ar')", timeout=60000)
         print("  ok   envio por link aceito na tela")
+
+        # --- 2b) o encode COMPRIME de verdade: corte positivo no fluxo enviado
+        corte = None
+        for _ in range(20):
+            d0 = http("/api/ingestoes")
+            novo = [i for i in d0["ingestoes"] if "teste" in (i["rotulo"] or "").lower() and i["tipo"] == "arquivo"]
+            if novo and novo[0].get("corte_pct") is not None and novo[0]["bitrate_saida_kbps"]:
+                corte = novo[0]
+                if (corte.get("duracao_s") or 0) >= 12:
+                    break
+            time.sleep(3)
+        if corte:
+            print("    medicao: entrada %s kbps -> saida %s kbps (corte %s%%) fps %s" % (
+                corte["bitrate_entrada_kbps"], corte["bitrate_saida_kbps"], corte["corte_pct"], corte["fps"]))
+            checar((corte["corte_pct"] or 0) > 0, "o encode reduz banda de verdade (corte positivo) com alvo automatico")
+        else:
+            checar(False, "nao obtive medicao de corte do envio")
 
         # --- 3) a medicao do banco aparece na tabela da tela
         for _ in range(20):
