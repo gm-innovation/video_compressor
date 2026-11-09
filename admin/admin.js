@@ -599,7 +599,9 @@ function telaEnvios(t) {
   const linha1 = document.createElement('div'); linha1.className = 'linha-form'; caixa.appendChild(linha1);
   const rm = document.createElement('div'); rm.appendChild(Object.assign(document.createElement('label'), { textContent: 'De onde vem o vídeo' }));
   const modo = document.createElement('select'); modo.id = 'env-modo';
-  for (const [v, r] of [['arquivo', 'arquivo do computador'], ['url', 'link (http ou YouTube)']]) {
+  for (const [v, r] of [['arquivo', 'arquivo do computador'], ['url', 'link (http ou YouTube)'],
+                        ['camera', 'webcam do notebook (ao vivo, sem câmera de embarcação)'],
+                        ['sintetica', 'teste sintético (sem câmera nenhuma)']]) {
     const o = document.createElement('option'); o.value = v; o.textContent = r; modo.appendChild(o);
   }
   rm.appendChild(modo); linha1.appendChild(rm);
@@ -607,6 +609,14 @@ function telaEnvios(t) {
   const arquivo = document.createElement('input'); arquivo.type = 'file'; arquivo.accept = 'video/*'; arquivo.id = 'env-arquivo';
   ra.appendChild(arquivo); linha1.appendChild(ra);
   const url = campo(linha1, 'env-url', 'Link do vídeo', '');
+  const rv = document.createElement('div');
+  rv.appendChild(Object.assign(document.createElement('label'), { textContent: 'Webcam / dispositivo' }));
+  const dispositivo = document.createElement('select'); dispositivo.id = 'env-dispositivo';
+  rv.appendChild(dispositivo); linha1.appendChild(rv);
+  const rs = document.createElement('div');
+  rs.appendChild(Object.assign(document.createElement('label'), { textContent: 'Segundos a capturar' }));
+  const segundos = document.createElement('input'); segundos.type = 'number'; segundos.min = '3'; segundos.max = '120';
+  segundos.value = '10'; segundos.id = 'env-segundos'; rs.appendChild(segundos); linha1.appendChild(rs);
 
   const linha2 = document.createElement('div'); linha2.className = 'linha-form'; caixa.appendChild(linha2);
   const rotulo = campo(linha2, 'env-rotulo', 'Rótulo na tela', '');
@@ -656,19 +666,40 @@ function telaEnvios(t) {
   t.appendChild(legenda);
 
   const guardar = () => { A.envioForm = { modo: modo.value, url: url.value, rotulo: rotulo.value,
-    qualidade: qualidade.value, fps: fps.value, audio: audio.value, repetir: repetir.value }; };
-  for (const el of [modo, url, rotulo, qualidade, fps, audio, repetir]) {
+    qualidade: qualidade.value, fps: fps.value, audio: audio.value, repetir: repetir.value,
+    dispositivo: dispositivo.value, segundos: segundos.value }; };
+  for (const el of [modo, url, rotulo, qualidade, fps, audio, repetir, dispositivo, segundos]) {
     el.addEventListener('input', guardar); el.addEventListener('change', guardar);
   }
   if (guardado.modo) {
     modo.value = guardado.modo; url.value = guardado.url || ''; rotulo.value = guardado.rotulo || '';
     qualidade.value = guardado.qualidade || 'auto'; fps.value = guardado.fps || '30';
     audio.value = guardado.audio || '0'; repetir.value = guardado.repetir || '1';
+    if (guardado.segundos) segundos.value = guardado.segundos;
   }
+  const preencherDispositivos = async () => {
+    if (dispositivo.dataset.pronto) return;
+    const r = await fetch('/api/dispositivos');
+    if (!r.ok) return;
+    const d = await r.json();
+    dispositivo.innerHTML = '';
+    for (const v of (d.video || [])) {
+      const o = document.createElement('option'); o.value = v; o.textContent = v; dispositivo.appendChild(o);
+    }
+    if (!(d.video || []).length && d.padrao) {
+      const o = document.createElement('option'); o.value = d.padrao; o.textContent = d.padrao; dispositivo.appendChild(o);
+    }
+    dispositivo.dataset.pronto = '1';
+  };
   const trocarModo = () => {
     const ehArquivo = modo.value === 'arquivo';
+    const ehLink = modo.value === 'url';
+    const ehViva = modo.value === 'camera' || modo.value === 'sintetica';
     arquivo.parentElement.style.display = ehArquivo ? '' : 'none';
-    url.parentElement.style.display = ehArquivo ? 'none' : '';
+    url.parentElement.style.display = ehLink ? '' : 'none';
+    rv.style.display = modo.value === 'camera' ? '' : 'none';
+    rs.style.display = ehViva ? '' : 'none';
+    if (modo.value === 'camera') preencherDispositivos();
   };
   modo.onchange = () => { trocarModo(); guardar(); };
   trocarModo();
@@ -762,6 +793,27 @@ function telaEnvios(t) {
 
   btnComprimir.onclick = () => {
     const r = (rotulo.value || '').trim(), b = qualidade.value, qf = fps.value, aud = audio.value;
+    if (modo.value === 'camera' || modo.value === 'sintetica') {
+      const tipo = modo.value;
+      const nomeFonte = tipo === 'camera' ? (dispositivo.value || 'webcam do notebook') : 'teste sintético';
+      dizer('capturando ' + segundos.value + ' s de ' + nomeFonte + '…');
+      fetch('/api/ingestao/capturar', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tipo: tipo, dispositivo: dispositivo.value, segundos: Number(segundos.value) || 10,
+          fps: Number(qf) || 30, rotulo: r || nomeFonte }) })
+        .then(async (x) => ({ s: x.status, j: await x.json() }))
+        .then(async ({ s, j }) => {
+          if (s !== 201) { dizer('falhou ao capturar: ' + (j.erro || s)); return; }
+          dizer('capturei ' + j.segundos + ' s de ' + j.dispositivo + ' (' + j.resolucao + ' · ' + Math.round(j.bitrate_kbps) + ' kbps). Comprimindo…');
+          const x = await fetch('/api/ingestao/comprimir', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ arquivo: j.nome, rotulo: r || nomeFonte, qualidade: b, fps: qf, audio: aud }) });
+          const k = await x.json();
+          if (x.status !== 201) { dizer('falhou ao comprimir: ' + (k.erro || x.status)); return; }
+          A.ultimaCompressao = k.id;
+          dizer(resumo(k));
+          carregar();
+        });
+      return;
+    }
     if (modo.value === 'arquivo') {
       const f = arquivo.files && arquivo.files[0];
       if (!f) { dizer('escolha o arquivo de vídeo'); return; }

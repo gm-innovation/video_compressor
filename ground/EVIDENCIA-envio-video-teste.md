@@ -270,3 +270,27 @@ horário com fuso para UTC**, empurrando os minutos 3 h para frente e estourando
 
 O servidor de API precisa ser **reiniciado** depois de mexer em `ground/producao.py` (o módulo é
 importado uma vez), senão o painel continua mostrando os números antigos com o código novo na tela.
+
+## Testar compressão e streaming SEM câmera de embarcação (09/11/2026)
+
+O dono pediu para testar o caminho inteiro sem câmera conectada. Entraram duas fontes novas no
+painel **Enviar vídeo** → "De onde vem o vídeo":
+
+- **webcam do notebook (ao vivo)** — `dshow` do Windows; `GET /api/dispositivos` lista o que o
+  ffmpeg enxerga (nesta bancada: `ACER HD User Facing` + `Microphone Array (AMD Audio Device)`);
+- **teste sintético** — `testsrc2` a 1080p30, sem hardware nenhum.
+
+As duas passam pelo **mesmo caminho do produto**: captura de N segundos → compressão com medição
+(corte e SSIM) → publicação em SRT. `POST /api/ingestao/capturar` grava o clipe em
+`ground/envios/originais/` e `POST /api/ingestao/comprimir` aceita `{"arquivo": "<clipe capturado>"}`.
+
+Medido nesta bancada, pela tela, sem câmera de embarcação:
+
+    webcam do notebook:  720p30 · captura 15,95 MB (12.812 kbps) → 0,57 MB · ↓ 96,44% · SSIM 0,9806 · CRF 30 · 0,94 s · PISO ✓
+    fonte sintética:     1080p30 · captura 9,97 MB (19.941 kbps) → 1,53 MB · ↓ 84,62% · SSIM 0,9879 · PISO ✓
+    publicado em SRT:    comp-13 no ar (MPEG-TS/HEVC-copy), métricas ao vivo em /api/metricas
+
+Erro de base corrigido no caminho: `registrar_compressao()` montava o INSERT com **18 colunas e 17
+valores** (`17 values for 18 columns`) e a exceção era engolida por um `try/except` — a compressão
+media certo mas **não ia para o banco** (id vinha `None` e "publicar" respondia
+"compressao nao encontrada"). Corrigido o placeholder que faltava.

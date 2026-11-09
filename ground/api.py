@@ -32,6 +32,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ingestao import iniciar as ing_iniciar, parar as ing_parar, listar as ing_listar  # noqa: E402
+from ingestao import capturar as ing_capturar, listar_dispositivos as ing_dispositivos
 import etapas as etapas_pipeline  # noqa: E402
 import producao as producao_pipeline  # noqa: E402
 from urllib.parse import parse_qs, unquote, urlparse
@@ -574,6 +575,14 @@ class Handler(SimpleHTTPRequestHandler):
                 camera_id=(q.get("camera") or [None])[0])
             dados["tempo_real"] = producao_pipeline.tempo_real()
             return self._json(200, dados, {"Cache-Control": "no-store"})
+        if rota in ("/api/dispositivos", "/api/envios/dispositivos"):
+            # webcam do proprio notebook: fonte de teste, sem camera de embarcacao e sem credencial
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so operacao e administrador veem os dispositivos de captura"})
+            d = ing_dispositivos()
+            d["sintetica"] = {"tipo": "sintetica", "descricao": "teste sintetico (testsrc2), sem camera",
+                              "resolucoes": ["1920x1080", "1280x720"]}
+            return self._json(200, d, {"Cache-Control": "no-store"})
         if rota in ("/api/cameras/detalhe", "/api/cameras/interno"):
             # endereco da camera so para a operacao: o app do cliente nunca recebe isso
             if not (u and u["papel"] in PAPEL_ADMIN) and not self._local():
@@ -736,6 +745,20 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(422, r)
             auditar(u, "envio_video", f"arquivo {nome} ({gravados} bytes) -> {r['fluxo_id']}", self.client_address[0])
             return self._json(201, {"ok": True, "bytes": gravados, **r}, {"Cache-Control": "no-store"})
+        if rota in ("/api/ingestao/capturar", "/api/envios/capturar"):
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so operacao e administrador capturam video de teste"})
+            d = self._corpo()
+            tipo = str(d.get("tipo") or "camera")
+            r = ing_capturar(tipo=tipo, dispositivo=(str(d.get("dispositivo") or "").strip() or None),
+                             resolucao=str(d.get("resolucao") or "1920x1080"), fps=int(d.get("fps") or 30),
+                             segundos=int(d.get("segundos") or 10), rotulo=str(d.get("rotulo") or ""))
+            if "erro" in r:
+                return self._json(422, r)
+            auditar(u, "capturar_video",
+                    f"{r['tipo']} {r['dispositivo']} -> {r['nome']} ({r['segundos']}s, {r['bitrate_kbps']} kbps)",
+                    self.client_address[0])
+            return self._json(201, r, {"Cache-Control": "no-store"})
         if rota in ("/api/ingestao/comprimir", "/api/envios/comprimir"):
             if not (self._pode_operar(u) or self._local()):
                 return self._json(403, {"erro": "so operacao e administrador comprimem video"})
@@ -747,12 +770,21 @@ class Handler(SimpleHTTPRequestHandler):
             tipo_json = "application/json" in (self.headers.get("Content-Type") or "")
             if tipo_json:
                 d = self._corpo()
+                # fonte do JSON pode ser um LINK ou um clipe JA CAPTURADO da webcam/fonte sintetica
+                arquivo_json = str(d.get("arquivo") or "").strip()
                 endereco = str(d.get("url") or "").strip()
-                if not re.match(r"^https?://", endereco):
-                    return self._json(422, {"erro": "informe um link http(s) valido"})
-                r = etapas_pipeline.comprimir(endereco, qualidade=str(d.get("qualidade") or qualidade),
-                                              fps=int(d.get("fps") or fps), audio=bool(d.get("audio", False)),
-                                              nome=str(d.get("rotulo") or "") or None)
+                comum = dict(qualidade=str(d.get("qualidade") or qualidade), fps=int(d.get("fps") or fps),
+                             audio=bool(d.get("audio", False)), nome=str(d.get("rotulo") or "") or None)
+                if arquivo_json:
+                    nome_seguro = Path(arquivo_json).name
+                    caminho = RAIZ / "ground" / "envios" / "originais" / nome_seguro
+                    if not caminho.exists():
+                        return self._json(404, {"erro": f"clipe capturado nao encontrado: {nome_seguro}"})
+                    r = etapas_pipeline.comprimir(str(caminho), **comum)
+                elif re.match(r"^https?://", endereco):
+                    r = etapas_pipeline.comprimir(endereco, **comum)
+                else:
+                    return self._json(422, {"erro": "informe um link http(s) valido ou capture um clipe da webcam"})
             else:
                 nome = re.sub(r"[^A-Za-z0-9 ._\-]", "_", Path(_qc("nome", "video.mp4")).name)[:80] or "video.mp4"
                 origem_dir = RAIZ / "ground" / "envios" / "originais"

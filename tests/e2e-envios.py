@@ -215,7 +215,7 @@ def main() -> int:
                 texto_prog = pb.inner_text("#env-progresso") or ""
             except Exception:
                 texto_prog = ""
-            if "comprimido" in texto_prog or "falhou" in texto_prog:
+            if "comprimido" in texto_prog or "falhou" in texto_prog or "PISO" in texto_prog:
                 break
         print("    progresso:", texto_prog[:200])
         checar("comprimido" in texto_prog, "a tela diz quanto o vídeo foi comprimido (MB → MB, %, qualidade, tempo)")
@@ -250,6 +250,42 @@ def main() -> int:
         if vazou:
             print("      vazou:", vazou[:5])
         nav.close()
+
+    # --- 9) fontes sem câmera de embarcação: webcam do notebook e fonte sintética
+    import urllib.error
+
+    def _pedir(caminho, corpo=None):
+        dados = json.dumps(corpo).encode() if corpo is not None else None
+        req = urllib.request.Request(BASE + caminho, data=dados,
+                                     headers={"Content-Type": "application/json"},
+                                     method="POST" if dados else "GET")
+        try:
+            with urllib.request.urlopen(req, timeout=900) as resp:
+                return resp.status, json.loads(resp.read().decode() or "{}")
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read().decode() or "{}")
+
+    st, disp = _pedir("/api/dispositivos")
+    checar(st == 200 and isinstance(disp.get("video"), list),
+           "a operação lista os dispositivos de captura ({} webcam(s): {})".format(
+               len(disp.get("video") or []), ", ".join(disp.get("video") or []) or "nenhuma"))
+    st, cap = _pedir("/api/ingestao/capturar", {"tipo": "sintetica", "segundos": 4, "fps": 30,
+                                                "rotulo": "teste sintetico e2e"})
+    checar(st == 201 and cap.get("mb") and cap.get("resolucao"),
+           "capturei um clipe de teste sem câmera nenhuma ({} · {} fps · {} MB)".format(
+               cap.get("resolucao"), cap.get("fps"), cap.get("mb")))
+    st, comp = _pedir("/api/ingestao/comprimir", {"arquivo": cap.get("nome"), "rotulo": "teste sintetico e2e",
+                                                  "qualidade": "auto", "fps": "30"})
+    checar(st == 201 and comp.get("corte_pct"), "comprimi o clipe capturado ({}% menos banda · SSIM {})".format(
+        comp.get("corte_pct"), comp.get("ssim")))
+    checar(isinstance(comp.get("id"), int),
+           "a compressão do clipe ficou gravada no banco (id {}) com veredito dos pisos".format(comp.get("id")))
+    st, pub = _pedir("/api/compressao/publicar", {"id": comp.get("id")})
+    checar(st == 201 and pub.get("fluxo_id"), "publiquei o clipe capturado no ar em SRT ({})".format(pub.get("fluxo_id")))
+    if st == 201:
+        _pedir("/api/ingestao/parar", {"id": pub.get("id"), "remover": True})
+    st, err = _pedir("/api/ingestao/capturar", {"tipo": "televisao"})
+    checar(st == 422, "captura de uma fonte desconhecida é recusada com 422")
 
     # --- 8) produção (cards de 30 dias) e link/latência em tempo real
     sys.path.insert(0, str(RAIZ / "ground"))

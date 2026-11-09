@@ -354,3 +354,64 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+# ---------------------------------------------------------------------------
+# Fontes SEM camera IP: webcam do proprio notebook (dshow) e fonte sintetica
+# (testsrc2). Servem para testar compressao e streaming na bancada sem depender
+# de camera de embarcacao e sem credencial nenhuma.
+# ---------------------------------------------------------------------------
+DISPOSITIVO_PADRAO = "ACER HD User Facing"
+
+
+def listar_dispositivos() -> dict:
+    """Webcams e microfones que o ffmpeg enxerga (dshow do Windows)."""
+    try:
+        r = subprocess.run(["ffmpeg", "-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"],
+                           capture_output=True, text=True, timeout=60, errors="replace")
+    except Exception as e:
+        return {"video": [], "audio": [], "erro": str(e)}
+    video, audio = [], []
+    for linha in (r.stderr or "").splitlines():
+        if "Alternative name" in linha:
+            continue
+        m = re.search(r'"([^"]+)"\s*\((video|audio)\)', linha)
+        if m:
+            (video if m.group(2) == "video" else audio).append(m.group(1))
+    return {"video": video, "audio": audio, "padrao": (video[0] if video else DISPOSITIVO_PADRAO)}
+
+
+def _args_fonte_viva(tipo: str, dispositivo: str | None, resolucao: str, fps: int) -> list[str]:
+    if tipo == "sintetica":
+        return ["-f", "lavfi", "-i", f"testsrc2=size={resolucao or '1920x1080'}:rate={fps or 30}"]
+    return ["-f", "dshow", "-rtbufsize", "256M", "-i", f'video={dispositivo or DISPOSITIVO_PADRAO}']
+
+
+def capturar(*, tipo: str = "camera", dispositivo: str | None = None, resolucao: str = "1920x1080",
+             fps: int = 30, segundos: int = 10, rotulo: str | None = None) -> dict:
+    """Grava um clipe de teste de uma fonte viva (webcam ou sintetica) para o disco.
+
+    Daqui em diante o clipe segue o MESMO caminho do produto: comprimir -> medir (corte e SSIM)
+    -> publicar em SRT. Assim a compressao e o streaming sao testados sem camera de embarcacao.
+    """
+    if tipo not in ("camera", "sintetica"):
+        return {"erro": "tipo de captura invalido: use 'camera' (webcam) ou 'sintetica'"}
+    segundos = max(3, min(120, int(segundos or 10)))
+    ENVIOS.mkdir(parents=True, exist_ok=True)
+    origem_dir = ENVIOS / "originais"; origem_dir.mkdir(parents=True, exist_ok=True)
+    base = re.sub(r"[^a-z0-9]+", "-", unicodedata.normalize("NFKD", (rotulo or tipo).lower()))
+    base = "".join(ch for ch in base if not unicodedata.combining(ch)).strip("-")[:38] or tipo
+    destino = origem_dir / f"captura-{base}-{dt.datetime.now().strftime('%H%M%S')}.mp4"
+    cmd = (["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "warning", "-y"]
+           + _args_fonte_viva(tipo, dispositivo, resolucao, fps)
+           + ["-t", str(segundos), "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18",
+              "-pix_fmt", "yuv420p", "-r", str(fps), "-an", str(destino)])
+    t0 = time.time()
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=segundos + 120, errors="replace")
+    if r.returncode != 0 or not destino.exists() or destino.stat().st_size == 0:
+        destino.unlink(missing_ok=True)
+        return {"erro": "nao consegui capturar a fonte viva: " + ((r.stderr or "").strip().splitlines() or ["sem detalhe"])[-1][:200]}
+    s = sonda(str(destino))
+    return {"ok": True, "arquivo": str(destino), "nome": destino.name, "tipo": tipo,
+            "dispositivo": (dispositivo or DISPOSITIVO_PADRAO) if tipo == "camera" else "testsrc2",
+            "segundos": round(time.time() - t0, 1), "resolucao": s.get("resolucao"), "fps": s.get("fps"),
+            "mb": round(destino.stat().st_size / 1e6, 2), "bitrate_kbps": s.get("bitrate_kbps")}

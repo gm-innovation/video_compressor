@@ -271,7 +271,7 @@ def registrar_compressao(r: dict, origem: str) -> int:
         cur = c.execute("""INSERT INTO compressoes (rotulo, arquivo_original, arquivo_saida, mb_entrada, mb_saida,
             bitrate_entrada_kbps, bitrate_saida_kbps, compressao_pct, crf, ssim, fps, segundos_encode,
             velocidade_x, duracao_s, criado_em, passa_pisos, piso_comp, piso_ssim)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (Path(str(origem)).name, origem, r["arquivo"], r["entrada"]["mb"], r["comprimido"]["mb"],
              r["entrada"]["bitrate_kbps"], r["comprimido"]["bitrate_kbps"], r["corte_pct"], r.get("crf"),
              r.get("ssim"), r.get("fps"), r.get("tempo_encode_s"), r.get("velocidade_x"),
