@@ -84,9 +84,11 @@ def main() -> int:
         pag.wait_for_selector("#sistema:not(.oculto)", timeout=10000)
         pag.wait_for_timeout(6000)
         janelas = pag.locator(".janela").count()
-        checar("quatro janelas de camera na tela", janelas == 4, f"{janelas} janela(s)")
+        # cameras do cliente demo (psv-exemplo). A grade pode ter a mais (envios de teste entram na
+        # mesma embarcacao demo), entao a exigencia e ter as quatro e TODAS com imagem.
+        checar("as quatro cameras do cliente na tela", janelas >= 4, f"{janelas} janela(s)")
         tocando = pag.evaluate("Array.from(document.querySelectorAll('.janela video')).filter(v => v.srcObject && v.readyState >= 2).length")
-        checar("quatro videos recebendo imagem", tocando == 4, f"{tocando} de {janelas}")
+        checar("todas as janelas recebendo imagem", tocando == janelas, f"{tocando} de {janelas}")
         cams = json.loads(urllib.request.urlopen(f"{BASE}/api/analises").read())
         checar("mediamtx publicando quatro fluxos",
                all(fluxo_pronto(f"cam-0{i}") for i in (1, 2, 3, 4)),
