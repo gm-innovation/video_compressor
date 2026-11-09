@@ -25,8 +25,15 @@ ROTULO = sys.argv[3] if len(sys.argv) > 3 else "Webcam bancada (bordo -> VPS)"
 SEGUNDOS = int(sys.argv[4]) if len(sys.argv) > 4 else 0
 
 if __name__ == "__main__":
-    r = ao_vivo(tipo="camera", dispositivo=DISPOSITIVO_PADRAO, rotulo=ROTULO,
-                fluxo_id="vps-webcam-bancada", fps=30, srt_host=HOST, srt_port=PORTA)
+    # a webcam so abre uma vez: se outro envio a estiver segurando, tenta de novo em vez de desistir
+    r = {}
+    for tentativa in range(1, 61):
+        r = ao_vivo(tipo="camera", dispositivo=DISPOSITIVO_PADRAO, rotulo=ROTULO,
+                    fluxo_id="vps-webcam-bancada", fps=30, srt_host=HOST, srt_port=PORTA)
+        if not r.get("erro"):
+            break
+        print(f"tentativa {tentativa}: {r['erro']}", flush=True)
+        time.sleep(30)
     print({"id": r.get("id"), "fluxo_id": r.get("fluxo_id"), "destino": f"srt://{HOST}:{PORTA}",
            "erro": r.get("erro")}, flush=True)
     if r.get("erro"):
