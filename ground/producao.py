@@ -78,7 +78,7 @@ def fechar_minutos(*, limpar_amostras: bool = False) -> dict:
     with conexao_banco() as c:
         linhas = [dict(x) for x in c.execute("""
             SELECT a.ingestao_id, i.fluxo_id, i.camera_id, i.bitrate_entrada_kbps, i.fonte,
-                   strftime('%Y-%m-%dT%H:%M', a.em) AS minuto,
+                   substr(a.em, 1, 16) AS minuto,   -- mantem o horario LOCAL (strftime converteria para UTC)
                    AVG(a.taxa_saida_kbps) AS saida_medio, AVG(a.corte_pct) AS corte_medio,
                    COUNT(*) AS amostras
               FROM ingestoes_amostras a JOIN ingestoes i ON i.id = a.ingestao_id
@@ -315,58 +315,77 @@ def tempo_real() -> dict:
 def resumo_producao(*, dias: int = 30, embarcacao_id: str | None = None, camera_id: str | None = None) -> dict:
     """Cards de producao: por embarcacao e por camera, com a janela pedida (padrao 30 dias).
 
-    Disponibilidade (%) = minutos em que o fluxo teve amostra / minutos da janela (por camera),
-    limitada a janela — ou seja, e' a fatia do periodo em que aquela camera esteve no ar.
+    Duas regras que o dono cobrou:
+
+    - **entrada e' a da FONTE ORIGINAL**: vem do proprio minuto fechado (`entrada_kbps`, que o rollup
+      ja corrige pelo registro da compressao). Ler a ultima ingestao daria o arquivo JA comprimido e
+      a economia apareceria como zero.
+    - **disponibilidade e' proporcional ao periodo que o sistema realmente rodou**, nunca aos 30 dias
+      cheios: se o historico comeca hoje, o denominador vai do primeiro minuto ate agora.
     """
     garantir_tabelas()
-    inicio = (datetime.now(FUSO) - timedelta(days=max(1, int(dias)))).strftime("%Y-%m-%dT%H:%M")
-    onde, par = ["minuto >= ?"], [inicio]
-    if embarcacao_id:
-        onde.append("embarcacao_id = ?"); par.append(embarcacao_id)
-    if camera_id:
-        onde.append("(camera_id = ? OR fluxo_id = ?)"); par += [camera_id, camera_id]
+    agora_dt = datetime.now(FUSO)
+    comeco_pedido = agora_dt - timedelta(days=max(1, int(dias)))
     with conexao_banco() as c:
+        primeiro = c.execute("SELECT MIN(minuto) AS m FROM telemetria_minuto").fetchone()
+        primeiro = primeiro["m"] if primeiro else None
+        onde, par = ["minuto >= ?"], [comeco_pedido.strftime("%Y-%m-%dT%H:%M")]
+        if embarcacao_id:
+            onde.append("embarcacao_id = ?"); par.append(embarcacao_id)
+        if camera_id:
+            onde.append("(camera_id = ? OR fluxo_id = ?)"); par += [camera_id, camera_id]
         linhas = [dict(x) for x in c.execute(
             f"""SELECT embarcacao_id, camera_id, fluxo_id,
                        SUM(segundos_no_ar) AS segundos, SUM(mb_enviados) AS mb,
                        AVG(compressao_pct) AS compressao_medio, COUNT(*) AS minutos,
-                       MIN(minuto) AS de, MAX(minuto) AS ate FROM telemetria_minuto
-                 WHERE {' AND '.join(onde)} GROUP BY embarcacao_id, camera_id, fluxo_id""", par)]
+                       AVG(entrada_kbps) AS entrada_medio, MIN(minuto) AS de, MAX(minuto) AS ate
+                  FROM telemetria_minuto WHERE {' AND '.join(onde)}
+                 GROUP BY embarcacao_id, camera_id, fluxo_id""", par)]
         embarcacoes = {x["id"]: dict(x) for x in c.execute("SELECT * FROM embarcacoes")}
         cameras = {x["id"]: dict(x) for x in c.execute("SELECT * FROM cameras")}
-    minutos_janela = max(1, int(dias)) * 24 * 60
+        if not embarcacao_id:
+            for l in linhas:
+                if not l["embarcacao_id"]:
+                    cam = cameras.get(l["camera_id"]) or {}
+                    l["embarcacao_id"] = cam.get("embarcacao_id") or ""
+    # janela efetiva: o pedido, cortado pelo inicio do historico
+    comeco = comeco_pedido
+    if primeiro:
+        try:
+            primeiro_dt = datetime.fromisoformat(primeiro).replace(tzinfo=FUSO) if len(primeiro) <= 16 \
+                else datetime.fromisoformat(primeiro)
+            if primeiro_dt > comeco:
+                comeco = primeiro_dt
+        except Exception:
+            pass
+    minutos_janela = max(1, int((agora_dt - comeco).total_seconds() // 60))
     ao_vivo = {f["fluxo_id"]: f["estado"] for f in tempo_real()["fluxos"]}
     cards = []
     for l in linhas:
-        entrada_kbps = 0.0
-        with conexao_banco() as c:
-            r = c.execute("SELECT bitrate_entrada_kbps FROM ingestoes WHERE fluxo_id=? ORDER BY id DESC LIMIT 1",
-                          (l["fluxo_id"],)).fetchone()
-            if r and r["bitrate_entrada_kbps"]:
-                entrada_kbps = float(r["bitrate_entrada_kbps"])
         segundos = l["segundos"] or 0
         mb = l["mb"] or 0
         saida_mbps = round(mb * 8 / segundos, 3) if segundos else None
-        entrada_mbps = round(entrada_kbps / 1000, 3) if entrada_kbps else None
+        entrada_mbps = round((l["entrada_medio"] or 0) / 1000, 3) if l["entrada_medio"] else None
         cam = cameras.get(l["camera_id"]) or {}
         emb = embarcacoes.get(l["embarcacao_id"]) or {}
+        disponibilidade = round(min(100.0, (l["minutos"] or 0) / minutos_janela * 100), 3)
         cards.append({
             "embarcacao_id": l["embarcacao_id"], "embarcacao": emb.get("nome") or l["embarcacao_id"] or "—",
             "camera_id": l["camera_id"], "camera": cam.get("rotulo") or l["camera_id"],
             "fluxo_id": l["fluxo_id"],
-            "compressao_medio_pct": round(l["compressao_medio"], 2) if l["compressao_medio"] is not None else None,
+            "compressao_medio_pct": (round(l["compressao_medio"], 2)
+                                     if (l["compressao_medio"] is not None and l["compressao_medio"] >= 0) else None),
+            "entrada_mbps": entrada_mbps,
             "banda_utilizada_mbps": saida_mbps,
             "banda_economizada_mbps": (round(max(0.0, entrada_mbps - saida_mbps), 3)
                                        if (entrada_mbps and saida_mbps) else None),
             "horas_streaming": round(segundos / 3600, 2),
             "mb_enviados": round(mb, 2),
-            "disponibilidade_pct": round(min(100.0, (l["minutos"] or 0) / minutos_janela * 100), 3),
+            "minutos_no_ar": l["minutos"] or 0,
+            "disponibilidade_pct": disponibilidade,
             "de": l["de"], "ate": l["ate"],
             "estado": ao_vivo.get(l["fluxo_id"], "parado"),
         })
-        if cards and cards[-1]["compressao_medio_pct"] is not None and cards[-1]["compressao_medio_pct"] < 0:
-            # fluxo sem registro de compressao correspondente: nao ha entrada confiavel para dizer %
-            cards[-1]["compressao_medio_pct"] = None
     cards.sort(key=lambda x: (x["embarcacao"], x["camera"]))
     tot = {
         "cards": len(cards),
@@ -375,7 +394,12 @@ def resumo_producao(*, dias: int = 30, embarcacao_id: str | None = None, camera_
         "banda_utilizada_mbps": round(sum(c["banda_utilizada_mbps"] or 0 for c in cards), 3),
         "banda_economizada_mbps": round(sum(c["banda_economizada_mbps"] or 0 for c in cards), 3),
     }
-    return {"dias": int(dias), "desde": inicio, "cards": cards, "total": tot,
+    return {"dias": int(dias), "desde": comeco.strftime("%Y-%m-%dT%H:%M"),
+            "janela_efetiva_dias": round(minutos_janela / 1440, 3), "janela_efetiva_min": minutos_janela,
+            "primeiro_minuto": primeiro, "agora": agora_dt.strftime("%Y-%m-%dT%H:%M"),
+            "cards": cards, "total": tot,
             "embarcacoes": [{"id": k, "nome": v.get("nome")} for k, v in embarcacoes.items()],
-            "nota": ("o historico comeca quando a bancada passa a fechar minuto a minuto; "
-                     "janelas maiores que o historico mostram disponibilidade menor que a real")}
+            "nota": ("disponibilidade = minutos no ar / minutos do periodo que o sistema ja rodou "
+                     "(nao dos 30 dias cheios quando o historico e' mais curto)")}
+
+

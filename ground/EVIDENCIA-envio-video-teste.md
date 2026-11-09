@@ -247,3 +247,26 @@ Sem ARROW e sem Dock Check, como o dono decidiu. O que já está escrito no repo
   na bancada (`--simular`): 270 minutos de histórico montados com o link e o ping dentro.
 - GitHub: o repo está em `master` com 31 commits e **sem remote**; falta criar o repositório e apontar
   o remote quando o dono passar os dados.
+
+## Correção dos cards de produção (09/11/2026, achado do dono)
+
+O dono apontou dois números mentirosos no card (`comp-11`, "Banda economizada 0 Mbps",
+"Disponibilidade 0,146%"):
+
+1. **Banda economizada saía 0** mesmo com 77,23% de compressão. Causa: o card lia a entrada na
+   **linha de ingestão**, que para um arquivo já comprimido publicado é o próprio comprimido
+   (137 kbps) — menor que a saída (201 kbps) → economia zero. Agora a entrada vem do **minuto
+   fechado** (`entrada_kbps`), que o rollup já corrige pelo registro da compressão: medido
+   `comp-11` entrada 0,883 → saída 0,201 = **0,682 Mbps economizados**.
+2. **Disponibilidade dividia por 30 dias cheios** mesmo com o sistema rodando desde hoje
+   (0,146%). Agora o denominador é a **janela efetiva**: do primeiro minuto de histórico até agora,
+   cortada pelo período pedido. Medido: janela de **228 min** (desde 2026-11-09 10:30) →
+   `comp-11` **62,72% (143 de 228 min)**, `comp-10` 0,88% (2 de 228 min). O card mostra a conta
+   ("143 de 228 min") e o resumo explica que a janela não é de 30 dias cheios.
+
+Erro de base encontrado no caminho: `strftime('%Y-%m-%dT%H:%M', a.em)` no SQLite **converte o
+horário com fuso para UTC**, empurrando os minutos 3 h para frente e estourando a janela; trocado por
+`substr(a.em, 1, 16)`, que preserva o horário local.
+
+O servidor de API precisa ser **reiniciado** depois de mexer em `ground/producao.py` (o módulo é
+importado uma vez), senão o painel continua mostrando os números antigos com o código novo na tela.

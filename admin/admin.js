@@ -542,9 +542,10 @@ function telaProducao(t) {
     const itens = [
       ['Média de compressão', c.compressao_medio_pct === null ? '—' : fmt(c.compressao_medio_pct) + '%'],
       ['Banda utilizada', (c.banda_utilizada_mbps === null ? '—' : fmt(c.banda_utilizada_mbps, 3) + ' Mbps')],
-      ['Banda economizada', (c.banda_economizada_mbps === null ? '—' : fmt(c.banda_economizada_mbps, 3) + ' Mbps')],
+      ['Banda economizada', (c.banda_economizada_mbps === null ? '—' : fmt(c.banda_economizada_mbps, 3) + ' Mbps'
+        + (c.entrada_mbps ? ' (entrada ' + fmt(c.entrada_mbps, 3) + ')' : ''))],
       ['Horas de streaming', fmt(c.horas_streaming) + ' h'],
-      ['Disponibilidade', fmt(c.disponibilidade_pct, 3) + '%'],
+      ['Disponibilidade', fmt(c.disponibilidade_pct, 2) + '% (' + fmt(c.minutos_no_ar, 0) + ' de ' + fmt(A.prodJanelaMin, 0) + ' min)'],
       ['Enviado no período', fmt(c.mb_enviados) + ' MB']
     ];
     const ul = document.createElement('div'); ul.className = 'cartao-numeros';
@@ -565,7 +566,10 @@ function telaProducao(t) {
       for (const e of d.embarcacoes) selEmb.appendChild(Object.assign(document.createElement('option'), { value: e.id, textContent: e.nome || e.id }));
     }
     const tr = (d.tempo_real && d.tempo_real.total) || {};
-    dizerResumo('últimos ' + d.dias + ' dias (desde ' + (d.desde || '').replace('T', ' ') + ') · ' +
+    A.prodJanelaMin = d.janela_efetiva_min || 0;
+    const horas = (d.janela_efetiva_min || 0) / 60;
+    dizerResumo('janela pedida: ' + d.dias + ' dia(s) · o sistema já roda ' + fmt(horas, 1) + ' h (desde ' + (d.desde || '').replace('T', ' ') +
+      ') — a disponibilidade usa esse período, não os ' + d.dias + ' dias cheios · ' +
       (d.total.cards || 0) + ' câmera(s) com histórico · ' + fmt(d.total.horas_streaming) + ' h no ar · ' +
       'economia somada ' + fmt(d.total.banda_economizada_mbps, 3) + ' Mbps · ' +
       'agora: ' + (tr.enviando || 0) + ' enviando de ' + (tr.fluxos || 0) + ' no ar');

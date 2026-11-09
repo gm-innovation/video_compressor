@@ -268,6 +268,14 @@ def main() -> int:
            "cada card diz se a câmera está enviando ou parada")
     checar(res["dias"] == 30 and "disponibilidade_pct" in res["cards"][0],
            "a janela padrão é de 30 dias e traz disponibilidade (%)")
+    # disponibilidade proporcional ao tempo que o sistema já roda (não aos 30 dias cheios)
+    checar(res["janela_efetiva_min"] < 30 * 24 * 60,
+           f"a disponibilidade usa a janela efetiva ({res['janela_efetiva_min']} min desde {res['primeiro_minuto']}), não 30 dias cheios")
+    checar(all(c["minutos_no_ar"] <= res["janela_efetiva_min"] + 1 for c in res["cards"]),
+           "nenhum card conta mais minutos no ar do que a janela efetiva")
+    com_comp = [c for c in res["cards"] if c["compressao_medio_pct"] and c["compressao_medio_pct"] > 0]
+    checar(com_comp and all(c["banda_economizada_mbps"] is None or c["banda_economizada_mbps"] > 0 for c in com_comp),
+           "banda economizada não aparece como 0 quando há compressão (usa a entrada original)")
     lk = prod.link_srt()
     checar("disponivel" in lk, "o link é lido do SRT (RTT, capacidade, atraso do buffer, perda)")
     if lk.get("disponivel"):
