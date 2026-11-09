@@ -1,0 +1,7 @@
+[vost#0:0/libx264 @ 00000136c34d3bc0] Error submitting a packet to the muxer: I/O error
+    Last message repeated 1 times
+[out#0/mpegts @ 00000136c3457e40] Error muxing a packet
+[out#0/mpegts @ 00000136c3457e40] Task finished with error code: -5 (I/O error)
+[out#0/mpegts @ 00000136c3457e40] Terminating thread with return code -5 (I/O error)
+[out#0/mpegts @ 00000136c3457e40] Error writing trailer: I/O error
+[out#0/mpegts @ 00000136c3457e40] Error closing file: I/O error

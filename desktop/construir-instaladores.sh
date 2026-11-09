@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Gera um instalador por superficie: cliente, operacao (usuario LECSOR) e admin.
-# Cada um abre so a sua superficie, com sessao e configuracao separadas.
+# Gera um instalador por superficie. Operacao e admin sao a MESMA area (o papel do login
+# decide o que aparece), entao existe um unico app "LECSOR Admin" para os dois.
 set -e
 cd "$(dirname "$0")"
 VERSAO=$(node -p "require('./package.json').version")
@@ -13,9 +13,8 @@ construir() {
     --config.extraMetadata.superficie="$superficie" \
     --config.nsis.shortcutName="$nome" \
     --config.directories.output="dist/$id" \
-    --config.win.artifactName="${nome// /-}-${VERSAO}-x64.exe" 2>&1 | tail -6
+    --config.win.artifactName="${nome// /-}-${VERSAO}-x64.exe" 2>&1 | tail -4
 }
 construir "LECSOR Cliente" cliente cliente
-construir "LECSOR Operacao" admin operacao
 construir "LECSOR Admin" admin admin
-echo "== pronto:"; ls -la dist/*/*.exe
+echo "== pronto:"; ls -la dist/*/*.exe 2>/dev/null | grep -v uninstaller

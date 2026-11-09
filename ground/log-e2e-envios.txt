@@ -1,0 +1,30 @@
+  ok   envio por arquivo aceito na tela
+  ok   envio por link aceito na tela
+    tabela de envios:
+      #	RÓTULO	FONTE	ENTRADA	SAÍDA	CORTE	FPS	NO AR	ESTADO
+      22	Envio por link (teste)	http://127.0.0.1:8123/people-detection.mp4
+      url · 768x432	0,75 Mbps	1,23 Mbps	↑ 63,4%	11,8	5 s	no_ar	parar
+      21	Envio pela tela (teste)	…ine-video\ground\envios\people-detection.mp4
+      arquivo · 768x432	0,75 Mbps	1,53 Mbps	↑ 102,4%	11,4	6 s	no_ar	parar
+      20	Envio por link (teste)	http://127.0.0.1:8123/people-detection.mp4
+      url · 768x432	0,75 Mbps	1,25 Mbps	↑ 65,2%	11,8	50 s	parado	remover
+      19	Envio pela tela (teste)	…ine-video\ground\envios\people-detection.mp4
+      arquivo · 768x432	0,75 Mbps	1,66 Mbps	↑ 120,1%	12	111 s	parado	remover
+      18	Envio por link (teste)	http://127.0.0.1:8123/people-detection.mp4
+      url · 768x432	0,75 Mbps	1,24 Mbps	↑ 65,1%	11,9	49 s	parado	remover
+      17	Envio pela tela (teste)	…ine-video\ground\envios\people-detection.mp4
+  ok   a tabela mostra bitrate de entrada/saida (medido, nao digitado)
+  ok   o envio aparece como no ar
+  ok   a tabela mostra fps
+  ok   a API registrou os dois envios feitos pela tela
+    fluxo enviado: envio-envio-por-link-teste
+  ok   o cliente enxerga o fluxo enviado como camera no ar
+  ok   o video enviado esta tocando no navegador do cliente
+  ok   deteccao de 9 s atras NAO desenha caixa (fim da caixa congelada)
+  ok   deteccao fresca desenha a caixa
+  ok   o selo explica que a leitura envelheceu: ✨ sem detecção nova há 9s (última: 1) · entrou 1 · saiu 0
+  ok   nenhum endereco interno/credencial nas requisicoes do navegador
+
+TUDO OK
+
+---STDERR---

@@ -125,6 +125,7 @@ const SUBS = {
   analises: ['Análises de vídeo', 'Contagem e eventos sobem de bordo (Fase 5) — sem agente a bordo a tela fica vazia.'],
   auditoria: ['Auditoria', 'Quem viu qual câmera, quando — e o que foi negado.'],
   marcas: ['Marcas e zonas', 'A linha de contagem e as zonas de risco que o agente de bordo usa, desenhadas aqui.'],
+  envios: ['Enviar vídeo para teste', 'Manda um arquivo ou um link, o sistema codifica, publica em SRT e mede o corte de banda.'],
   saude: ['Saúde do sistema', 'Estado da API, do lado terra e das contagens do banco.']
 };
 
@@ -133,9 +134,10 @@ function desenhar() {
   const [titulo, sub] = SUBS[A.tela] || SUBS.painel;
   $('titulo-tela').textContent = titulo; $('sub-tela').textContent = sub;
   const tela = $('tela'); limpar(tela);
+  if (timerEnvios) { clearInterval(timerEnvios); timerEnvios = null; }
   const despacho = { painel: telaPainel, fases: telaFases, medicoes: telaMedicoes, decisoes: telaDecisoes,
     evidencias: telaEvidencias, documentos: telaDocumentos, clientes: telaClientes, embarcacoes: telaEmbarcacoes,
-    cameras: telaCameras, usuarios: telaUsuarios, analises: telaAnalises, marcas: telaMarcas,
+    cameras: telaCameras, usuarios: telaUsuarios, analises: telaAnalises, marcas: telaMarcas, envios: telaEnvios,
     auditoria: telaAuditoria, saude: telaSaude };
   (despacho[A.tela] || telaPainel)(tela);
 }
@@ -420,6 +422,118 @@ function telaMarcas(t) {
   t.appendChild(caixa);
   caixa.appendChild(onde);
   carregar();
+}
+
+/* Envio de video de teste (Fase 5/7): arquivo do computador ou link http(s).
+   O encode roda no servidor (ffmpeg libx264 -> SRT no mediamtx); a tela so mostra
+   o que a API mede: bitrate de entrada, bitrate de saida, corte, fps e tempo no ar. */
+let timerEnvios = null;
+const mbps = (k) => (k === null || k === undefined || k === '' ? '—' : (k / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) + ' Mbps');
+const numOu = (v, u) => (v === null || v === undefined || v === '' ? '—' : (Math.round(v * 10) / 10).toLocaleString('pt-BR') + ' ' + (u || ''));
+
+function telaEnvios(t) {
+  if (!(A.usuario.papel === 'admin' || A.usuario.papel === 'operador')) {
+    t.appendChild(recado('Só a operação e o administrador enviam vídeo de teste.', true)); return;
+  }
+  const caixa = document.createElement('div'); caixa.className = 'caixa-form';
+  caixa.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Enviar vídeo para teste (arquivo ou link)' }));
+  const linhaModo = document.createElement('div'); linhaModo.className = 'linha-form'; caixa.appendChild(linhaModo);
+  const modo = document.createElement('select'); modo.id = 'env-modo';
+  for (const [v, r] of [['arquivo', 'enviar arquivo do computador'], ['url', 'colar um link http(s)']]) {
+    const o = document.createElement('option'); o.value = v; o.textContent = r; modo.appendChild(o);
+  }
+  const rm = document.createElement('div'); rm.appendChild(Object.assign(document.createElement('label'), { textContent: 'Como enviar' }));
+  rm.appendChild(modo); linhaModo.appendChild(rm);
+
+  const linha1 = document.createElement('div'); linha1.className = 'linha-form'; caixa.appendChild(linha1);
+  const arquivo = document.createElement('input'); arquivo.type = 'file'; arquivo.accept = 'video/*';
+  const ra = document.createElement('div'); ra.appendChild(Object.assign(document.createElement('label'), { textContent: 'Arquivo de vídeo' }));
+  ra.appendChild(arquivo); linha1.appendChild(ra);
+  const url = campo(linha1, 'env-url', 'Link do vídeo (http/https)', '');
+
+  const linha2 = document.createElement('div'); linha2.className = 'linha-form'; caixa.appendChild(linha2);
+  const rotulo = campo(linha2, 'env-rotulo', 'Rótulo na tela', '');
+  const rb = document.createElement('div'); rb.appendChild(Object.assign(document.createElement('label'), { textContent: 'Bitrate do encode' }));
+  const bitrate = document.createElement('select'); bitrate.id = 'env-bitrate';
+  for (const [v, r] of [['600k', '600 kbps'], ['1200k', '1,2 Mbps'], ['2500k', '2,5 Mbps'], ['5000k', '5 Mbps']]) {
+    const o = document.createElement('option'); o.value = v; o.textContent = r; if (v === '1200k') o.selected = true; bitrate.appendChild(o);
+  }
+  rb.appendChild(bitrate); linha2.appendChild(rb);
+  const rr = document.createElement('div'); rr.appendChild(Object.assign(document.createElement('label'), { textContent: 'Repetir em laço' }));
+  const repetir = document.createElement('select'); repetir.id = 'env-repetir';
+  for (const [v, r] of [['1', 'sim (parece ao vivo)'], ['0', 'não']]) { const o = document.createElement('option'); o.value = v; o.textContent = r; repetir.appendChild(o); }
+  rr.appendChild(repetir); linha2.appendChild(rr);
+
+  const acoes = document.createElement('div'); acoes.className = 'linha-form'; caixa.appendChild(acoes);
+  const enviar = botao('Codificar e publicar', 'principal', () => {});
+  acoes.appendChild(enviar);
+  const progresso = document.createElement('div'); progresso.className = 'sub';
+  acoes.appendChild(progresso);
+  t.appendChild(caixa);
+
+  const trocarModo = () => {
+    const ehArquivo = modo.value === 'arquivo';
+    arquivo.parentElement.style.display = ehArquivo ? '' : 'none';
+    url.parentElement.style.display = ehArquivo ? 'none' : '';
+  };
+  modo.onchange = trocarModo; trocarModo();
+
+  const lista = document.createElement('div'); t.appendChild(lista);
+  const carregar = async () => {
+    const r = await fetch('/api/ingestoes');
+    if (!r.ok) { limpar(lista); lista.appendChild(recado('Sem permissão para ver os envios.', true)); return; }
+    const d = await r.json();
+    limpar(lista);
+    if (!d.ingestoes.length) {
+      lista.appendChild(recado('Nenhum envio ainda: escolha um arquivo ou cole um link e clique em "Codificar e publicar".'));
+      return;
+    }
+    lista.appendChild(tabela([
+      { rotulo: '#', campo: 'id' }, { rotulo: 'Rótulo', campo: 'rotulo' },
+      { rotulo: 'Fonte', valor: (l) => String(l.fonte || '').length > 52 ? '…' + String(l.fonte).slice(-50) : (l.fonte || '') },
+      { rotulo: 'Entrada', valor: (l) => mbps(l.bitrate_entrada_kbps) },
+      { rotulo: 'Saída', valor: (l) => mbps(l.bitrate_saida_kbps) },
+      { rotulo: 'Corte', valor: (l) => l.corte_pct === null || l.corte_pct === undefined ? '—'
+          : (l.corte_pct > 0 ? '↓ ' : '↑ ') + Math.abs(l.corte_pct).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' },
+      { rotulo: 'fps', valor: (l) => numOu(l.fps) },
+      { rotulo: 'No ar', valor: (l) => numOu(l.duracao_s, 's') },
+      { rotulo: 'Estado', valor: (l) => (l.estado || '') + (l.erro ? ' — ' + l.erro : '') },
+      { rotulo: '', valor: (l) => { const b = botao(l.vivo ? 'parar' : 'remover', '', () => {
+          fetch('/api/ingestao/parar', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: l.id, remover: !l.vivo }) }).then(() => carregar()); }); return b; } }
+    ], d.ingestoes, 'nenhum envio'));
+    lista.appendChild(Object.assign(document.createElement('div'), { className: 'sub',
+      textContent: 'Atualizado ' + (d.atualizado_em || '') + ' · entrada = bitrate do seu vídeo, saída = o que o encode gera, corte = banda economizada (↑ significa que a saída ficou maior que a entrada).' }));
+  };
+
+  enviar.onclick = () => {
+    const r = (rotulo.value || '').trim(), b = bitrate.value, rep = repetir.value;
+    if (modo.value === 'arquivo') {
+      const f = arquivo.files && arquivo.files[0];
+      if (!f) { progresso.textContent = 'escolha um arquivo de vídeo'; return; }
+      const q = new URLSearchParams({ nome: f.name, rotulo: r || f.name, bitrate: b, repetir: rep });
+      const x = new XMLHttpRequest();
+      x.open('POST', '/api/ingestao/arquivo?' + q.toString());
+      x.upload.onprogress = (e) => { if (e.lengthComputable) progresso.textContent = 'enviando… ' + Math.round(e.loaded / e.total * 100) + '%'; };
+      x.onload = () => {
+        let j = {}; try { j = JSON.parse(x.responseText); } catch (e) {}
+        progresso.textContent = x.status === 201 ? 'no ar como "' + j.fluxo_id + '"' : ('falhou: ' + (j.erro || x.status));
+        carregar();
+      };
+      progresso.textContent = 'enviando ' + f.name + '…';
+      x.send(f);
+    } else {
+      const u = (url.value || '').trim();
+      if (!/^https?:\/\//.test(u)) { progresso.textContent = 'cole um link http(s) válido'; return; }
+      fetch('/api/ingestao/url', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: u, rotulo: r || 'vídeo por link', bitrate: b, repetir: rep === '1' }) })
+        .then(async (x) => ({ s: x.status, j: await x.json() }))
+        .then(({ s, j }) => { progresso.textContent = s === 201 ? 'no ar como "' + j.fluxo_id + '"' : ('falhou: ' + (j.erro || s)); carregar(); });
+    }
+  };
+
+  carregar();
+  timerEnvios = setInterval(() => { if (A.tela === 'envios') carregar(); }, 4000);
 }
 
 function telaAuditoria(t) {

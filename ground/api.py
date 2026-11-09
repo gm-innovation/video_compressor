@@ -14,6 +14,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import re
 import os
 import secrets
 import sqlite3
@@ -25,6 +26,8 @@ import urllib.request
 from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ingestao import iniciar as ing_iniciar, parar as ing_parar, listar as ing_listar  # noqa: E402
 from urllib.parse import parse_qs, urlparse
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -37,9 +40,14 @@ PAPEL_ADMIN = ("operador", "admin")
 
 
 def conexao() -> sqlite3.Connection:
-    c = sqlite3.connect(BANCO)
+    c = sqlite3.connect(BANCO, timeout=30)
     c.row_factory = sqlite3.Row
-    c.execute("PRAGMA foreign_keys = ON")
+    c.execute("PRAGMA foreign_keys = ON")     # integridade continua obrigatoria
+    c.execute("PRAGMA busy_timeout=30000")
+    try:
+        c.execute("PRAGMA journal_mode=WAL")  # os medidores de encode escrevem enquanto a tela le
+    except sqlite3.Error:
+        pass
     return c
 
 
@@ -379,6 +387,26 @@ class Handler(SimpleHTTPRequestHandler):
         except json.JSONDecodeError:
             return {}
 
+    def _corpo_bruto(self, destino, limite: int = 2_000_000_000) -> int:
+        """Grava o corpo cru da requisicao em disco (envio de arquivo de video, sem multipart)."""
+        n = int(self.headers.get("Content-Length") or 0)
+        if n <= 0:
+            raise ValueError("corpo vazio")
+        if n > limite:
+            raise ValueError(f"arquivo grande demais ({n} bytes); limite {limite}")
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        restante = n
+        with open(destino, "wb") as f:
+            while restante > 0:
+                bloco = self.rfile.read(min(1 << 20, restante))
+                if not bloco:
+                    break
+                f.write(bloco); restante -= len(bloco)
+        return n - restante
+
+    def _pode_operar(self, u) -> bool:
+        return bool(u) and u["papel"] in ("admin", "operador")
+
     def _json(self, codigo: int, corpo, cabecalhos: dict | None = None) -> None:
         b = json.dumps(corpo, ensure_ascii=False).encode()
         self.send_response(codigo)
@@ -429,6 +457,8 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         rota = urlparse(self.path).path
         u = self._sessao()
+        if rota == "/favicon.ico":
+            return self._json(204, {}, {"Cache-Control": "max-age=86400"})
         if rota == "/api/saude":
             return self._json(200, {"ok": True, "banco": str(BANCO), "python": sys.version.split()[0]})
         if rota == "/api/eu":
@@ -437,6 +467,11 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(200, {"autenticado": True, "email": u["email"], "nome": u["nome"], "papel": u["papel"]})
         if rota == "/api/fluxos":
             return self._json(200, fluxos())
+        if rota in ("/api/ingestoes", "/api/envios"):
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so operacao e administrador enviam video de teste"})
+            return self._json(200, {"ingestoes": ing_listar(), "atualizado_em": dt.datetime.now().astimezone().isoformat(timespec="seconds")},
+                              {"Cache-Control": "no-store"})
         if rota == "/api/resumo":
             if not (u or self._local()):
                 return self._json(401, {"erro": "entre no sistema"})
@@ -562,6 +597,56 @@ class Handler(SimpleHTTPRequestHandler):
                     with conexao() as c:
                         c.execute("DELETE FROM sessoes WHERE token=?", (ck["sessao"].value,))
             return self._json(200, {"ok": True}, {"Set-Cookie": "sessao=; Max-Age=0; Path=/"})
+        if rota in ("/api/ingestao/arquivo", "/api/envios/arquivo"):
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so operacao e administrador enviam video de teste"})
+            q = parse_qs(urlparse(self.path).query)
+            def _q(k, p="") :
+                return (q.get(k) or [p])[0]
+            nome = re.sub(r"[^A-Za-z0-9 ._\-]", "_", Path(_q("nome", "video-enviado.mp4")).name)[:80] or "video-enviado.mp4"
+            if Path(nome).suffix.lower() not in (".mp4", ".mkv", ".mov", ".m4v", ".webm", ".ts", ".avi", ".mpg", ".mpeg", ".flv"):
+                nome += ".mp4"
+            destino = RAIZ / "ground" / "envios" / nome
+            try:
+                gravados = self._corpo_bruto(destino)
+            except ValueError as e:
+                return self._json(422, {"erro": str(e)})
+            r = ing_iniciar(str(destino), rotulo=_q("rotulo", Path(nome).stem), fluxo_id=_q("fluxo_id") or None,
+                            bitrate=_q("bitrate", "1200k"), codec=_q("codec", "libx264"),
+                            repetir=_q("repetir", "1") not in ("0", "false", "nao"), tipo="arquivo",
+                            embarcacao_id=_q("embarcacao", "psv-exemplo"))
+            if "erro" in r:
+                return self._json(422, r)
+            auditar(u, "envio_video", f"arquivo {nome} ({gravados} bytes) -> {r['fluxo_id']}", self.client_address[0])
+            return self._json(201, {"ok": True, "bytes": gravados, **r}, {"Cache-Control": "no-store"})
+        if rota in ("/api/ingestao/url", "/api/envios/url"):
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so operacao e administrador enviam video de teste"})
+            d = self._corpo()
+            endereco = str(d.get("url") or "").strip()
+            if not re.match(r"^https?://", endereco):
+                return self._json(422, {"erro": "informe um link http(s) valido"})
+            r = ing_iniciar(endereco, rotulo=str(d.get("rotulo") or "video por link"), fluxo_id=d.get("fluxo_id") or None,
+                            bitrate=str(d.get("bitrate") or "1200k"), codec=str(d.get("codec") or "libx264"),
+                            repetir=bool(d.get("repetir", True)), tipo="url",
+                            embarcacao_id=str(d.get("embarcacao") or "psv-exemplo"))
+            if "erro" in r:
+                return self._json(422, r)
+            auditar(u, "envio_video", f"link {endereco[:120]} -> {r['fluxo_id']}", self.client_address[0])
+            return self._json(201, {"ok": True, **r}, {"Cache-Control": "no-store"})
+        if rota in ("/api/ingestao/parar", "/api/envios/parar"):
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so operacao e administrador enviam video de teste"})
+            d = self._corpo()
+            try:
+                ident = int(d.get("id"))
+            except (TypeError, ValueError):
+                return self._json(422, {"erro": "informe o id do envio"})
+            r = ing_parar(ident, remover_camera=bool(d.get("remover")))
+            if "erro" in r:
+                return self._json(404, r)
+            auditar(u, "envio_video_parado", f"envio {ident} ({r.get('fluxo_id')})", self.client_address[0])
+            return self._json(200, r, {"Cache-Control": "no-store"})
         if rota == "/api/analytics/marcas":
             if not (u and u["papel"] in PAPEL_ADMIN):
                 return self._json(403, {"erro": "so operacao e administrador desenham as marcas"})
@@ -754,11 +839,14 @@ class Handler(SimpleHTTPRequestHandler):
 
     # ---- porta unica do video
     def _whep(self, camera_id: str, usuario) -> None:
-        if not usuario:
+        # Sem sessao so a propria maquina do servidor ve o fluxo (painel de bancada); de fora, 401.
+        if not usuario and not self._local():
             return self._json(401, {"erro": "entre no sistema"})
         with conexao() as c:
             cam = c.execute("SELECT * FROM cameras WHERE id=? AND ativo=1", (camera_id,)).fetchone()
-        if not pode_ver_camera(usuario, cam):
+        if not cam:
+            return self._json(404, {"erro": "camera nao encontrada"})
+        if usuario and not pode_ver_camera(usuario, cam):
             auditar(usuario, "acesso_negado", camera_id, self.client_address[0])
             return self._json(403, {"erro": "voce nao tem acesso a esta camera"})
         fluxo = cam["fluxo_id"]
@@ -783,13 +871,15 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _hls(self, resto: str, usuario) -> None:
         """HLS de reserva servido pela API: o navegador nunca fala com o mediamtx."""
-        if not usuario:
+        if not usuario and not self._local():
             return self._json(401, {"erro": "entre no sistema"})
         partes = resto.split("/", 1)
         camera_id, resto_fluxo = partes[0], ("/" + partes[1]) if len(partes) > 1 else "/index.m3u8"
         with conexao() as c:
             cam = c.execute("SELECT * FROM cameras WHERE id=? AND ativo=1", (camera_id,)).fetchone()
-        if not pode_ver_camera(usuario, cam):
+        if not cam:
+            return self._json(404, {"erro": "camera nao encontrada"})
+        if usuario and not pode_ver_camera(usuario, cam):
             return self._json(403, {"erro": "voce nao tem acesso a esta camera"})
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{PORTA_HLS}/{cam['fluxo_id']}{resto_fluxo}", timeout=10) as r:

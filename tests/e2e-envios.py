@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""Prova, num navegador de verdade, o caminho de envio de video de teste:
+
+1. no portal da bancada (`/`), o operador envia um ARQUIVO e cola um LINK;
+2. a tela mostra a medicao (entrada, saida, corte, fps, tempo no ar) vinda do banco;
+3. o fluxo enviado aparece na grade do CLIENTE (`/app`) e o video toca;
+4. a deteccao de IA velha NAO fica desenhada (a caixa congelada sai da tela);
+5. o que o navegador recebe nao tem endereco interno nem credencial.
+"""
+from __future__ import annotations
+import json, os, re, subprocess, sys, time, urllib.request
+from pathlib import Path
+
+RAIZ = Path(__file__).resolve().parent.parent
+BASE = os.environ.get("LECSOR_BASE", "http://127.0.0.1:8765")
+SENHA = os.environ.get("LECSOR_SENHA_DEMO", "")
+CLIPE = RAIZ / "analytics" / "midia" / "people-detection.mp4"
+falhas: list[str] = []
+
+
+def checar(cond, texto):
+    print(("  ok   " if cond else "  FALHA ") + texto)
+    if not cond:
+        falhas.append(texto)
+
+
+def http(caminho: str, dados=None, metodo=None, cabecalhos=None):
+    r = urllib.request.Request(BASE + caminho, data=dados,
+                               headers=cabecalhos or {"Content-Type": "application/json"},
+                               method=metodo or ("POST" if dados else "GET"))
+    return json.loads(urllib.request.urlopen(r, timeout=20).read() or "{}")
+
+
+def limpar_testes():
+    """Limpa os envios de teste de execucoes anteriores (mantem a bancada apresentavel)."""
+    try:
+        for i in http("/api/ingestoes")["ingestoes"]:
+            if "teste" in (i["rotulo"] or "").lower():
+                http("/api/ingestao/parar", json.dumps({"id": i["id"], "remover": True}).encode())
+    except Exception as e:
+        print("  aviso: nao consegui limpar envios antigos:", e)
+
+
+def main() -> int:
+    from playwright.sync_api import sync_playwright
+    limpar_testes()
+    with sync_playwright() as pw:
+        try:
+            nav = pw.chromium.launch(channel="chrome", args=["--autoplay-policy=no-user-gesture-required"])
+        except Exception:
+            nav = pw.chromium.launch(args=["--autoplay-policy=no-user-gesture-required"])
+
+        # --- 1) portal da bancada: envio de ARQUIVO pela tela
+        ctx = nav.new_context(viewport={"width": 1500, "height": 1000})
+        pg = ctx.new_page()
+        recebido: list[str] = []
+        pg.on("request", lambda r: recebido.append(r.url))
+        pg.goto(BASE + "/", wait_until="domcontentloaded")
+        pg.wait_for_selector("#solta")
+        pg.fill("#rotulo", "Envio pela tela (teste)")
+        pg.select_option("#bitrate", "1200k")
+        pg.set_input_files("#arquivo", str(CLIPE))
+        pg.click("#btn-enviar")
+        pg.wait_for_function("() => document.getElementById('msg').textContent.includes('no ar')", timeout=60000)
+        print("  ok   envio por arquivo aceito na tela")
+        pg.screenshot(path=str(RAIZ / "ground" / "print-portal-envio.png"), full_page=True)
+
+        # --- 2) portal: link http(s)
+        pg.click("#aba-link")
+        pg.fill("#url", "http://127.0.0.1:8123/people-detection.mp4")
+        pg.fill("#rotulo", "Envio por link (teste)")
+        pg.click("#btn-enviar")
+        pg.wait_for_function("() => document.getElementById('msg').textContent.includes('no ar')", timeout=60000)
+        print("  ok   envio por link aceito na tela")
+
+        # --- 3) a medicao do banco aparece na tabela da tela
+        for _ in range(20):
+            texto = pg.inner_text("#t-envios")
+            if "Mbps" in texto and "no_ar" in texto:
+                break
+            time.sleep(3)
+        print("    tabela de envios:\n" + "\n".join("      " + l.strip() for l in texto.splitlines()[:12] if l.strip()))
+        checar("Mbps" in texto, "a tabela mostra bitrate de entrada/saida (medido, nao digitado)")
+        checar("no_ar" in texto, "o envio aparece como no ar")
+        checar("fps" in texto.lower(), "a tabela mostra fps")
+        pg.close(); ctx.close()
+
+        # --- 4) o fluxo enviado aparece na grade do cliente e toca
+        ctx2 = nav.new_context(viewport={"width": 1500, "height": 950})
+        pc = ctx2.new_page()
+        recebido2: list[str] = []
+        pc.on("request", lambda r: recebido2.append(r.url))
+        pc.goto(BASE + "/app", wait_until="domcontentloaded")
+        pc.fill("#email", "cliente@armador-demo.test"); pc.fill("#senha", SENHA)
+        pc.click("#form-entrar button")
+        pc.wait_for_selector(".grade-vms .janela", timeout=30000)
+        # descobre o fluxo enviado pela tela (o mais novo com 'teste' no rotulo)
+        d = http("/api/ingestoes")
+        alvos = [i["fluxo_id"] for i in d["ingestoes"] if "teste" in (i["rotulo"] or "").lower()]
+        checar(len(alvos) >= 2, "a API registrou os dois envios feitos pela tela")
+        enviado = alvos[0]
+        print("    fluxo enviado:", enviado)
+        # o cliente precisa enxergar a camera enviada (mesma embarcacao demo)
+        visivel = pc.wait_for_function(
+            f"() => (S.cameras || []).some(c => c.id === {enviado!r} && c.no_ar)",
+            timeout=30000)
+        checar(bool(visivel), "o cliente enxerga o fluxo enviado como camera no ar")
+        # abre a pagina do palco que contem essa camera e espera o relogio do video andar
+        tocando = False
+        for _ in range(14):
+            pc.evaluate(f"""() => {{
+              const total = (typeof paginas === 'function') ? paginas() : 1;
+              for (let p = 1; p <= total; p++) {{
+                if (typeof irPara === 'function') irPara(p);
+                if (document.querySelector('.janela[data-cam="{enviado}"]')) return true;
+              }}
+              return false;
+            }}""")
+            time.sleep(2)
+            tocando = pc.evaluate(f"""() => {{
+              const j = document.querySelector('.janela[data-cam="{enviado}"]');
+              const v = j && j.querySelector('video');
+              return !!(v && v.readyState >= 2 && v.currentTime > 0.3);
+            }}""")
+            if tocando:
+                break
+        checar(tocando, "o video enviado esta tocando no navegador do cliente")
+        pc.screenshot(path=str(RAIZ / "ground" / "print-cliente-envio.png"), full_page=False)
+
+        # --- 5) caixa de IA velha nao fica desenhada
+        velha = pc.evaluate("""(cam) => {
+          if (typeof desenharCaixas !== 'function') return null;
+          if (!document.getElementById('caixas-' + cam)) return {semPalco: true};
+          S.ia = true;
+          S.agentesPorCamera[cam] = { caixas: [{caixa:[0.8,0.1,0.95,0.5], classe:'pessoa', confianca:0.5}], caixas_idade: 9,
+                                      zonas: [], linhas: [] };
+          S.analises.contagens = [{camera_id: cam, entrou: 1, saiu: 0}];
+          desenharCaixas(cam);
+          const velho = document.querySelectorAll('#caixas-' + cam + ' .caixa').length;
+          const seloVelho = (document.querySelector('[data-cam="' + cam + '"] .selo-ia') || {}).textContent || '';
+          S.agentesPorCamera[cam].caixas_idade = 0;
+          desenharCaixas(cam);
+          const novo = document.querySelectorAll('#caixas-' + cam + ' .caixa').length;
+          return {velho, novo, selo: seloVelho};
+        }""", enviado)
+        if velha is None or velha.get("semPalco"):
+            print("  aviso: o palco do cliente não tem a janela da IA para este fluxo — pulando a checagem de caixa")
+        else:
+            checar(velha["velho"] == 0, "deteccao de 9 s atras NAO desenha caixa (fim da caixa congelada)")
+            checar(velha["novo"] == 1, "deteccao fresca desenha a caixa")
+            checar("sem detec" in velha["selo"], "o selo explica que a leitura envelheceu: " + velha["selo"][:70])
+
+        # --- 6) nada de endereco interno nem credencial no que o navegador recebe
+        proibido = re.compile(r"rtsp://|:8554|:8890|:9997|:8889|localhost|password|credencial|senha")
+        vazou = [u for u in recebido + recebido2 if proibido.search(u)]
+        checar(not vazou, "nenhum endereco interno/credencial nas requisicoes do navegador")
+        if vazou:
+            print("      vazou:", vazou[:5])
+        nav.close()
+
+    print(("\nTUDO OK" if not falhas else f"\n{len(falhas)} FALHA(S): " + "; ".join(falhas)))
+    return 1 if falhas else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -184,7 +184,11 @@ function desenharCaixas(cameraId) {
     svg.appendChild(e);
   }
   alvo.appendChild(svg);
-  for (const c of (ag.caixas || [])) {
+  /* Deteccao velha nao fica desenhada: sem leitura nova, a caixa sai da tela (evita
+     moldura congelada fingindo deteccao ao vivo). Linha e zonas do operador continuam. */
+  const idade = Number(ag.caixas_idade || 0);
+  const fresca = idade <= 3;
+  for (const c of (fresca ? (ag.caixas || []) : [])) {
     const d = document.createElement('div');
     d.className = 'caixa';
     d.style.left = (c.caixa[0] * 100) + '%'; d.style.top = (c.caixa[1] * 100) + '%';
@@ -196,10 +200,13 @@ function desenharCaixas(cameraId) {
   if (ultima && jan) {
     const selo = document.createElement('span');
     selo.className = 'selo-ia';
-    const idade = Number(ag.caixas_idade || 0);
     const quando = idade >= 2 ? `há ${idade.toFixed(0)}s` : 'agora';
-    selo.innerHTML = `👤 <b>${(ag.caixas || []).length}</b> ${quando} · entrou <b>${ultima.entrou}</b> · saiu <b>${ultima.saiu}</b>`;
-    if (idade >= 5) selo.classList.add('ia-velha');   // deteccao antiga: mostra, mas apagada
+    const n = (ag.caixas || []).length;
+    selo.innerHTML = fresca
+      ? `👤 <b>${n}</b> ${quando} · entrou <b>${ultima.entrou}</b> · saiu <b>${ultima.saiu}</b>`
+      : (n ? `✨ sem detecção nova há ${idade.toFixed(0)}s (última: ${n}) · entrou <b>${ultima.entrou}</b> · saiu <b>${ultima.saiu}</b>`
+           : `✨ nenhuma pessoa detectada · entrou <b>${ultima.entrou}</b> · saiu <b>${ultima.saiu}</b>`);
+    if (!fresca) selo.classList.add('ia-velha');   // leitura antiga: o selo explica, a caixa sai
     jan.appendChild(selo);
   }
 }

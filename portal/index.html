@@ -1,163 +1,258 @@
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
-<title>Pipeline de vídeo — acompanhamento</title>
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bancada — pipeline de vídeo LECSOR</title>
+<link rel="stylesheet" href="/fronts/vms.css">
 <style>
-  :root{color-scheme:light dark}
-  body{font-family:inherit;color:var(--foreground);margin:0;padding:0;font-size:13px}
-  header{display:flex;justify-content:space-between;align-items:baseline;gap:16px;flex-wrap:wrap;
-         border-bottom:1px solid var(--border);padding-bottom:10px}
-  h1{font-size:18px;margin:0}
-  .sub{color:var(--muted-foreground);font-size:12px}
-  h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted-foreground);margin:22px 0 6px}
-  table{border-collapse:collapse;width:100%;font-size:12.5px}
-  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top}
-  th{color:var(--muted-foreground);font-weight:600;white-space:nowrap}
-  .pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;border:1px solid var(--border)}
-  .concluida{background:#16a34a22;border-color:#16a34a55;color:#15803d}
-  .andamento{background:#f59e0b22;border-color:#f59e0b55;color:#b45309}
-  .bloqueada{background:#dc262622;border-color:#dc262655;color:#b91c1c}
-  .pendente{color:var(--muted-foreground)}
-  form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;max-width:760px;margin-top:8px}
-  label{display:block;font-size:11.5px;color:var(--muted-foreground)}
-  input{width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;background:transparent;color:inherit}
-  button{grid-column:1/-1;width:max-content;padding:7px 14px;border-radius:6px;border:1px solid var(--border);
-         background:var(--accent);color:inherit;cursor:pointer}
-  .msg{margin-top:8px;font-size:12.5px}
-  .erro{color:#b91c1c} .ok{color:#15803d}
-  code{background:var(--accent);padding:1px 4px;border-radius:3px}
-video.reconectando{opacity:.45;border:1px solid #b45309}
+  body{background:var(--fundo,#0b1220)}
+  .topo{display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid var(--borda,#1e293b);
+        background:var(--painel,#0f172a);position:sticky;top:0;z-index:5}
+  .casca{max-width:1600px;margin:0 auto;padding:18px 20px 60px}
+  .colunas{display:grid;grid-template-columns:minmax(320px,420px) 1fr;gap:18px;align-items:start}
+  .cartao{background:var(--painel,#0f172a);border:1px solid var(--borda,#1e293b);border-radius:14px;padding:14px 16px}
+  .cartao h2{margin:0 0 4px;font-size:16px}
+  .cartao .sub{margin:0 0 12px}
+  .campo{display:block;margin:10px 0}
+  .campo label{display:block;font-size:12px;color:var(--suave,#94a3b8);margin-bottom:4px}
+  .campo input,.campo select{width:100%}
+  .aba{display:flex;gap:6px;margin-bottom:8px}
+  .aba button{flex:1}
+  .aba button.on{background:var(--acento,#2563eb);color:#fff;border-color:transparent}
+  .solta{border:1.5px dashed var(--borda,#334155);border-radius:12px;padding:18px;text-align:center;color:var(--suave,#94a3b8);font-size:13px}
+  .solta.sobre{border-color:var(--acento,#2563eb);background:rgba(37,99,235,.08);color:var(--texto,#e2e8f0)}
+  .barra{height:6px;border-radius:4px;background:var(--borda,#1e293b);overflow:hidden;margin-top:8px}
+  .barra i{display:block;height:100%;background:var(--acento,#2563eb);width:0;transition:width .2s}
+  .metrica{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0}
+  .metrica div{background:rgba(148,163,184,.08);border-radius:10px;padding:8px 10px}
+  .metrica b{display:block;font-size:18px}
+  .metrica span{font-size:11px;color:var(--suave,#94a3b8);text-transform:uppercase;letter-spacing:.04em}
+  .selo-estado{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--borda,#334155)}
+  .selo-estado.no_ar{background:rgba(34,197,94,.15);border-color:#22c55e;color:#4ade80}
+  .selo-estado.erro{background:rgba(239,68,68,.15);border-color:#ef4444;color:#f87171}
+  .selo-estado.parado,.selo-estado.fim{background:rgba(148,163,184,.12)}
+  .tabela{width:100%;border-collapse:collapse;font-size:13px}
+  .tabela th,.tabela td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--borda,#1e293b);vertical-align:top}
+  .tabela th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--suave,#94a3b8)}
+  .grade-vms{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px}
+  .neg{color:#f87171}
+  .pil,.pill{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--borda,#334155)}
+  .pil.no-ar,.pill.no-ar{background:rgba(34,197,94,.15);border-color:#22c55e;color:#4ade80}
+  .pil.rec,.pill.rec{background:rgba(234,179,8,.15);border-color:#eab308;color:#facc15}
+  .pil.ruim,.pill.ruim{background:rgba(239,68,68,.15);border-color:#ef4444;color:#f87171}
 </style></head><body>
-<header>
-  <div><h1>Pipeline de vídeo bordo→terra</h1>
-  <div class="sub">Acompanhamento do projeto — dados lidos do banco (<code>db/pipeline.db</code>), nenhum número digitado à mão</div></div>
-  <div class="sub" style="text-align:right"><div>relógio deste navegador: <b id="relogio" style="font-size:15px">--:--:--</b></div><div id="stamp"></div></div>
-</header>
 
-<h2>Fluxos ao vivo (encode de bordo → SRT → lado terra → navegador)</h2>
-<div id="fluxos" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;margin-top:6px"></div>
+<div class="topo">
+  <div class="marca"><span class="simbolo">L</span><span class="nome">LECSOR · bancada</span></div>
+  <div class="sub" style="flex:1">Pipeline de vídeo bordo→terra — dado lido do banco (<code>db/pipeline.db</code>), nenhum número digitado à mão</div>
+  <div class="sub" style="text-align:right">relógio: <b id="relogio">--:--:--</b><br><span id="stamp">—</span></div>
+</div>
 
-<h2>Fases</h2><table id="t-fases"></table>
-<h2>Medições da bancada (valor + fonte + data + hardware/versão + comando)</h2><table id="t-med"></table>
-<h2>Inventário de câmeras</h2><table id="t-inv"></table>
-<h2>Evidências</h2><table id="t-ev"></table>
+<div class="casca">
+  <div class="colunas">
+    <section class="cartao">
+      <h2>Enviar vídeo para testar</h2>
+      <p class="sub">Arquivo do computador ou link http(s). O sistema codifica (libx264), publica em SRT e mede o corte de banda — sem tocar em câmera nem credencial.</p>
+      <div class="aba">
+        <button type="button" id="aba-arquivo" class="on">Enviar arquivo</button>
+        <button type="button" id="aba-link">Colar link</button>
+      </div>
 
-<h2>Registrar medição (o schema rejeita campo obrigatório vazio)</h2>
-<form id="f">
-  <div><label>valor</label><input name="valor" placeholder="bitrate 5,51 Mbps; corte 99,26%; VMAF 94,87"></div>
-  <div><label>fonte</label><input name="fonte" placeholder="bench/saida/resultado-fase0.json"></div>
-  <div><label>data</label><input name="data" placeholder="2026-11-06"></div>
-  <div><label>hardware/versão</label><input name="hardware_versao" placeholder="RTX 4050 · ffmpeg 9.0.1"></div>
-  <div><label>comando</label><input name="comando" placeholder="ffmpeg -i ... -c:v libx264 ..."></div>
-  <button>gravar</button>
-</form>
-<div class="msg" id="msg"></div>
+      <div id="pane-arquivo">
+        <div class="solta" id="solta">Arraste o vídeo aqui ou <b>clique para escolher</b><br><span id="arquivo-nome">nenhum arquivo escolhido</span></div>
+        <input id="arquivo" type="file" accept="video/*" class="oculto">
+      </div>
 
+      <div id="pane-link" class="oculto">
+        <div class="campo"><label>Link do vídeo (http/https)</label><input id="url" placeholder="https://…/video.mp4"></div>
+      </div>
+
+      <div class="campo"><label>Rótulo na tela</label><input id="rotulo" placeholder="ex.: clipe do cliente — cais"></div>
+      <div class="campo"><label>Bitrate do encode</label>
+        <select id="bitrate">
+          <option value="600k">600 kbps</option>
+          <option value="1200k" selected>1,2 Mbps</option>
+          <option value="2500k">2,5 Mbps</option>
+          <option value="5000k">5 Mbps</option>
+        </select></div>
+      <div class="campo"><label>Repetir em laço (fica parecendo ao vivo)</label>
+        <select id="repetir"><option value="1" selected>sim</option><option value="0">não</option></select></div>
+      <button class="principal" id="btn-enviar" style="width:100%">Codificar e publicar</button>
+      <div class="barra"><i id="progresso"></i></div>
+      <div id="msg" class="sub" style="margin-top:10px"></div>
+    </section>
+
+    <section class="cartao">
+      <h2>Envios e medição de compressão</h2>
+      <p class="sub">Entrada = bitrate do seu vídeo · Saída = o que o encode gera · Corte = quanto de banda o pipeline economiza. Atualiza sozinho.</p>
+      <table class="tabela" id="t-envios"><tr><th>#</th><th>rótulo</th><th>fonte</th><th>entrada</th><th>saída</th><th>corte</th><th>fps</th><th>no ar</th><th>estado</th><th></th></tr></table>
+    </section>
+  </div>
+
+  <h2 style="margin:22px 0 8px">Fluxos ao vivo (encode → SRT → terra → navegador)</h2>
+  <div class="grade-vms" id="fluxos"></div>
+
+  <h2 style="margin:26px 0 8px">Fases</h2>
+  <table class="tabela" id="t-fases"></table>
+  <h2 style="margin:22px 0 8px">Medições registradas (valor + fonte + data + hardware + comando)</h2>
+  <table class="tabela" id="t-med"></table>
+  <h2 style="margin:22px 0 8px">Inventário de câmeras</h2>
+  <table class="tabela" id="t-inv"></table>
+  <h2 style="margin:22px 0 8px">Evidências</h2>
+  <table class="tabela" id="t-ev"></table>
+
+  <h2 style="margin:22px 0 8px">Registrar medição</h2>
+  <form id="f" class="cartao">
+    <div class="campo"><label>valor</label><input name="valor" placeholder="bitrate 5,51 Mbps; corte 99,26%; VMAF 94,87" required></div>
+    <div class="campo"><label>fonte</label><input name="fonte" placeholder="bench/saida/resultado-fase0.json" required></div>
+    <div class="campo"><label>data</label><input name="data" placeholder="2026-11-09" required></div>
+    <div class="campo"><label>hardware/versão</label><input name="hardware_versao" placeholder="RTX 4050 · ffmpeg 9.0.1" required></div>
+    <div class="campo"><label>comando</label><input name="comando" placeholder="ffmpeg -i …" required></div>
+    <button class="principal" type="submit">Gravar</button>
+  </form>
+</div>
+
+<script src="/fronts/video.js"></script>
 <script>
-const cel = (t) => `<td>${t ?? ''}</td>`;
-const esc = (t) => String(t ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-async function carregar(){
-  const d = await (await fetch('/api/resumo')).json();
-  document.getElementById('stamp').textContent = 'consultado ' + d.gerado_em;
-  document.getElementById('t-fases').innerHTML =
-    '<tr><th>Fase</th><th>Prio</th><th>Status</th><th>Critério de aceite</th><th>Evidência</th></tr>' +
-    d.fases.map(f => '<tr><td>'+esc(f.nome)+'</td><td>'+esc(f.prioridade)+'</td>'+
-      '<td><span class="pill '+f.status.replace(/ /g,'')+'">'+esc(f.status)+'</span></td>'+
-      cel(esc(f.criterio_aceite)) + cel(f.evidencia ? '<code>'+esc(f.evidencia)+'</code>' : '—')+'</tr>').join('');
-  document.getElementById('t-med').innerHTML =
-    '<tr><th>valor</th><th>fonte</th><th>data</th><th>hardware/versão</th><th>comando</th></tr>' +
-    (d.medicoes.length ? d.medicoes.map(m => '<tr>'+cel(esc(m.valor))+cel('<code>'+esc(m.fonte)+'</code>')+
-      cel(esc(m.data))+cel(esc(m.hardware_versao))+cel('<code>'+esc((m.comando||'').slice(0,120))+'…</code>')+'</tr>').join('')
-      : '<tr><td colspan="5">nenhuma medição gravada</td></tr>');
-  document.getElementById('t-inv').innerHTML =
-    '<tr><th>câmera</th><th>IP</th><th>protocolo</th><th>resolução</th><th>FPS</th><th>credencial (referência)</th></tr>' +
-    (d.inventario.length ? d.inventario.map(c => '<tr>'+cel(esc(c.id))+cel(esc(c.ip)||'—')+cel(esc(c.protocolo)||'—')+
-      cel(esc(c.resolucao)||'—')+cel(esc(c.fps)||'—')+cel(esc(c.credencial_ref)||'—')+'</tr>').join('')
-      : '<tr><td colspan="6">inventário vazio — aguardando dados das câmeras (TI)</td></tr>');
-  document.getElementById('t-ev').innerHTML =
-    '<tr><th>fase</th><th>caminho</th><th>descrição</th><th>data</th></tr>' +
-    d.evidencias.map(e => '<tr>'+cel(esc(e.fase_id))+cel('<code>'+esc(e.caminho)+'</code>')+cel(esc(e.descricao))+cel(esc(e.data))+'</tr>').join('');
+const $ = (i) => document.getElementById(i);
+const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const num = (v, u = '') => (v === null || v === undefined || v === '' ? '—' : (Math.round(v * 10) / 10).toLocaleString('pt-BR') + ' ' + u);
+const mbps = (k) => (k === null || k === undefined ? '—' : (k / 1000).toLocaleString('pt-BR', {maximumFractionDigits: 2}) + ' Mbps');
+
+setInterval(() => { $('relogio').textContent = new Date().toLocaleTimeString('pt-BR'); }, 1000);
+
+/* ---- envio ----
+   Arquivo vai cru no corpo (sem multipart) com o nome nos parametros da URL; o servidor
+   grava em ground/envios/ e sobe o encode. Nenhuma credencial entra nesta tela. */
+let modo = 'arquivo';
+$('aba-arquivo').onclick = () => { modo = 'arquivo'; $('aba-arquivo').classList.add('on'); $('aba-link').classList.remove('on');
+  $('pane-arquivo').classList.remove('oculto'); $('pane-link').classList.add('oculto'); };
+$('aba-link').onclick = () => { modo = 'link'; $('aba-link').classList.add('on'); $('aba-arquivo').classList.remove('on');
+  $('pane-link').classList.remove('oculto'); $('pane-arquivo').classList.add('oculto'); };
+$('solta').onclick = () => $('arquivo').click();
+$('arquivo').onchange = () => { const f = $('arquivo').files[0]; $('arquivo-nome').textContent = f ? f.name + ' (' + mbps(f.size / 1000 * 8) + ' de arquivo)' : 'nenhum arquivo escolhido'; };
+for (const ev of ['dragenter', 'dragover']) $('solta').addEventListener(ev, (e) => { e.preventDefault(); $('solta').classList.add('sobre'); });
+for (const ev of ['dragleave', 'drop']) $('solta').addEventListener(ev, (e) => { e.preventDefault(); $('solta').classList.remove('sobre'); });
+$('solta').addEventListener('drop', (e) => { if (e.dataTransfer.files[0]) { $('arquivo').files = e.dataTransfer.files; $('arquivo').dispatchEvent(new Event('change')); } });
+
+function aviso(t, erro) { const m = $('msg'); m.textContent = t; m.style.color = erro ? '#f87171' : '#4ade80'; }
+
+$('btn-enviar').onclick = () => {
+  const rotulo = $('rotulo').value.trim();
+  const bitrate = $('bitrate').value, repetir = $('repetir').value;
+  if (modo === 'arquivo') {
+    const f = $('arquivo').files[0];
+    if (!f) return aviso('escolha um arquivo de vídeo (ou arraste na caixa)', true);
+    const q = new URLSearchParams({nome: f.name, rotulo: rotulo || f.name, bitrate, repetir});
+    const x = new XMLHttpRequest();
+    x.open('POST', '/api/ingestao/arquivo?' + q.toString());
+    x.upload.onprogress = (e) => { if (e.lengthComputable) $('progresso').style.width = (e.loaded / e.total * 100) + '%'; };
+    x.onload = () => {
+      $('progresso').style.width = '0%';
+      let j = {}; try { j = JSON.parse(x.responseText); } catch (e) {}
+      if (x.status === 201) { aviso('no ar como "' + j.fluxo_id + '" — vídeo de ' + mbps((j.entrada || {}).bitrate_kbps) + ' sendo codificado'); carregar(); }
+      else aviso(j.erro || ('falhou (' + x.status + ')'), true);
+    };
+    aviso('enviando ' + f.name + '…');
+    x.send(f);
+  } else {
+    const url = $('url').value.trim();
+    if (!/^https?:\/\//.test(url)) return aviso('cole um link http(s) válido', true);
+    fetch('/api/ingestao/url', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({url, rotulo: rotulo || 'vídeo por link', bitrate, repetir: repetir === '1'})})
+      .then(async (r) => ({s: r.status, j: await r.json()}))
+      .then(({s, j}) => { if (s === 201) { aviso('no ar como "' + j.fluxo_id + '"'); carregar(); } else aviso(j.erro || ('falhou (' + s + ')'), true); });
+  }
+};
+
+function parar(id, remover) {
+  fetch('/api/ingestao/parar', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({id, remover})}).then(() => carregar());
 }
-document.getElementById('f').addEventListener('submit', async (ev) => {
-  ev.preventDefault();
-  const dados = Object.fromEntries(new FormData(ev.target).entries());
-  const r = await fetch('/api/medicoes', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(dados)});
-  const j = await r.json();
-  const m = document.getElementById('msg');
-  if (r.status === 201) { m.className='msg ok'; m.textContent = 'gravada (id '+j.id+')'; ev.target.reset(); carregar(); }
-  else { m.className='msg erro'; m.textContent = j.erro + ' → faltando: ' + (j.campos_faltando||[]).join(', '); }
-});
-// Player resiliente: se a sessao WebRTC cair (publicador reiniciou, rede oscilou),
-// reagenda sozinho; se o WebRTC nem abrir, cai para o HLS.
-const ligados = new Map();
-async function ligar(id, url, video, urlHls){
-  const est = ligados.get(id) || {tentativa: 0};
-  if (est.pc) { try { est.pc.close(); } catch(e){} }
-  if (est.hls) { try { est.hls.destroy(); } catch(e){} est.hls = null; }
-  ligados.set(id, est);
-  const pc = new RTCPeerConnection({iceServers: []});
-  est.pc = pc;
-  pc.addTransceiver('video', {direction: 'recvonly'});
-  pc.ontrack = (ev) => { video.srcObject = ev.streams[0] || new MediaStream([ev.track]); video.play().catch(()=>{}); };
-  pc.onconnectionstatechange = () => {
-    if (['failed','disconnected','closed'].includes(pc.connectionState)) reagendar(id, url, video, urlHls);
-  };
-  try {
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    const res = await fetch(url + '?', {method:'POST', headers:{'Content-Type':'application/sdp'}, body: offer.sdp});
-    if (!res.ok) throw new Error('WHEP ' + res.status);
-    await pc.setRemoteDescription({type:'answer', sdp: await res.text()});
-    est.tentativa = 0;
-  } catch (e) {
-    if (window.Hls && window.Hls.isSupported() && urlHls) {
-      est.hls = new window.Hls({lowLatencyMode:true}); est.hls.loadSource(urlHls); est.hls.attachMedia(video);
-      est.hls.on(window.Hls.Events.ERROR, () => reagendar(id, url, video, urlHls));
-    } else { reagendar(id, url, video, urlHls); }
+
+/* ---- envios: metricas reais do encode ---- */
+async function envios() {
+  const r = await fetch('/api/ingestoes');
+  if (!r.ok) { $('t-envios').innerHTML = '<tr><td colspan="10">sem permissão para ver os envios (entre como operação ou admin)</td></tr>'; return; }
+  const d = await r.json();
+  const linhas = d.ingestoes || [];
+  $('t-envios').innerHTML = '<tr><th>#</th><th>rótulo</th><th>fonte</th><th>entrada</th><th>saída</th><th>corte</th><th>fps</th><th>no ar</th><th>estado</th><th></th></tr>' +
+    (linhas.length ? linhas.map((i) => {
+      const corte = i.corte_pct;
+      const cls = corte === null || corte === undefined ? '' : (corte < 0 ? 'neg' : '');
+      const tempo = i.duracao_s ? Math.round(i.duracao_s) + ' s' : '—';
+      return '<tr><td>' + i.id + '</td><td>' + esc(i.rotulo) + '</td>' +
+        '<td><code>' + esc((i.fonte || '').length > 46 ? '…' + esc(i.fonte.slice(-44)) : i.fonte) + '</code><br><span class="sub">' + esc(i.tipo) + ' · ' + esc(i.resolucao || '—') + '</span></td>' +
+        '<td>' + mbps(i.bitrate_entrada_kbps) + '</td><td>' + mbps(i.bitrate_saida_kbps) + '</td>' +
+        '<td class="' + cls + '">' + (corte === null || corte === undefined ? '—' : (corte > 0 ? '↓ ' : '↑ ') + Math.abs(corte).toLocaleString('pt-BR', {maximumFractionDigits: 1}) + '%') + '</td>' +
+        '<td>' + num(i.fps) + '</td><td>' + tempo + '</td>' +
+        '<td><span class="selo-estado ' + esc(i.estado) + '">' + esc(i.estado) + '</span>' + (i.erro ? '<br><span class="sub neg">' + esc(i.erro) + '</span>' : '') + '</td>' +
+        '<td>' + (i.vivo ? '<button type="button" class="acao" onclick="parar(' + i.id + ',false)">parar</button>' : '<button type="button" class="acao" onclick="parar(' + i.id + ',true)">remover</button>') + '</td></tr>';
+    }).join('') : '<tr><td colspan="10" class="sub">nenhum envio ainda — use o painel ao lado</td></tr>');
+}
+
+/* ---- fluxos ao vivo ---- */
+const tocando = new Set();
+async function fluxos() {
+  const d = await (await fetch('/api/fluxos')).json();
+  const alvo = $('fluxos');
+  /* Uma sessao WebRTC por fluxo: varias cameras podem apontar para o mesmo encode (bancada e demo),
+     entao a grade agrupa por fluxo e mostra os outros nomes como apelido. */
+  const porFluxo = new Map();
+  for (const f of d.fluxos) {
+    const a = porFluxo.get(f.fluxo_id);
+    if (a) { a.apelidos.push(f.rotulo); continue; }
+    porFluxo.set(f.fluxo_id, Object.assign({}, f, { apelidos: [] }));
+  }
+  const fluxos = [...porFluxo.values()];
+  const ids = fluxos.map((f) => f.id + '|' + f.rotulo);   // f.id = linha do banco
+  if ($('fluxos').dataset.ids !== ids.join(',')) {
+    alvo.dataset.ids = ids.join(',');
+    alvo.innerHTML = fluxos.map((f) => `
+      <div class="janela" data-cam="${esc(f.id)}">
+        <div class="rotulo-cam"><span class="pill ${f.no_ar ? 'no-ar' : 'ruim'}" id="estado-${esc(f.id)}">${f.no_ar ? 'no ar' : 'fora do ar'}</span>
+          <span class="nome">${esc(f.rotulo)}</span>
+          <span class="sub">${esc(f.fluxo_id)} · ${esc((f.tracks || []).join('/') || 'sem trilha')}${f.apelidos.length ? ' · também visto como ' + esc(f.apelidos.join(', ')) : ''}</span></div>
+        <video id="v-${esc(f.id)}" muted playsinline autoplay controls></video>
+      </div>`).join('');
+    for (const f of fluxos) if (!tocando.has(f.id)) {
+      tocando.add(f.id);
+      window.Video.ligar(f.id, f.id, document.getElementById('v-' + f.id));
+    }
   }
 }
-function reagendar(id, url, video, urlHls){
-  const est = ligados.get(id) || {tentativa: 0};
-  est.video = video;
-  if (est.timer) return;
-  est.tentativa = (est.tentativa || 0) + 1;
-  video.classList.add('reconectando');
-  est.timer = setTimeout(() => {
-    est.timer = null; ligados.set(id, est); ligar(id, url, video, urlHls);
-  }, Math.min(1000 * est.tentativa, 8000));
-  ligados.set(id, est);
+
+/* ---- tabelas do projeto ---- */
+const cel = (t) => '<td>' + (t ?? '') + '</td>';
+async function projeto() {
+  const d = await (await fetch('/api/resumo')).json();
+  $('stamp').textContent = 'consultado ' + d.gerado_em;
+  $('t-fases').innerHTML = '<tr><th>Fase</th><th>Prio</th><th>Status</th><th>Critério de aceite</th><th>Evidência</th></tr>' +
+    d.fases.map((f) => '<tr><td>' + esc(f.nome) + '</td><td>' + esc(f.prioridade) + '</td><td><span class="pil ' + esc(f.status.replace(/ /g, '')) + '">' + esc(f.status) + '</span></td>' +
+      cel(esc(f.criterio_aceite)) + cel(f.evidencia ? '<code>' + esc(f.evidencia) + '</code>' : '—') + '</tr>').join('');
+  $('t-med').innerHTML = '<tr><th>valor</th><th>fonte</th><th>data</th><th>hardware/versão</th><th>comando</th></tr>' +
+    (d.medicoes.length ? d.medicoes.map((m) => '<tr>' + cel(esc(m.valor)) + cel('<code>' + esc(m.fonte) + '</code>') + cel(esc(m.data)) +
+      cel(esc(m.hardware_versao)) + cel('<code>' + esc((m.comando || '').slice(0, 110)) + '…</code>') + '</tr>').join('')
+      : '<tr><td colspan="5">nenhuma medição gravada</td></tr>');
+  $('t-inv').innerHTML = '<tr><th>câmera</th><th>IP</th><th>protocolo</th><th>resolução</th><th>FPS</th><th>credencial (referência)</th></tr>' +
+    (d.inventario.length ? d.inventario.map((c) => '<tr>' + cel(esc(c.id)) + cel(esc(c.ip) || '—') + cel(esc(c.protocolo) || '—') +
+      cel(esc(c.resolucao) || '—') + cel(esc(c.fps) || '—') + cel(esc(c.credencial_ref) || '—') + '</tr>').join('')
+      : '<tr><td colspan="6">inventário vazio — aguardando dados das câmeras (TI)</td></tr>');
+  $('t-ev').innerHTML = '<tr><th>fase</th><th>caminho</th><th>descrição</th><th>data</th></tr>' +
+    d.evidencias.map((e) => '<tr>' + cel(esc(e.fase_id)) + cel('<code>' + esc(e.caminho) + '</code>') + cel(esc(e.descricao)) + cel(esc(e.data)) + '</tr>').join('');
 }
 
-const criados = new Set();
-function cartao(f){
-  return `<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
-      <div style="padding:6px 8px;font-size:12px;display:flex;justify-content:space-between;gap:8px">
-        <b>${esc(f.rotulo)}</b><span class="sub" id="st-${f.id}">…</span>
-      </div>
-      <video id="v-${f.id}" muted playsinline autoplay controls style="width:100%;background:#000;aspect-ratio:16/9"></video>
-    </div>`;
-}
-function status(f){
-  const s = (f.no_ar ? '<span class="pill concluida">no ar (WebRTC)</span>' : '<span class="pill bloqueada">sem sinal</span>');
-  return `SRT ${f.srt_port} · ${s}` + ((f.tracks||[]).length ? ' · '+f.tracks.join('/') : '')
-       + ((f.leitores||[]).length ? ' · '+f.leitores.length+' leitor(es)' : '');
-}
-async function carregarFluxos(){
-  const d = await (await fetch('/api/fluxos')).json();
-  const alvo = document.getElementById('fluxos');
-  if (!d.fluxos || !d.fluxos.length){ alvo.innerHTML = '<div class="sub">nenhum fluxo no lado terra (rode <code>ground/start-mediamtx.sh</code>)</div>'; return; }
-  d.fluxos.forEach(f => {
-    if (!criados.has(f.id)) {                     // cria o player UMA vez: recriar a cada ciclo abre sessao nova
-      alvo.insertAdjacentHTML('beforeend', cartao(f));
-      criados.add(f.id);
-      const v = document.getElementById('v-'+f.id);
-      v.muted = true;
-      v.onclick = () => v.play().catch(()=>{});
-      if (f.link_webrtc) ligar(f.id, f.link_webrtc, v, f.link_hls_mediamtx || f.link_hls);
-    }
-    const el = document.getElementById('st-'+f.id);
-    if (el) el.innerHTML = status(f);
-  });
-}
-setInterval(()=>{document.getElementById('relogio').textContent = new Date().toLocaleTimeString('pt-BR', {hour12:false}) + '.' + String(new Date().getMilliseconds()).padStart(3,'0');}, 100);
-carregar(); carregarFluxos(); setInterval(carregarFluxos, 5000);
-</script>
-<script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script></body></html>
+$('f').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const dados = Object.fromEntries(new FormData(ev.target).entries());
+  const r = await fetch('/api/medicoes', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(dados)});
+  const j = await r.json();
+  if (r.status === 201) { aviso('medição gravada (id ' + j.id + ')'); ev.target.reset(); projeto(); }
+  else aviso(j.erro + ' → faltando: ' + (j.campos_faltando || []).join(', '), true);
+});
+
+function carregar() { envios(); fluxos(); }
+carregar(); projeto();
+setInterval(envios, 4000);
+setInterval(fluxos, 8000);
+setInterval(projeto, 30000);
+</script></body></html>

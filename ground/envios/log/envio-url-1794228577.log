@@ -1,0 +1,10 @@
+[in#0/mov,mp4,m4a,3gp,3g2,mj2 @ 000001ceb34d0080] Packet corrupt (stream = 0, dts = 638000).
+[h264 @ 000001ceb55f5900] Invalid NAL unit size (17761 > 1838).
+[h264 @ 000001ceb55f5900] missing picture in access unit with size 1842
+[in#0/mov,mp4,m4a,3gp,3g2,mj2 @ 000001ceb34cfd80] corrupt input packet in stream 0
+[in#0/mov,mp4,m4a,3gp,3g2,mj2 @ 000001ceb34d0080] stream 1, offset 0x2eb188: partial file
+[in#0/mov,mp4,m4a,3gp,3g2,mj2 @ 000001ceb34cfd80] Error during demuxing: Error number -10054 occurred
+[h264 @ 000001ceb53e7b00] Invalid NAL unit size (17761 > 1838).
+[h264 @ 000001ceb53e7b00] Error splitting the input into NAL units.
+[vist#0:0/h264 @ 000001ceb535ee00] [dec:h264 @ 000001ceb554e080] Decoding error: Invalid data found when processing input
+Error closing progress log, loss of information possible: Invalid argument
