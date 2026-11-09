@@ -32,15 +32,20 @@ def _kbps(bitrate: str) -> int:
     return int(v * (1000 if m.group(2).lower() == "m" else 1))
 
 
-QUALIDADE_PISO_SSIM = 0.95     # piso de qualidade aceito no modo automatico
-CRFS_TESTADOS = (34, 32, 30, 28, 26)
+# Piso travado pelo dono (09/11/2026): nada abaixo disto e aceito.
+PISO_COMPRESSAO_PCT = 73.0     # economia minima de banda
+PISO_QUALIDADE_SSIM = 0.9733   # semelhanca minima com o original
+CRFS_TESTADOS = (36, 34, 32, 30, 28, 26)
 
 
 def _encode(fonte: str, saida: Path, *, kb: int | None = None, crf: int | None = None, fps: int = 30,
             codec: str = "libx264", fonte2: str | None = None, audio: bool = False,
-            duracao_amostra: float | None = None, preset: str = "medium") -> float:
+            duracao_amostra: float | None = None, preset: str = "medium",
+            inicio: float = 0.0) -> float:
     """Uma passada de encode. kb = alvo de bitrate; crf = qualidade (o x264 escolhe o bitrate)."""
     cmd = ["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "warning", "-y"]
+    if inicio:
+        cmd += ["-ss", str(inicio)]
     if duracao_amostra:
         cmd += ["-t", str(duracao_amostra)]
     cmd += ["-i", fonte]
@@ -64,46 +69,48 @@ def _encode(fonte: str, saida: Path, *, kb: int | None = None, crf: int | None =
     return round(time.time() - t0, 2)
 
 
-def escolher_crf(fonte: str, *, fps: int = 30, tolerancia: float = 0.005,
-                 pasta: Path | None = None, fonte2: str | None = None) -> dict:
-    """Maior compressao possivel sem perder qualidade relevante.
-
-    Codifica amostras curtas em varios CRFs, mede o SSIM de cada uma contra a MESMA amostra do
-    original e escolhe o CRF mais alto (menos banda) cuja qualidade fica dentro da tolerancia do
-    melhor SSIM encontrado — ou seja, o ponto em que baixar mais a banda comecaria a custar imagem.
-    """
+def escolher_crf(fonte: str, *, fps: int = 30, pasta: Path | None = None, fonte2: str | None = None,
+                 tolerancia: float = 0.005) -> dict:
+    """CRF de partida: o maior CRF (menos banda) cuja qualidade fica dentro da tolerancia do melhor
+    SSIM medido numa amostra curta do MEIO do video (o comeco costuma ser mais duro que a media)."""
     pasta = pasta or COMPRIMIDOS
     pasta.mkdir(parents=True, exist_ok=True)
     ent = info(fonte)
-    amostra = min(12.0, max(5.0, (ent.get("duracao_s") or 20) / 5))
+    dur = ent.get("duracao_s") or 20
+    amostra = min(15.0, max(5.0, dur / 5))
+    inicio = max(0.0, dur * 0.4) if dur > amostra * 2.5 else 0.0
     tentativas = []
     for crf in CRFS_TESTADOS:
         saida = pasta / f"_amostra-crf{crf}.mp4"
         try:
-            seg = _encode(fonte, saida, crf=crf, fps=fps, fonte2=fonte2, duracao_amostra=amostra)
+            seg = _encode(fonte, saida, crf=crf, fps=fps, fonte2=fonte2, duracao_amostra=amostra, inicio=inicio)
         except RuntimeError as e:
             tentativas.append({"crf": crf, "erro": str(e)[:120]})
             continue
-        ssim = medir_ssim_amostra(fonte, str(saida), amostra, fps=fps)
-        kb = round(saida.stat().st_size * 8 / amostra / 1000, 1)
-        tentativas.append({"crf": crf, "ssim": ssim, "bitrate_kbps": kb, "segundos_amostra": seg})
+        ssim = medir_ssim_amostra(fonte, str(saida), amostra, fps=fps, inicio=inicio)
+        tentativas.append({"crf": crf, "ssim": ssim,
+                           "bitrate_kbps": round(saida.stat().st_size * 8 / amostra / 1000, 1),
+                           "segundos_amostra": seg, "inicio_s": round(inicio, 1)})
         saida.unlink(missing_ok=True)
     validas = [x for x in tentativas if x.get("ssim") is not None]
     if not validas:
-        return {"crf": 28, "tolerancia": tolerancia, "amostra_s": round(amostra, 1), "tentativas": tentativas,
-                "motivo": "nao consegui medir qualidade na amostra: usei CRF 28"}
+        return {"crf": 32, "tolerancia": tolerancia, "tentativas": tentativas,
+                "motivo": "nao consegui medir a amostra: usei CRF 32 de partida"}
     melhor = max(validas, key=lambda x: x["ssim"])
     dentro = [x for x in validas if x["ssim"] >= melhor["ssim"] - tolerancia]
     escolhido = max(dentro, key=lambda x: x["crf"])
     return {"crf": escolhido["crf"], "tolerancia": tolerancia, "amostra_s": round(amostra, 1),
-            "tentativas": tentativas, "escolhido": escolhido, "melhor_ssim": melhor["ssim"],
-            "motivo": (f"maior CRF (menos banda) cuja qualidade fica dentro de {tolerancia} do melhor SSIM "
-                       f"medido na amostra ({melhor['ssim']})")}
+            "inicio_s": round(inicio, 1), "tentativas": tentativas, "escolhido": escolhido,
+            "melhor_ssim": melhor["ssim"],
+            "motivo": f"ponto de partida: maior CRF dentro de {tolerancia} do melhor SSIM da amostra"}
 
 
-def medir_ssim_amostra(original: str, comprimido: str, segundos: float, fps: int = 30) -> float | None:
-    r = subprocess.run(["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "info",
-                        "-i", comprimido, "-i", original, "-t", str(segundos),
+def medir_ssim_amostra(original: str, comprimido: str, segundos: float, fps: int = 30,
+                       inicio: float = 0.0) -> float | None:
+    # o -ss vai ANTES do segundo -i: e o original que precisa comecar na mesma janela da amostra
+    r = subprocess.run(["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "info", "-i", comprimido]
+                        + (["-ss", str(inicio)] if inicio else []) +
+                        ["-i", original, "-t", str(segundos),
                         "-lavfi", f"[0:v]fps={fps},setpts=PTS-STARTPTS[a];[1:v]fps={fps},setpts=PTS-STARTPTS[b];[a][b]ssim",
                         "-f", "null", "-"], capture_output=True, text=True, timeout=900)
     m = re.findall(r"All:([0-9.]+)", r.stderr or "")
@@ -143,32 +150,74 @@ def comprimir(fonte: str, *, alvo: str = "auto", fps: int = 30, codec: str = "li
     kb = None
     if qualidade == "auto":
         busca = escolher_crf(fonte, fps=fps)
+        porta = {"piso_compressao_pct": PISO_COMPRESSAO_PCT, "piso_ssim": PISO_QUALIDADE_SSIM}
         crf = busca.get("crf")
         if crf is None:
             kb = _kbps(alvo_automatico(ent.get("bitrate_kbps")) if (not alvo or alvo == "auto") else alvo)
     elif str(qualidade).startswith("crf"):
         crf = int(re.sub(r"[^0-9]", "", qualidade) or 28)
     base = re.sub(r"[^a-zA-Z0-9]+", "-", (nome or Path(str(origem)).stem or "comprimido")).strip("-")
-    marca = f"crf{crf}" if crf is not None else f"{kb}k"
-    saida = COMPRIMIDOS / f"{base}-{marca}-{fps}fps.mp4"
-    try:
-        segundos = _encode(fonte, saida, kb=kb, crf=crf, fps=fps, codec=codec, fonte2=fonte2, audio=audio)
-    except RuntimeError as e:
-        return {"etapa": "compressao", "ok": False, "erro": str(e)}
-    comp = info(str(saida))
-    bo, bc = ent.get("bytes"), comp.get("bytes")
-    corte = round((1 - bc / bo) * 100, 2) if bo and bc else None
-    ssim = medir_ssim(fonte, str(saida), ent.get("duracao_s"), fps=fps)
     dur = ent.get("duracao_s") or 0
+    tentativas_pisos = []
+
+    def _tenta(crf_t, kb_t):
+        marca = f"crf{crf_t}" if crf_t is not None else f"{kb_t}k"
+        alvo_arq = COMPRIMIDOS / f"{base}-{marca}-{fps}fps.mp4"
+        seg_t = _encode(fonte, alvo_arq, kb=kb_t, crf=crf_t, fps=fps, codec=codec, fonte2=fonte2, audio=audio)
+        comp_t = info(str(alvo_arq))
+        corte_t = round((1 - comp_t["bytes"] / ent["bytes"]) * 100, 2) if ent.get("bytes") else None
+        ssim_t = medir_ssim(fonte, str(alvo_arq), dur, fps=fps)
+        passar = bool(corte_t is not None and ssim_t is not None and
+                      corte_t >= PISO_COMPRESSAO_PCT and ssim_t >= PISO_QUALIDADE_SSIM)
+        tentativas_pisos.append({"crf": crf_t, "kb": kb_t, "mb": round(comp_t["bytes"] / 1e6, 2),
+                                 "bitrate_kbps": comp_t.get("bitrate_kbps"), "corte_pct": corte_t,
+                                 "ssim": ssim_t, "segundos": seg_t, "passa": passar})
+        return alvo_arq, comp_t, corte_t, ssim_t, seg_t, passar
+
+    # o dono travou os pisos: mede o ARQUIVO INTEIRO e, se nao bateu, desce o CRF degrau a degrau
+    # (a amostra nao decide isso sozinha: ela e' mais otimista que a media do video)
+    candidatos, escolhida = ([crf] if crf is None else [crf, crf - 1, crf - 2, crf - 3]), None
+    for c in candidatos:
+        saida_c, comp_c, corte_c, ssim_c, seg_c, passa_c = _tenta(c, kb)
+        if passa_c:
+            escolhida = (c, saida_c, comp_c, corte_c, ssim_c, seg_c, passa_c)
+            break
+        if escolhida is None:
+            escolhida = (c, saida_c, comp_c, corte_c, ssim_c, seg_c, passa_c)
+        else:
+            # preferencia: quem mantem o piso de qualidade e comprime mais; se nenhum mantem, a melhor imagem
+            melhor_ssim = escolhida[4] if escolhida[4] is not None else 0
+            if ((ssim_c or 0) >= PISO_QUALIDADE_SSIM and (corte_c or 0) > (escolhida[3] or 0)) or \
+               ((ssim_c or 0) < PISO_QUALIDADE_SSIM and (ssim_c or 0) > melhor_ssim):
+                escolhida = (c, saida_c, comp_c, corte_c, ssim_c, seg_c, passa_c)
+    # arquivo que fica: o da tentativa escolhida (as outras somem)
+    for tt in tentativas_pisos:
+        if tt["crf"] != escolhida[0]:
+            (COMPRIMIDOS / f"{base}-crf{tt['crf']}-{fps}fps.mp4").unlink(missing_ok=True)
+    crf, saida, comp, corte, ssim, segundos, passa = escolhida
+    bo, bc = ent.get("bytes"), comp.get("bytes")
     r = {"etapa": "compressao", "ok": True, "arquivo": str(saida), "nome_arquivo": saida.name,
          "crf": crf, "fps": fps, "codec": codec, "qualidade": qualidade,
-         "busca_crf": busca,
+         "busca_crf": busca, "tentativas_pisos": tentativas_pisos,
          "entrada": {"bytes": bo, "mb": round(bo / 1e6, 2) if bo else None, "bitrate_kbps": ent.get("bitrate_kbps"),
                      "resolucao": ent.get("resolucao"), "fps": ent.get("fps"), "duracao_s": ent.get("duracao_s")},
          "comprimido": {"bytes": bc, "mb": round(bc / 1e6, 2) if bc else None, "bitrate_kbps": comp.get("bitrate_kbps"),
                         "resolucao": comp.get("resolucao"), "fps": comp.get("fps")},
          "corte_pct": corte, "tempo_encode_s": segundos,
          "velocidade_x": round(dur / segundos, 2) if segundos and dur else None, "ssim": ssim}
+    # portoes do dono: economia minima de banda E qualidade minima
+    r["piso_compressao_pct"] = PISO_COMPRESSAO_PCT
+    r["piso_ssim"] = PISO_QUALIDADE_SSIM
+    r["passa_pisos"] = bool(passa)
+    if not r["passa_pisos"]:
+        falta = []
+        if corte is None or corte < PISO_COMPRESSAO_PCT:
+            falta.append(f"compressao {corte}% < {PISO_COMPRESSAO_PCT}%")
+        if ssim is None or ssim < PISO_QUALIDADE_SSIM:
+            falta.append(f"qualidade {ssim} < {PISO_QUALIDADE_SSIM}")
+        r["aviso_pisos"] = "nao atingiu o piso exigido: " + "; ".join(falta)
+    if isinstance(busca, dict) and "passa_pisos" in busca:
+        r["busca_respeitou_pisos"] = busca["passa_pisos"]
     try:
         r["id"] = registrar_compressao(r, origem)
     except Exception:
@@ -203,7 +252,13 @@ def garantir_tabela() -> None:
             mb_entrada REAL, mb_saida REAL, bitrate_entrada_kbps REAL, bitrate_saida_kbps REAL,
             compressao_pct REAL, crf INTEGER, ssim REAL, fps INTEGER,
             segundos_encode REAL, velocidade_x REAL, duracao_s REAL,
-            fluxo_id TEXT, publicado_em TEXT, criado_em TEXT)""")
+            fluxo_id TEXT, publicado_em TEXT, criado_em TEXT, passa_pisos INTEGER,
+            piso_comp REAL, piso_ssim REAL)""")
+        # bancos antigos: acrescenta as colunas novas
+        cols = {l[1] for l in c.execute("PRAGMA table_info(compressoes)")}
+        for nome, tipo in (("passa_pisos", "INTEGER"), ("piso_comp", "REAL"), ("piso_ssim", "REAL")):
+            if nome not in cols:
+                c.execute(f"ALTER TABLE compressoes ADD COLUMN {nome} {tipo}")
 
 
 def registrar_compressao(r: dict, origem: str) -> int:
@@ -212,11 +267,13 @@ def registrar_compressao(r: dict, origem: str) -> int:
     with conexao_banco() as c:
         cur = c.execute("""INSERT INTO compressoes (rotulo, arquivo_original, arquivo_saida, mb_entrada, mb_saida,
             bitrate_entrada_kbps, bitrate_saida_kbps, compressao_pct, crf, ssim, fps, segundos_encode,
-            velocidade_x, duracao_s, criado_em) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            velocidade_x, duracao_s, criado_em, passa_pisos, piso_comp, piso_ssim)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (Path(str(origem)).name, origem, r["arquivo"], r["entrada"]["mb"], r["comprimido"]["mb"],
              r["entrada"]["bitrate_kbps"], r["comprimido"]["bitrate_kbps"], r["corte_pct"], r.get("crf"),
              r.get("ssim"), r.get("fps"), r.get("tempo_encode_s"), r.get("velocidade_x"),
-             r["entrada"].get("duracao_s"), _dt.datetime.now().astimezone().isoformat(timespec="seconds")))
+             r["entrada"].get("duracao_s"), _dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+             1 if r.get("passa_pisos") else 0, r.get("piso_compressao_pct"), r.get("piso_ssim")))
         return cur.lastrowid
 
 

@@ -228,6 +228,9 @@ def main() -> int:
         checar("MB" in cabecalho and "kbps" in cabecalho, "a tabela mostra o tamanho real e o bitrate de entrada e saída")
         checar("s (" in cabecalho or " s " in cabecalho, "a tabela mostra em quanto tempo a compressão foi feita")
         checar("alvo" not in cabecalho.lower(), "a coluna confusa \"alvo\" saiu da tela")
+        checar("PISO EXIGIDO" in cabecalho and "73" in cabecalho and "0,9733" in cabecalho,
+               "a tela declara o piso travado: 73% de compressão e qualidade 0,9733")
+        checar("✓" in cabecalho, "a linha mostra que a compressão bateu o piso (✓)")
         # publicar a última compressão: etapas 2 e 3 saem do mesmo painel
         pb.evaluate("(() => { const b=[...document.querySelectorAll('button')].find(x=>/Publicar no ar/i.test(x.textContent)); b.click(); })()")
         for _ in range(30):

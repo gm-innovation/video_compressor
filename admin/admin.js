@@ -500,7 +500,8 @@ function telaEnvios(t) {
   const legenda = document.createElement('div'); legenda.className = 'sub';
   legenda.textContent = 'Entrada = tamanho do seu vídeo original · Saída = tamanho depois de comprimir · ' +
     'Compressão = quanta banda foi economizada · Tempo = quanto a compressão levou · Qualidade = semelhança com o ' +
-    'original (1,000 = idêntico) · No ar = desde quando o vídeo comprimido está publicado.';
+    'original (1,000 = idêntico) · No ar = desde quando o vídeo comprimido está publicado.' +
+    ' · PISO EXIGIDO: Compressão de pelo menos 73% E qualidade de pelo menos 0,9733 — abaixo disso a linha fica com ✗.';
   t.appendChild(legenda);
 
   const guardar = () => { A.envioForm = { modo: modo.value, url: url.value, rotulo: rotulo.value,
@@ -540,7 +541,8 @@ function telaEnvios(t) {
       { rotulo: 'Saída (comprimido)', valor: (l) => (l.mb_saida === null ? '—' : l.mb_saida + ' MB') +
           (l.bitrate_saida_kbps ? ' · ' + Math.round(l.bitrate_saida_kbps) + ' kbps' : '') },
       { rotulo: 'Compressão', valor: (l) => (l.compressao_pct === null || l.compressao_pct === undefined) ? '—'
-          : (l.compressao_pct > 0 ? '↓ ' : '↑ ') + Math.abs(l.compressao_pct).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' },
+          : (l.compressao_pct > 0 ? '↓ ' : '↑ ') + Math.abs(l.compressao_pct).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' +
+            (l.passa_pisos === 1 || l.passa_pisos === true ? ' ✓' : (l.passa_pisos === 0 || l.passa_pisos === false ? ' ✗ (abaixo do piso)' : '')) },
       { rotulo: 'Tempo da compressão', valor: (l) => (l.segundos_encode === null || l.segundos_encode === undefined) ? '—'
           : l.segundos_encode.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' s' +
             (l.velocidade_x ? ' (' + l.velocidade_x + '× o tempo real)' : '') },
@@ -603,7 +605,9 @@ function telaEnvios(t) {
   };
   const resumo = (j) => 'comprimido: ' + j.entrada.mb + ' MB → ' + j.comprimido.mb + ' MB · ' +
     (j.corte_pct > 0 ? '↓ ' : '↑ ') + Math.abs(j.corte_pct) + '% · qualidade ' + (j.ssim === null ? '—' : j.ssim) +
-    ' · ' + j.tempo_encode_s + ' s' + (j.crf ? ' · CRF ' + j.crf : '') + '. Agora clique em "Publicar no ar".';
+    ' · ' + j.tempo_encode_s + ' s' + (j.crf ? ' · CRF ' + j.crf : '') +
+    (j.passa_pisos ? ' · PISO ✓ (≥73% e ≥0,9733)' : ' · ATENÇÃO — ' + (j.aviso_pisos || 'abaixo do piso')) +
+    '. Agora clique em "Publicar no ar".';
 
   btnComprimir.onclick = () => {
     const r = (rotulo.value || '').trim(), b = qualidade.value, qf = fps.value, aud = audio.value;

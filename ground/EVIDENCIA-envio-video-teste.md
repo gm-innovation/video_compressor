@@ -143,3 +143,16 @@ compressão possível sem perder qualidade**.
   tocando (conferido: `v-envio-ytdown-com-youtube-media-2xd0yog0kfo-s` 1920×1080 reproduzindo na grade).
 - **SSIM**: a comparação agora roda **sem reescalar** e com o original normalizado para os mesmos fps do
   comprimido (antes o reescalonamento e a diferença de fase 60→30 fps achatavam o número).
+
+## Piso travado pelo dono: ≥73% de compressão e qualidade ≥0,9733 (09/11/2026)
+
+- `PISO_COMPRESSAO_PCT = 73.0` e `PISO_QUALIDADE_SSIM = 0.9733` em `ground/etapas.py`; a receita é
+  codificar o **arquivo inteiro** e conferir os dois pisos (a amostra curta serve só de ponto de
+  partida: no meio do vídeo ela mede 0,9885 e no começo 0,93 — nenhuma das duas representa a média).
+- Se o arquivo inteiro não bate os dois pisos, o painel desce o CRF degrau a degrau (até 4 tentativas),
+  fica com a primeira que passa e **apaga as outras**.
+- Medição do clipe do dono (1080p60): CRF 36 → 78,11% / SSIM 0,9720 (reprova na qualidade); CRF 35 →
+  75,97% / 0,9727 (reprova); **CRF 34 → 73,64% / SSIM 0,9733 → passa ✓**. Clipe menor: CRF 30 →
+  84,48% / 0,9834 ✓.
+- A linha da tabela ganha `✓` ou `✗ (abaixo do piso)`, o texto de progresso diz "PISO ✓ (≥73% e ≥0,9733)"
+  e a legenda declara o piso. O banco guarda `passa_pisos`, `piso_comp` e `piso_ssim` por compressão.
