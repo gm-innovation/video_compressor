@@ -7,7 +7,7 @@ Serve para o dono testar compressao e streaming antes das imagens reais das emba
 Nenhuma credencial de camera entra aqui: a fonte e arquivo local ou link publico.
 """
 from __future__ import annotations
-import argparse, datetime as dt, json, os, re, shutil, signal, sqlite3, subprocess, sys, threading, time
+import argparse, datetime as dt, json, os, re, shutil, signal, sqlite3, subprocess, sys, threading, time, unicodedata
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -47,12 +47,52 @@ def hw() -> str:
         v = "ffmpeg"
     return f"{gpu} | {v}"
 
+# Link de PAGINA (YouTube, Vimeo...) nao e o video: o ffmpeg nao abre. Resolvemos pelo yt-dlp.
+MEDIA_RE = re.compile(r"\.(mp4|mkv|mov|webm|m4v|m3u8|mpd|ts|mts|avi|flv|wmv|mpg|mpeg)(\?|$)", re.I)
+CDN_RE = re.compile(r"(googlevideo\.com|vimeocdn\.com|cloudfront\.net|akamai|backblazeb2\.com|blob\.core\.windows\.net)", re.I)
+
+
+def _yt_dlp() -> str | None:
+    achado = shutil.which("yt-dlp")
+    if achado:
+        return achado
+    for c in (Path.home() / ".local" / "bin" / "yt-dlp.exe", Path.home() / ".local" / "bin" / "yt-dlp"):
+        if c.exists():
+            return str(c)
+    return None
+
+
+def resolver_link(url: str, timeout: int = 240) -> tuple[str, str | None, str]:
+    """Devolve (url_do_video, url_do_audio_ou_None, titulo). Link direto de midia passa como esta."""
+    if MEDIA_RE.search(url) or CDN_RE.search(url):
+        return url, None, ""
+    exe = _yt_dlp()
+    if not exe:
+        raise RuntimeError("esse link e de uma PAGINA (YouTube, Vimeo...), nao do video: o ffmpeg nao abre. "
+                           "Use um link direto (.mp4/.m3u8) ou instale o yt-dlp no servidor de captura.")
+    r = subprocess.run([exe, "--no-warnings", "--no-playlist",
+                        "-f", "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b", "-g", url],
+                       capture_output=True, text=True, timeout=timeout)
+    urls = [l for l in (r.stdout or "").strip().splitlines() if l.startswith("http")]
+    if not urls:
+        ultimo = ((r.stderr or "").strip().splitlines() or ["o site nao devolveu video"])[-1][:200]
+        raise RuntimeError("nao consegui resolver o link: " + ultimo)
+    titulo = ""
+    try:
+        t2 = subprocess.run([exe, "--no-warnings", "--no-playlist", "--print", "title", url],
+                            capture_output=True, text=True, timeout=90)
+        titulo = (t2.stdout or "").strip().splitlines()[0] if (t2.stdout or "").strip() else ""
+    except Exception:
+        titulo = ""
+    return urls[0], (urls[1] if len(urls) > 1 else None), titulo
+
+
 def sonda(fonte: str) -> dict:
     """Resolucao, fps e bitrate de entrada (o quanto o video original pesa)."""
     try:
         r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
                             "-show_entries", "stream=width,height,r_frame_rate,bit_rate,codec_name",
-                            "-show_entries", "format=bit_rate,duration,format_name",
+                            "-show_entries", "format=bit_rate,duration,format_name,size",
                             "-of", "json", fonte], capture_output=True, text=True, timeout=45)
         d = json.loads(r.stdout or "{}")
     except Exception as e:
@@ -65,22 +105,32 @@ def sonda(fonte: str) -> dict:
     except Exception:
         fps = None
     kbps = None
-    for v in (st.get("bit_rate"), fm.get("bit_rate")):
-        try:
-            kbps = round(int(v) / 1000, 1); break
-        except Exception:
-            continue
+    # bit_rate do ffprobe em fluxo remoto (DASH/AV1 do YouTube) vem errado: o honesto e tamanho/duracao
+    try:
+        tam, dur = int(fm.get("size") or 0), float(fm.get("duration") or 0)
+        if tam > 0 and dur > 0:
+            kbps = round(tam * 8 / dur / 1000, 1)
+    except Exception:
+        kbps = None
+    if not kbps:
+        for v in (st.get("bit_rate"), fm.get("bit_rate")):
+            try:
+                kbps = round(int(v) / 1000, 1); break
+            except Exception:
+                continue
     return {"resolucao": f"{st.get('width')}x{st.get('height')}" if st.get("width") else "",
             "fps": fps, "bitrate_kbps": kbps, "codec_entrada": st.get("codec_name", ""),
             "duracao_s": round(float(fm.get("duration") or 0), 2) if fm.get("duration") else None}
 
 def _comando(fonte: str, fluxo_id: str, bitrate: str, codec: str, repetir: bool, tipo: str,
-             srt_host: str, srt_port: int, audio: bool = False) -> list[str]:
+             srt_host: str, srt_port: int, audio: bool = False, fonte2: str | None = None) -> list[str]:
     destino = (f"srt://{srt_host}:{srt_port}?mode=caller&latency=200&pkt_size=1316&streamid=publish:{fluxo_id}")
     cmd = ["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "warning", "-re"]
     if tipo == "arquivo" and repetir:
         cmd += ["-stream_loop", "-1"]
     cmd += ["-i", fonte]
+    if fonte2 and audio:   # yt-dlp entrega video e audio em enderecos separados: junta os dois
+        cmd += ["-i", fonte2, "-map", "0:v:0", "-map", "1:a:0?"]
     cmd += ["-c:v", codec, "-preset", "ultrafast", "-tune", "zerolatency",
             "-b:v", bitrate, "-maxrate", bitrate, "-bufsize", "1M",
             "-g", "30", "-pix_fmt", "yuv420p"]
@@ -115,10 +165,20 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
         if not p.exists():
             return {"erro": f"arquivo nao encontrado: {fonte}"}
         fonte = str(p.resolve())
-    slug = re.sub(r"[^a-z0-9]+", "-", (rotulo or Path(fonte).stem).lower()).strip("-")[:38] or "envio"
+    base_nome = unicodedata.normalize("NFKD", (rotulo or Path(fonte).stem).lower())
+    base_nome = "".join(ch for ch in base_nome if not unicodedata.combining(ch))
+    slug = re.sub(r"[^a-z0-9]+", "-", base_nome).strip("-")[:38] or "envio"
     fluxo_id = fluxo_id or f"envio-{slug}"
     fluxo_id = re.sub(r"[^a-zA-Z0-9_\-]", "-", fluxo_id)
     camera_id = fluxo_id
+    fonte2 = None
+    origem_pagina = ""
+    if tipo == "url" and not MEDIA_RE.search(fonte) and not CDN_RE.search(fonte):
+        direto, fonte2, titulo = resolver_link(fonte)
+        origem_pagina = fonte       # o que o dono colou (fica na tela e no banco)
+        fonte = direto              # endereco do CDN (so vai para o log)
+        if titulo and (not rotulo or rotulo == "vídeo por link"):
+            rotulo = titulo
     s = sonda(fonte)
     if not bitrate or bitrate == "auto":
         bitrate = alvo_automatico(s.get("bitrate_kbps"))
@@ -129,7 +189,7 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
     if ent and alvo_kbps > ent * 1.05:
         aviso = (f"alvo {bitrate} e MAIOR que a entrada ({ent} kbps): a saida vai gastar mais banda que o video enviado. "
                  f"Para comprimir, use alvo abaixo da entrada (ex.: {alvo_automatico(ent)}) — o numero medido e o total do fluxo (video + audio + MPEG-TS).")
-    cmd = _comando(fonte, fluxo_id, bitrate, codec, repetir, tipo, srt_host, srt_port, audio=audio)
+    cmd = _comando(fonte, fluxo_id, bitrate, codec, repetir, tipo, srt_host, srt_port, audio=audio, fonte2=fonte2)
     log = LOG_DIR / f"{fluxo_id}-{int(time.time())}.log"
     saida = open(log, "ab", buffering=0) if abrir_log else subprocess.DEVNULL
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=saida, cwd=str(RAIZ))
@@ -137,7 +197,7 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
         cur = c.execute("""INSERT INTO ingestoes (fluxo_id, camera_id, rotulo, fonte, tipo, repetir, codec,
               bitrate_alvo, resolucao, fps_nativo, bitrate_entrada_kbps, estado, pid, log, criado_em, atualizado_em)
               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (fluxo_id, camera_id, rotulo or slug, fonte, tipo, 1 if repetir else 0, codec, bitrate,
+            (fluxo_id, camera_id, rotulo or slug, origem_pagina or fonte, tipo, 1 if repetir else 0, codec, bitrate,
              s.get("resolucao"), s.get("fps"), s.get("bitrate_kbps"), "iniciando", proc.pid, str(log), agora(), agora()))
         ident = cur.lastrowid
         if registrar_camera:
@@ -147,7 +207,8 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
                       (camera_id, embarcacao_id, rotulo or slug, fluxo_id, "envio"))
     threading.Thread(target=_bombear, args=(ident, proc, log), daemon=True).start()
     return {"id": ident, "fluxo_id": fluxo_id, "camera_id": camera_id, "pid": proc.pid,
-            "comando": " ".join(cmd), "entrada": s, "alvo": bitrate, "aviso": aviso, "log": str(log)}
+            "comando": " ".join(cmd), "entrada": s, "alvo": bitrate, "aviso": aviso, "log": str(log),
+            "pagina": origem_pagina}
 
 def _bombear(ident: int, proc: subprocess.Popen, log: Path):
     """Le o -progress do ffmpeg e mantem a tabela ingestoes atualizada."""

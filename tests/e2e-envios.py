@@ -167,6 +167,32 @@ def main() -> int:
             checar(velha["novo"] == 1, "deteccao fresca desenha a caixa")
             checar("sem detec" in velha["selo"], "o selo explica que a leitura envelheceu: " + velha["selo"][:70])
 
+        # --- 5b) app do admin: o formulario de envio nao se apaga enquanto o usuario digita
+        # (o redesenho periodico da tela apagava link e rotulo e parecia que "o app voltava ao estado anterior")
+        ctx3 = nav.new_context(viewport={"width": 1400, "height": 900})
+        pa = ctx3.new_page()
+        pa.goto(BASE + "/admin", wait_until="domcontentloaded")
+        pa.fill("#email", "admin@lecsor.test"); pa.fill("#senha", SENHA)
+        pa.click("#form-entrar button")
+        pa.wait_for_selector("#sistema:not(.oculto)", timeout=15000)
+        item = pa.query_selector("li.item[data-tela='envios'], [data-tela='envios']")
+        if item:
+            item.click()
+        else:
+            pa.evaluate("(() => { const b=[...document.querySelectorAll('button,a,li')].find(x=>/Enviar v[ií]deo/i.test(x.textContent)); if(b) b.click(); })()")
+        pa.wait_for_selector("#env-modo", timeout=15000)
+        pa.select_option("#env-modo", "url")
+        pa.fill("#env-url", "https://www.youtube.com/watch?v=aqz-KE-bpKQ")
+        pa.click("#env-rotulo")
+        pa.type("#env-rotulo", "Clipe do YouTube (teste)", delay=400)
+        pa.wait_for_timeout(18000)   # passa por pelo menos um redesenho automatico da tela
+        modo = pa.input_value("#env-modo"); url = pa.input_value("#env-url"); rot = pa.input_value("#env-rotulo")
+        print("    depois de 18 s: modo=%s url=%s rotulo=%s" % (modo, url[:38], rot))
+        checar(modo == "url", "o seletor 'colar um link' continua escolhido depois do redesenho")
+        checar(url.startswith("https://www.youtube.com"), "o link colado continua no campo")
+        checar(rot == "Clipe do YouTube (teste)", "o rotulo digitado nao se perde")
+        pa.close(); ctx3.close()
+
         # --- 6) nada de endereco interno nem credencial no que o navegador recebe
         proibido = re.compile(r"rtsp://|:8554|:8890|:9997|:8889|localhost|password|credencial|senha")
         vazou = [u for u in recebido + recebido2 if proibido.search(u)]

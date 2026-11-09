@@ -31,7 +31,14 @@ async function abrir() {
   $('conta-papel').textContent = eu.corpo.papel === 'admin' ? 'Administrador do sistema' : 'Operação';
   $('iniciais').textContent = (eu.corpo.nome.split(/\s+/).filter((p) => p.length > 2).slice(0, 2).map((p) => p[0]).join('') || 'LC').toUpperCase();
   await atualizar();
-  if (!A.timer) A.timer = setInterval(atualizar, 15000);
+  // Nao redesenhar por cima do que o usuario esta digitando: era isso que apagava o formulario de
+  // envio (link + rotulo) a cada 15 s e parecia que o app "voltava ao estado anterior".
+  if (!A.timer) A.timer = setInterval(() => { if (!digitandoNaTela()) atualizar(); }, 15000);
+}
+
+function digitandoNaTela() {
+  const a = document.activeElement;
+  return !!(a && a.closest && a.closest('#tela') && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
 }
 
 async function atualizar() {
@@ -471,6 +478,15 @@ function telaEnvios(t) {
   }
   ra2.appendChild(audio); linha2.appendChild(ra2);
 
+  // o redesenho periodico da tela (atualizar -> desenhar) nao pode apagar o que o usuario digitou
+  const guardado = A.envioForm || {};
+  const guardar = () => { A.envioForm = { modo: modo.value, url: url.value, rotulo: rotulo.value,
+    bitrate: bitrate.value, repetir: repetir.value, audio: audio.value }; };
+  for (const el of [modo, url, rotulo, bitrate, repetir, audio]) el.addEventListener('input', guardar);
+  for (const el of [modo, url, rotulo, bitrate, repetir, audio]) el.addEventListener('change', guardar);
+  if (guardado.modo) { modo.value = guardado.modo; url.value = guardado.url || ''; rotulo.value = guardado.rotulo || '';
+    bitrate.value = guardado.bitrate || 'auto'; repetir.value = guardado.repetir || '1'; audio.value = guardado.audio || '0'; }
+
   const acoes = document.createElement('div'); acoes.className = 'linha-form'; caixa.appendChild(acoes);
   const enviar = botao('Codificar e publicar', 'principal', () => {});
   acoes.appendChild(enviar);
@@ -525,6 +541,7 @@ function telaEnvios(t) {
       x.upload.onprogress = (e) => { if (e.lengthComputable) progresso.textContent = 'enviando… ' + Math.round(e.loaded / e.total * 100) + '%'; };
       x.onload = () => {
         let j = {}; try { j = JSON.parse(x.responseText); } catch (e) {}
+        if (x.status === 201) { A.envioForm = null; arquivo.value = ''; rotulo.value = ''; }
         progresso.textContent = x.status === 201
           ? ('no ar como "' + j.fluxo_id + '" · entrada ' + mbps((j.entrada || {}).bitrate_kbps) + ' → alvo ' + j.alvo + (j.aviso ? ' · ' + j.aviso : ''))
           : ('falhou: ' + (j.erro || x.status));
@@ -538,7 +555,8 @@ function telaEnvios(t) {
       fetch('/api/ingestao/url', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: u, rotulo: r || 'vídeo por link', bitrate: b, repetir: rep === '1', audio: aud === '1' }) })
         .then(async (x) => ({ s: x.status, j: await x.json() }))
-        .then(({ s, j }) => { progresso.textContent = s === 201 ? ('no ar como "' + j.fluxo_id + '" · alvo ' + j.alvo + (j.aviso ? ' · ' + j.aviso : '')) : ('falhou: ' + (j.erro || s)); carregar(); });
+        .then(({ s, j }) => { if (s === 201) { A.envioForm = null; url.value = ''; rotulo.value = ''; }
+          progresso.textContent = s === 201 ? ('no ar como "' + j.fluxo_id + '" · alvo ' + j.alvo + (j.aviso ? ' · ' + j.aviso : '')) : ('falhou: ' + (j.erro || s)); carregar(); });
     }
   };
 
