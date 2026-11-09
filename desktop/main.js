@@ -6,16 +6,31 @@ const fs = require('fs');
 const path = require('path');
 
 const RAIZ = __dirname;
-const CONFIG = path.join(RAIZ, 'config.json');
 const VERIFICAR = process.argv.includes('--verificar');   // sobe, confere e sai (rodado por teste)
 
+// Cada instalador carrega UMA superficie (gravado no pacote pelo electron-builder). Sem isso,
+// o app abre as tres (uso de bancada/engenharia). A variavel LECSOR_SUPERFICIE existe para o modo de desenvolvimento.
+let SUPERFICIE = '';
+try { SUPERFICIE = require('./package.json').superficie || ''; } catch (e) {}
+SUPERFICIE = process.env.LECSOR_SUPERFICIE || SUPERFICIE;
+
+const PADRAO = require('./config.json');
+function caminhoConfig() { return path.join(app.getPath('userData'), 'config.json'); }
 function lerConfig() {
-  const padrao = { base: 'http://127.0.0.1:8765', abrirAoIniciar: ['cliente', 'admin', 'bancada'], modoQuiosque: false,
-                   servidorLocal: { ligado: false, repo: '', portaApi: 8765 } };
-  try { return Object.assign(padrao, JSON.parse(fs.readFileSync(CONFIG, 'utf8'))); } catch (e) { return padrao; }
+  const base = { base: PADRAO.base, abrirAoIniciar: PADRAO.abrirAoIniciar.slice(), modoQuiosque: !!PADRAO.modoQuiosque,
+                 servidorLocal: Object.assign({ ligado: false, repo: '', portaApi: 8765 }, PADRAO.servidorLocal || {}) };
+  try {
+    const doUsuario = JSON.parse(fs.readFileSync(caminhoConfig(), 'utf8'));
+    return Object.assign(base, doUsuario, { servidorLocal: Object.assign(base.servidorLocal, doUsuario.servidorLocal || {}) });
+  } catch (e) { return base; }
 }
-function gravarConfig(c) { fs.writeFileSync(CONFIG, JSON.stringify(c, null, 2) + '\n'); }
+function gravarConfig(c) {
+  const alvo = caminhoConfig();
+  fs.mkdirSync(path.dirname(alvo), { recursive: true });
+  fs.writeFileSync(alvo, JSON.stringify(c, null, 2) + '\n');
+}
 const config = lerConfig();
+if (SUPERFICIE) config.abrirAoIniciar = [SUPERFICIE];
 
 // Cada superficie tem sessao propria (particao propria): entrar como cliente nao pode virar admin.
 const SUPERFICIES = {
@@ -54,8 +69,11 @@ function abrir(nome) {
 }
 
 function menu() {
-  const modelo = [
-    { label: 'Superficies', submenu: Object.keys(SUPERFICIES).map((n) => ({ label: SUPERFICIES[n].titulo, accelerator: 'CmdOrCtrl+' + (n === 'cliente' ? '1' : n === 'admin' ? '2' : '3'), click: () => abrir(n) })) },
+  const modelo = [];
+  if (!SUPERFICIE) {   // app de bancada: as tres superficies na mesma janela-menu
+    modelo.push({ label: 'Superficies', submenu: Object.keys(SUPERFICIES).map((n) => ({ label: SUPERFICIES[n].titulo, accelerator: 'CmdOrCtrl+' + (n === 'cliente' ? '1' : n === 'admin' ? '2' : '3'), click: () => abrir(n) })) });
+  }
+  modelo.push(
     { label: 'Modo', submenu: [
       { label: 'Janela', type: 'radio', checked: !config.modoQuiosque, click: () => { config.modoQuiosque = false; gravarConfig(config); aplicar(); } },
       { label: 'Quiosque (tela cheia)', type: 'radio', checked: config.modoQuiosque, click: () => { config.modoQuiosque = true; gravarConfig(config); aplicar(); } }
@@ -68,9 +86,10 @@ function menu() {
     { label: 'Ajuda', submenu: [
       { label: 'Endereco do lado terra...', click: () => dialog.showMessageBox({
           message: 'Lado terra em uso', detail: config.base + '\n\nPara trocar, edite config.json ao lado do aplicativo.' }) },
-      { label: 'Sobre', click: () => dialog.showMessageBox({ message: 'LECSOR Pipeline de Video', detail: 'Tres superficies: cliente, admin e bancada. A interface nao tem acesso a credencial de camera nem a chave de API.' }) }
+      { label: 'Sobre', click: () => dialog.showMessageBox({ message: 'LECSOR Pipeline de Video', detail: (SUPERFICIE ? 'Superficie: ' + SUPERFICIE + '. ' : 'Superficies: cliente, admin e bancada. ') + 'Interface sem acesso a credencial de camera e sem chave de API.' }) }
     ] }
-  ];
+  );
+  if (SUPERFICIE === 'bancada') { /* servidor local ja esta no menu acima */ }
   if (process.platform === 'darwin') modelo.unshift({ label: app.name, submenu: [{ role: 'quit' }] });
   Menu.setApplicationMenu(Menu.buildFromTemplate(modelo));
 }

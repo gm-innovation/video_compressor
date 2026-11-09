@@ -9,7 +9,8 @@
     "start": "electron .",
     "verificar": "electron . --verificar",
     "empacotar": "electron-builder --win nsis",
-    "empacotar:pasta": "electron-builder --win dir"
+    "empacotar:pasta": "electron-builder --win dir",
+    "instaladores": "bash construir-instaladores.sh"
   },
   "devDependencies": {
     "electron": "^33.2.0",
