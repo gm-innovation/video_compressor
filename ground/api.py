@@ -454,6 +454,13 @@ class Handler(SimpleHTTPRequestHandler):
         return super().translate_path(path)
 
     # ---- GET
+    def handle_one_request(self) -> None:
+        # navegador fechando a aba no meio de um HLS/WHEP aborta a conexao: nao e erro do servidor
+        try:
+            return super().handle_one_request()
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+            self.close_connection = True
+
     def do_GET(self) -> None:  # noqa: N802
         rota = urlparse(self.path).path
         u = self._sessao()
