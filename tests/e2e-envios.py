@@ -285,6 +285,7 @@ def main() -> int:
             tela = pg.inner_text("#tempo-resumo")
             checar("economia" in tela and "compressão agora" in tela,
                    "a tela Tempo real mostra compressão agora, banda consumida e economizada")
+            pg.screenshot(path=str(RAIZ / "ground" / "print-admin-tempo-real.png"), full_page=True)
             # cadastra a camera com IP e porta e confere o que o cliente recebe
             pg.click("button[data-tela='cameras']")
             pg.wait_for_selector("#k-ip", timeout=15000)
@@ -295,7 +296,6 @@ def main() -> int:
             det = pg.evaluate("(async () => { const r = await fetch('/api/cameras/detalhe'); const j = await r.json(); return JSON.stringify(j.cameras.filter(c=>c.ip)); })()")
             checar("10.99.0.7" in det and "555" in det, "a operação vê o IP e a porta da câmera")
             checar("$SENHA" in det and "rtsp://" in det, "a operação vê como o agente pega a câmera, com a senha como variável (não o valor)")
-            pg.screenshot(path=str(RAIZ / "ground" / "print-admin-tempo-real.png"), full_page=True)
             ctx.close()
             # cliente: a lista de cameras NAO pode trazer endereco
             ctx2 = bb.new_context(); pc = ctx2.new_page()
