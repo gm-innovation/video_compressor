@@ -49,9 +49,9 @@
     "numero": 6,
     "nome": "Fase 3 — Servidor de terra, portal de bancada e modulo §6",
     "prioridade": "P0",
-    "status": "em andamento",
+    "status": "concluida",
     "criterio_aceite": "4 streams visiveis no navegador e medicao invalida rejeitada pelo banco",
-    "evidencia": "ground/EVIDENCIA-latencia-ponta-a-ponta.md"
+    "evidencia": "ground/EVIDENCIA-fase3-4.md"
   },
   {
     "id": "fase-4",

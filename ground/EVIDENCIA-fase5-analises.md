@@ -34,3 +34,27 @@ Prints: `bench/saida/_front-cliente-ia.png`, `_front-admin-analises.png`.
 - A ingestão exige chave do agente (variável de ambiente no servidor, `ground/.env.local`, fora do git); sem chave a porta responde 401.
 - A tela do cliente recebe **resultado** (caixa normalizada, contagem, linha) — nunca endereço de câmera nem credencial.
 - Reconhecimento de pessoas continua **desligado** (dado sensível, decisão já registrada no plano).
+
+
+## Marcas do operador (linha e zonas desenhadas na tela do admin) — 09/11/2026
+
+Antes: a linha e a zona vinham do arquivo de perfil (`analytics/perfis/cam-03.json`). Agora o operador desenha na tela
+**Marcas e zonas** do admin e o agente de bordo obedece — sem tocar em arquivo nem em banco à mão.
+
+| Checagem (`python tests/e2e-marcas.py`) | Resultado |
+|---|---|
+| A tela do admin confirma a gravação da marca | OK |
+| Pré-visualização desenha a linha (SVG) | OK |
+| Marca gravada no servidor (`/api/analytics/marcas`) | OK — `linha.a=[0,42; 0]` |
+| Agente lê a marca do operador ao iniciar | OK — `{"a":[0.42,0.0],"b":[0.42,1.0]}` |
+| Agente no ar com a marca | OK — 5,9 quadros/s |
+| Linha desenhada na janela do cliente **na posição desenhada** | OK — x = 0,42 da largura |
+| Zona de risco desenhada na janela do cliente | OK — topo em 0,55 (pedido 0,55) |
+| Contagem visível para o cliente (selo) | OK |
+| Evento de zona de risco gravado no servidor | OK |
+| **Atraso do alerta de zona até o servidor** | **0,0 s** (limite de aceite: ≤5 s) |
+
+**Regras que ficaram valendo:** a marca é **fração do quadro (0..1)**, validada na borda (422 se sair do quadro); o branco
+do navegador do cliente nunca recebe endereço interno; o agente lê as marcas com a **chave de agente** (`X-Chave-Analytics`)
+e só o operador/admin desenham; a sobreposição no cliente é desenhada em SVG com o mesmo sistema de coordenadas do quadro,
+então a marca aparece exatamente onde foi desenhada em qualquer tamanho de janela.
