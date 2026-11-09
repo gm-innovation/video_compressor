@@ -118,3 +118,28 @@ da câmera analítica com o agente de IA junto.
 > o medido acima: ~0,3 s em WebRTC; em HLS ele soma o tamanho do segmento.
 
 30 fps: o encode publica com `-r 30 -g 30` (menos que 30 fica ruim, 60 gasta banda sem ganho visível).
+
+## Painel único do admin: comprimir → medir → publicar (09/11/2026, pedido do dono)
+
+O dono pediu **uma estrutura só**, sem "alvo" e sem a coluna "no ar" sem sentido: queria saber
+**em quanto tempo a compressão foi feita**, o **tamanho real de entrada e saída**, a **porcentagem de
+compressão** e a **qualidade que sobra**. E o "alvo" passou a ser o que ele descreveu: **a maior
+compressão possível sem perder qualidade**.
+
+- **Um cartão, dois botões**: `1) Comprimir e medir` (arquivo do computador ou link) e
+  `2) Publicar no ar (a última compressão)`. A tabela é a mesma para toda a operação.
+- **Colunas**: `Entrada (original)` MB · kbps | `Saída (comprimido)` MB · kbps | `Compressão` % |
+  `Tempo da compressão` s (e × o tempo real) | `Qualidade` SSIM | `fps` · CRF | `No ar` (tempo publicado
+  + fps entregue + estado) | `Ações` (baixar · publicar/parar · remover).
+- **Qualidade automática = busca de CRF**: amostra curta é codificada em CRF 26/28/30/32/34, mede-se o
+  SSIM de cada uma contra a mesma amostra do original e escolhe-se **o CRF mais alto (menos banda) cuja
+  qualidade fica dentro de 0,005 do melhor SSIM medido** — o ponto em que baixar mais a banda começaria a
+  custar imagem. O preset do encode em arquivo é `medium` (o `ultrafast` é do ao vivo; para tamanho ele
+  gasta banda à toa).
+- **Medição (clipe do dono, 1080p60, pelo painel)**: 28,19 MB / 1809 kbps → **7,43 MB / 477 kbps**,
+  **compressão ↓ 73,64%**, **qualidade 0,9733**, **tempo 22,8 s (5,46× o tempo real)**, CRF 34 escolhido
+  pela busca. Clipe maior: 5,48 MB → 0,85 MB, ↓ 84,48%, SSIM 0,9834, 2,53 s, CRF 30.
+- **Publicar no ar** continua do mesmo painel: cria o fluxo SRT e o cliente vê o vídeo comprimido
+  tocando (conferido: `v-envio-ytdown-com-youtube-media-2xd0yog0kfo-s` 1920×1080 reproduzindo na grade).
+- **SSIM**: a comparação agora roda **sem reescalar** e com o original normalizado para os mesmos fps do
+  comprimido (antes o reescalonamento e a diferença de fase 60→30 fps achatavam o número).

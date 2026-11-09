@@ -67,9 +67,9 @@
       </div>
 
       <div class="campo"><label>Rótulo na tela</label><input id="rotulo" placeholder="ex.: clipe do cliente — cais"></div>
-      <div class="campo"><label>Bitrate do encode</label>
+      <div class="campo"><label>Qualidade do encode</label>
         <select id="bitrate">
-          <option value="auto" selected>automático — metade do vídeo enviado (recomendado)</option>
+          <option value="auto" selected>automático — maior compressão sem perder qualidade (recomendado)</option>
           <option value="600k">600 kbps</option>
           <option value="1200k">1,2 Mbps</option>
           <option value="2500k">2,5 Mbps</option>
@@ -87,7 +87,7 @@
     <section class="cartao">
       <h2>Envios e medição de compressão</h2>
       <p class="sub">Entrada = bitrate do seu vídeo · Saída = o que o encode gera · Corte = quanto de banda o pipeline economiza. Atualiza sozinho.</p>
-      <table class="tabela" id="t-envios"><tr><th>#</th><th>rótulo</th><th>fonte</th><th>entrada</th><th>saída</th><th>corte</th><th>fps</th><th>no ar</th><th>estado</th><th></th></tr></table>
+      <table class="tabela" id="t-envios"><tr><th>#</th><th>rótulo</th><th>fonte</th><th>entrada</th><th>saída</th><th>compressão</th><th>fps</th><th>publicado há</th><th>estado</th><th></th></tr></table>
     </section>
   </div>
 
@@ -153,7 +153,7 @@ $('btn-enviar').onclick = () => {
       $('progresso').style.width = '0%';
       let j = {}; try { j = JSON.parse(x.responseText); } catch (e) {}
       if (x.status === 201) {
-        aviso('no ar como "' + j.fluxo_id + '" — entrada ' + mbps((j.entrada || {}).bitrate_kbps) + ' → alvo ' + j.alvo + (j.aviso ? ' · ' + j.aviso : ''));
+        aviso('no ar como "' + j.fluxo_id + '" — entrada ' + mbps((j.entrada || {}).bitrate_kbps) + (j.aviso ? ' · ' + j.aviso : ''));
         carregar();
       } else aviso(j.erro || ('falhou (' + x.status + ')'), true);
     };
@@ -180,7 +180,7 @@ async function envios() {
   if (!r.ok) { $('t-envios').innerHTML = '<tr><td colspan="10">sem permissão para ver os envios (entre como operação ou admin)</td></tr>'; return; }
   const d = await r.json();
   const linhas = d.ingestoes || [];
-  $('t-envios').innerHTML = '<tr><th>#</th><th>rótulo</th><th>fonte</th><th>entrada</th><th>saída</th><th>corte</th><th>fps</th><th>no ar</th><th>estado</th><th></th></tr>' +
+  $('t-envios').innerHTML = '<tr><th>#</th><th>rótulo</th><th>fonte</th><th>entrada</th><th>saída</th><th>compressão</th><th>fps</th><th>publicado há</th><th>estado</th><th></th></tr>' +
     (linhas.length ? linhas.map((i) => {
       const corte = i.corte_pct;
       const cls = corte === null || corte === undefined ? '' : (corte < 0 ? 'neg' : '');

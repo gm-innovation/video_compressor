@@ -33,3 +33,10 @@ auto.key
 desktop/node_modules/
 desktop/dist/
 desktop-logs/
+# midia de bancada (clipes enviados, comprimidos e logs de envio): nao versionar
+ground/envios/originais/
+ground/envios/comprimido/
+ground/envios/log/
+GROUND/envios/
+db/*.db-wal
+db/*.db-shm

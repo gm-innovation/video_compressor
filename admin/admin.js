@@ -442,216 +442,211 @@ function telaEnvios(t) {
   if (!(A.usuario.papel === 'admin' || A.usuario.papel === 'operador')) {
     t.appendChild(recado('Só a operação e o administrador enviam vídeo de teste.', true)); return;
   }
+  const guardado = A.envioForm || {};
   const caixa = document.createElement('div'); caixa.className = 'caixa-form';
-  caixa.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Enviar vídeo para teste (arquivo ou link)' }));
-  const linhaModo = document.createElement('div'); linhaModo.className = 'linha-form'; caixa.appendChild(linhaModo);
-  const modo = document.createElement('select'); modo.id = 'env-modo';
-  for (const [v, r] of [['arquivo', 'enviar arquivo do computador'], ['url', 'colar um link http(s)']]) {
-    const o = document.createElement('option'); o.value = v; o.textContent = r; modo.appendChild(o);
-  }
-  const rm = document.createElement('div'); rm.appendChild(Object.assign(document.createElement('label'), { textContent: 'Como enviar' }));
-  rm.appendChild(modo); linhaModo.appendChild(rm);
+  caixa.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Vídeo de teste: comprimir, medir e publicar' }));
 
   const linha1 = document.createElement('div'); linha1.className = 'linha-form'; caixa.appendChild(linha1);
-  const arquivo = document.createElement('input'); arquivo.type = 'file'; arquivo.accept = 'video/*'; arquivo.id = 'env-arquivo';
+  const rm = document.createElement('div'); rm.appendChild(Object.assign(document.createElement('label'), { textContent: 'De onde vem o vídeo' }));
+  const modo = document.createElement('select'); modo.id = 'env-modo';
+  for (const [v, r] of [['arquivo', 'arquivo do computador'], ['url', 'link (http ou YouTube)']]) {
+    const o = document.createElement('option'); o.value = v; o.textContent = r; modo.appendChild(o);
+  }
+  rm.appendChild(modo); linha1.appendChild(rm);
   const ra = document.createElement('div'); ra.appendChild(Object.assign(document.createElement('label'), { textContent: 'Arquivo de vídeo' }));
+  const arquivo = document.createElement('input'); arquivo.type = 'file'; arquivo.accept = 'video/*'; arquivo.id = 'env-arquivo';
   ra.appendChild(arquivo); linha1.appendChild(ra);
-  const url = campo(linha1, 'env-url', 'Link do vídeo (http/https)', '');
+  const url = campo(linha1, 'env-url', 'Link do vídeo', '');
 
   const linha2 = document.createElement('div'); linha2.className = 'linha-form'; caixa.appendChild(linha2);
   const rotulo = campo(linha2, 'env-rotulo', 'Rótulo na tela', '');
-  const rb = document.createElement('div'); rb.appendChild(Object.assign(document.createElement('label'), { textContent: 'Bitrate do encode' }));
-  const bitrate = document.createElement('select'); bitrate.id = 'env-bitrate';
-  for (const [v, r] of [['auto', 'automático — metade do vídeo enviado (recomendado)'], ['600k', '600 kbps'],
-                        ['1200k', '1,2 Mbps'], ['2500k', '2,5 Mbps'], ['5000k', '5 Mbps']]) {
-    const o = document.createElement('option'); o.value = v; o.textContent = r; if (v === 'auto') o.selected = true; bitrate.appendChild(o);
+  const rq = document.createElement('div'); rq.appendChild(Object.assign(document.createElement('label'), { textContent: 'Qualidade (quanto comprimir)' }));
+  const qualidade = document.createElement('select'); qualidade.id = 'env-qualidade';
+  const ops = [['auto', 'automático — maior compressão sem perder qualidade (recomendado)'],
+               ['crf26', 'melhor imagem (comprime menos)'], ['crf30', 'equilibrado'],
+               ['crf34', 'máxima compressão (imagem mais simples)']];
+  for (const [v, r] of ops) { const o = document.createElement('option'); o.value = v; o.textContent = r; qualidade.appendChild(o); }
+  rq.appendChild(qualidade); linha2.appendChild(rq);
+  const rf = document.createElement('div'); rf.appendChild(Object.assign(document.createElement('label'), { textContent: 'Quadros por segundo' }));
+  const fps = document.createElement('select'); fps.id = 'env-fps';
+  for (const [v, r] of [['30', '30 (padrão)'], ['25', '25'], ['60', '60 (gasta mais banda)']]) {
+    const o = document.createElement('option'); o.value = v; o.textContent = r; fps.appendChild(o);
   }
-  rb.appendChild(bitrate); linha2.appendChild(rb);
-  const rr = document.createElement('div'); rr.appendChild(Object.assign(document.createElement('label'), { textContent: 'Repetir em laço' }));
-  const repetir = document.createElement('select'); repetir.id = 'env-repetir';
-  for (const [v, r] of [['1', 'sim (parece ao vivo)'], ['0', 'não']]) { const o = document.createElement('option'); o.value = v; o.textContent = r; repetir.appendChild(o); }
-  rr.appendChild(repetir); linha2.appendChild(rr);
-  const ra2 = document.createElement('div'); ra2.appendChild(Object.assign(document.createElement('label'), { textContent: 'Áudio' }));
+  rf.appendChild(fps); linha2.appendChild(rf);
+  const rr = document.createElement('div'); rr.appendChild(Object.assign(document.createElement('label'), { textContent: 'Áudio' }));
   const audio = document.createElement('select'); audio.id = 'env-audio';
-  for (const [v, r] of [['0', 'sem áudio (mede só o vídeo)'], ['1', 'manter áudio (48 kbps mono)']]) {
+  for (const [v, r] of [['0', 'sem áudio'], ['1', 'manter (48 kbps)']]) {
     const o = document.createElement('option'); o.value = v; o.textContent = r; audio.appendChild(o);
   }
-  ra2.appendChild(audio); linha2.appendChild(ra2);
+  rr.appendChild(audio); linha2.appendChild(rr);
+  const cy = document.createElement('div'); cy.appendChild(Object.assign(document.createElement('label'), { textContent: 'Repetir em laço ao publicar' }));
+  const repetir = document.createElement('select'); repetir.id = 'env-repetir';
+  for (const [v, r] of [['1', 'sim (parece ao vivo)'], ['0', 'não']]) {
+    const o = document.createElement('option'); o.value = v; o.textContent = r; repetir.appendChild(o);
+  }
+  cy.appendChild(repetir); linha2.appendChild(cy);
 
-  // o redesenho periodico da tela (atualizar -> desenhar) nao pode apagar o que o usuario digitou
-  const guardado = A.envioForm || {};
-  const guardar = () => { A.envioForm = { modo: modo.value, url: url.value, rotulo: rotulo.value,
-    bitrate: bitrate.value, repetir: repetir.value, audio: audio.value }; };
-  for (const el of [modo, url, rotulo, bitrate, repetir, audio]) el.addEventListener('input', guardar);
-  for (const el of [modo, url, rotulo, bitrate, repetir, audio]) el.addEventListener('change', guardar);
-  if (guardado.modo) { modo.value = guardado.modo; url.value = guardado.url || ''; rotulo.value = guardado.rotulo || '';
-    bitrate.value = guardado.bitrate || 'auto'; repetir.value = guardado.repetir || '1'; audio.value = guardado.audio || '0'; }
-
-  const acoes = document.createElement('div'); acoes.className = 'linha-form'; caixa.appendChild(acoes);
-  const enviar = botao('Codificar e publicar', 'principal', () => {});
-  acoes.appendChild(enviar);
-  const progresso = document.createElement('div'); progresso.className = 'sub';
-  acoes.appendChild(progresso);
+  const linha3 = document.createElement('div'); linha3.className = 'linha-form'; caixa.appendChild(linha3);
+  const btnComprimir = botao('1) Comprimir e medir', 'principal', () => {});
+  linha3.appendChild(btnComprimir);
+  const btnPublicar = botao('2) Publicar no ar (a última compressão)', '', () => {});
+  linha3.appendChild(btnPublicar);
+  const progresso = document.createElement('div'); progresso.className = 'sub'; progresso.id = 'env-progresso';
+  linha3.appendChild(progresso);
+  const dizer = (txt) => { A.envioProgresso = txt; progresso.textContent = txt; };
+  if (A.envioProgresso) progresso.textContent = A.envioProgresso;
   t.appendChild(caixa);
 
+  const legenda = document.createElement('div'); legenda.className = 'sub';
+  legenda.textContent = 'Entrada = tamanho do seu vídeo original · Saída = tamanho depois de comprimir · ' +
+    'Compressão = quanta banda foi economizada · Tempo = quanto a compressão levou · Qualidade = semelhança com o ' +
+    'original (1,000 = idêntico) · No ar = desde quando o vídeo comprimido está publicado.';
+  t.appendChild(legenda);
+
+  const guardar = () => { A.envioForm = { modo: modo.value, url: url.value, rotulo: rotulo.value,
+    qualidade: qualidade.value, fps: fps.value, audio: audio.value, repetir: repetir.value }; };
+  for (const el of [modo, url, rotulo, qualidade, fps, audio, repetir]) {
+    el.addEventListener('input', guardar); el.addEventListener('change', guardar);
+  }
+  if (guardado.modo) {
+    modo.value = guardado.modo; url.value = guardado.url || ''; rotulo.value = guardado.rotulo || '';
+    qualidade.value = guardado.qualidade || 'auto'; fps.value = guardado.fps || '30';
+    audio.value = guardado.audio || '0'; repetir.value = guardado.repetir || '1';
+  }
   const trocarModo = () => {
     const ehArquivo = modo.value === 'arquivo';
     arquivo.parentElement.style.display = ehArquivo ? '' : 'none';
     url.parentElement.style.display = ehArquivo ? 'none' : '';
   };
-  modo.onchange = trocarModo; trocarModo();
-
-  /* ---- compressao em arquivo: gera o video comprimido (30 fps) para BAIXAR e comparar ---- */
-  const caixaC = document.createElement('div'); caixaC.className = 'caixa-form';
-  caixaC.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Comprimir em arquivo (para comparar tamanho e qualidade)' }));
-  const lc1 = document.createElement('div'); lc1.className = 'linha-form'; caixaC.appendChild(lc1);
-  const arqC = document.createElement('input'); arqC.type = 'file'; arqC.accept = 'video/*'; arqC.id = 'comp-arquivo';
-  const rc1 = document.createElement('div'); rc1.appendChild(Object.assign(document.createElement('label'), { textContent: 'Vídeo original' }));
-  rc1.appendChild(arqC); lc1.appendChild(rc1);
-  const rb2 = document.createElement('div'); rb2.appendChild(Object.assign(document.createElement('label'), { textContent: 'Bitrate do encode' }));
-  const alvoC = document.createElement('select'); alvoC.id = 'comp-bitrate';
-  for (const [v, r] of [['auto', 'automático — metade da entrada'], ['600k', '600 kbps'], ['1200k', '1,2 Mbps'],
-                        ['2500k', '2,5 Mbps'], ['5000k', '5 Mbps']]) {
-    const o = document.createElement('option'); o.value = v; o.textContent = r; alvoC.appendChild(o);
-  }
-  rb2.appendChild(alvoC); lc1.appendChild(rb2);
-  const rc2 = document.createElement('div'); rc2.appendChild(Object.assign(document.createElement('label'), { textContent: 'Quadros por segundo' }));
-  const fpsC = document.createElement('select'); fpsC.id = 'comp-fps';
-  for (const [v, r] of [['30', '30 fps (padrão)'], ['25', '25 fps'], ['60', '60 fps (gasta mais banda)'], ['0', 'manter o original']]) {
-    const o = document.createElement('option'); o.value = v; o.textContent = r; fpsC.appendChild(o);
-  }
-  rc2.appendChild(fpsC); lc1.appendChild(rc2);
-  const lc3 = document.createElement('div'); lc3.className = 'linha-form'; caixaC.appendChild(lc3);
-  const btnC = botao('Comprimir e gerar arquivo', 'principal', () => {});
-  lc3.appendChild(btnC);
-  const progC = document.createElement('div'); progC.className = 'sub'; progC.id = 'comp-resultado'; lc3.appendChild(progC);
-  const baixarC = document.createElement('a'); baixarC.className = 'botao oculto'; baixarC.id = 'comp-baixar';
-  baixarC.textContent = 'baixar o arquivo comprimido'; lc3.appendChild(baixarC);
-  // a tela se redesenha: o resultado da ultima compressao fica guardado e volta com o link
-  const rc = A.compResultado;
-  if (rc) {
-    progC.textContent = rc.texto;
-    if (rc.baixar) { baixarC.href = rc.baixar; baixarC.classList.remove('oculto'); baixarC.setAttribute('download', rc.nome || ''); }
-  }
-  t.appendChild(caixaC);
-  btnC.onclick = () => {
-    const f = arqC.files && arqC.files[0];
-    if (!f) { progC.textContent = 'escolha o vídeo original'; return; }
-    const q = new URLSearchParams({ nome: f.name, bitrate: alvoC.value, fps: fpsC.value });
-    progC.textContent = 'comprimindo ' + f.name + '…';
-    const x = new XMLHttpRequest();
-    x.open('POST', '/api/ingestao/comprimir?' + q.toString());
-    x.upload.onprogress = (e) => { if (e.lengthComputable) progC.textContent = 'enviando o original… ' + Math.round(e.loaded / e.total * 100) + '%'; };
-    x.onload = () => {
-      let j = {}; try { j = JSON.parse(x.responseText); } catch (e) {}
-      if (x.status !== 201) { progC.textContent = 'falhou: ' + (j.erro || x.status); return; }
-      const texto = 'original ' + j.entrada.mb + ' MB (' + Math.round(j.entrada.bitrate_kbps) + ' kbps) → comprimido ' +
-        j.comprimido.mb + ' MB (' + Math.round(j.comprimido.bitrate_kbps) + ' kbps) · corte ' +
-        (j.corte_pct > 0 ? '↓ ' : '↑ ') + Math.abs(j.corte_pct) + '% · qualidade SSIM ' + (j.ssim === null ? '—' : j.ssim) +
-        ' · ' + j.fps + ' fps · encode em ' + j.tempo_encode_s + ' s' + (j.velocidade_x ? ' (' + j.velocidade_x + '× o tempo real)' : '');
-      progC.textContent = texto;
-      A.compResultado = { texto: texto, baixar: j.baixar, nome: j.nome_arquivo };
-      baixarC.href = j.baixar; baixarC.classList.remove('oculto'); baixarC.setAttribute('download', j.nome_arquivo);
-      carregarComprimidos();
-    };
-    x.send(f);
-  };
-
-  const listaC = document.createElement('div'); t.appendChild(listaC);
-  const carregarComprimidos = async () => {
-    const r = await fetch('/api/comprimidos');
-    if (!r.ok) return;
-    const d = await r.json();
-    limpar(listaC);
-    if (!d.comprimidos.length) return;
-    listaC.appendChild(tabela([
-      { rotulo: 'Arquivo comprimido', campo: 'nome' },
-      { rotulo: 'Tamanho', valor: (l) => l.mb + ' MB' },
-      { rotulo: 'Quando', campo: 'modificado' },
-      { rotulo: '', valor: (l) => { const a = document.createElement('a'); a.className = 'botao'; a.href = l.baixar;
-          a.textContent = 'baixar'; a.setAttribute('download', l.nome); return a; } }
-    ], d.comprimidos, 'nenhum arquivo comprimido ainda'));
-  };
-  carregarComprimidos();
-
-  const medirEtapas = async (l) => {
-    let saida = document.getElementById('env-etapas') || (() => {
-      const d = document.createElement('div'); d.id = 'env-etapas'; d.className = 'sub'; caixaC.parentElement.appendChild(d); return d;
-    })();
-    saida.textContent = 'medindo o envio e a descompressão de ' + l.fluxo_id + '…';
-    try {
-      const r = await fetch('/api/etapas/' + encodeURIComponent(l.fluxo_id));
-      const d = await r.json();
-      const e = d.envio || {};
-      saida.textContent = l.fluxo_id + ' — envio (SRT): RTT ' + (e.rtt_ms === undefined ? '—' : e.rtt_ms + ' ms') +
-        ' · ' + (e.mbps_medio === undefined ? '—' : e.mbps_medio + ' Mbps de média') +
-        ' · perdidos ' + (e.pacotes_perdidos === undefined ? '—' : e.pacotes_perdidos) +
-        ' · ' + (e.segundos_no_ar === undefined ? '' : e.segundos_no_ar + ' s no ar');
-    } catch (err) { saida.textContent = 'não consegui medir: ' + err; }
-  };
+  modo.onchange = () => { trocarModo(); guardar(); };
+  trocarModo();
 
   const lista = document.createElement('div'); t.appendChild(lista);
-  const carregar = async () => {
-    const r = await fetch('/api/ingestoes');
-    if (!r.ok) { limpar(lista); lista.appendChild(recado('Sem permissão para ver os envios.', true)); return; }
-    const d = await r.json();
-    limpar(lista);
-    if (!d.ingestoes.length) {
-      lista.appendChild(recado('Nenhum envio ainda: escolha um arquivo ou cole um link e clique em "Codificar e publicar".'));
-      return;
+  let ultimos = [];
+
+  const montarTabela = (linhas, ingestoes) => {
+    const porFluxo = {};
+    for (const g of ingestoes || []) {
+      const atual = porFluxo[g.fluxo_id];
+      if (!atual) porFluxo[g.fluxo_id] = g;
+      else if ((atual.estado !== 'no ar' || atual.estado === 'encerrado') && g.estado === 'no ar') porFluxo[g.fluxo_id] = g;
+      else if (g.id > atual.id && atual.estado !== 'no ar') porFluxo[g.fluxo_id] = g;
     }
-    lista.appendChild(tabela([
-      { rotulo: '#', campo: 'id' }, { rotulo: 'Rótulo', campo: 'rotulo' },
-      { rotulo: 'Fonte', valor: (l) => String(l.fonte || '').length > 52 ? '…' + String(l.fonte).slice(-50) : (l.fonte || '') },
-      { rotulo: 'Alvo', valor: (l) => l.bitrate_alvo || '—' },
-      { rotulo: 'Entrada', valor: (l) => mbps(l.bitrate_entrada_kbps) },
-      { rotulo: 'Saída', valor: (l) => mbps(l.bitrate_saida_kbps) },
-      { rotulo: 'Corte', valor: (l) => l.corte_pct === null || l.corte_pct === undefined ? '—'
-          : (l.corte_pct > 0 ? '↓ ' : '↑ ') + Math.abs(l.corte_pct).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' },
-      { rotulo: 'fps', valor: (l) => numOu(l.fps) },
-      { rotulo: 'No ar', valor: (l) => numOu(l.duracao_s, 's') },
-      { rotulo: 'Estado', valor: (l) => (l.estado || '') + (l.erro ? ' — ' + l.erro : '') },
-      { rotulo: 'Etapas', valor: (l) => botao('medir', '', () => medirEtapas(l)) },
-      { rotulo: '', valor: (l) => { const b = botao(l.vivo ? 'parar' : 'remover', '', () => {
-          fetch('/api/ingestao/parar', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: l.id, remover: !l.vivo }) }).then(() => carregar()); }); return b; } }
-    ], d.ingestoes, 'nenhum envio'));
-    lista.appendChild(Object.assign(document.createElement('div'), { className: 'sub',
-      textContent: 'Atualizado ' + (d.atualizado_em || '') + ' · entrada = bitrate do seu vídeo, saída = o que o encode gera, corte = banda economizada (↑ significa que a saída ficou maior que a entrada).' }));
+    return tabela([
+      { rotulo: '#', campo: 'id' },
+      { rotulo: 'Rótulo', campo: 'rotulo' },
+      { rotulo: 'Entrada (original)', valor: (l) => (l.mb_entrada === null ? '—' : l.mb_entrada + ' MB') +
+          (l.bitrate_entrada_kbps ? ' · ' + Math.round(l.bitrate_entrada_kbps) + ' kbps' : '') },
+      { rotulo: 'Saída (comprimido)', valor: (l) => (l.mb_saida === null ? '—' : l.mb_saida + ' MB') +
+          (l.bitrate_saida_kbps ? ' · ' + Math.round(l.bitrate_saida_kbps) + ' kbps' : '') },
+      { rotulo: 'Compressão', valor: (l) => (l.compressao_pct === null || l.compressao_pct === undefined) ? '—'
+          : (l.compressao_pct > 0 ? '↓ ' : '↑ ') + Math.abs(l.compressao_pct).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' },
+      { rotulo: 'Tempo da compressão', valor: (l) => (l.segundos_encode === null || l.segundos_encode === undefined) ? '—'
+          : l.segundos_encode.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' s' +
+            (l.velocidade_x ? ' (' + l.velocidade_x + '× o tempo real)' : '') },
+      { rotulo: 'Qualidade', valor: (l) => (l.ssim === null || l.ssim === undefined) ? '—' : Number(l.ssim).toFixed(4).replace('.', ',') },
+      { rotulo: 'fps', valor: (l) => (l.fps || '—') + (l.crf ? ' · CRF ' + l.crf : '') },
+      { rotulo: 'No ar', valor: (l) => {
+          if (!l.publicado) return '—';
+          const g = l.fluxo_id ? porFluxo[l.fluxo_id] : null;
+          if (!g) return 'publicado';
+          return (g.duracao_s ? Math.round(g.duracao_s) + ' s' : 'publicado') +
+                 (g.fps ? ' · ' + numOu(g.fps) + ' fps' : '') + (g.estado ? ' · ' + g.estado : '');
+        } },
+      { rotulo: 'Ações', valor: (l) => {
+          const cx = document.createElement('div'); cx.className = 'linha-acoes';
+          if (l.existe) {
+            const a = document.createElement('a'); a.className = 'botao'; a.href = l.baixar;
+            a.textContent = 'baixar'; a.setAttribute('download', ''); cx.appendChild(a);
+          }
+          if (!l.publicado) cx.appendChild(botao('publicar', '', () => publicar(l.id)));
+          else cx.appendChild(botao('parar', '', () => pararFluxo(l)));
+          cx.appendChild(botao('remover', '', () => remover(l.id)));
+          return cx;
+        } }
+    ], linhas, 'Nenhuma compressão ainda: escolha o vídeo e clique em "Comprimir e medir".');
   };
 
-  enviar.onclick = () => {
-    const r = (rotulo.value || '').trim(), b = bitrate.value, rep = repetir.value, aud = audio.value;
+  const carregar = async () => {
+    const r = await fetch('/api/compressoes');
+    if (!r.ok) { limpar(lista); lista.appendChild(recado('Sem permissão para ver as compressões.', true)); return; }
+    const d = await r.json();
+    const ri = await fetch('/api/ingestoes');
+    const ing = ri.ok ? ((await ri.json()).ingestoes || []) : [];
+    ultimos = d.compressoes || [];
+    limpar(lista);
+    lista.appendChild(montarTabela(ultimos, ing));
+  };
+  const publicar = async (id) => {
+    dizer('publicando no ar…');
+    const r = await fetch('/api/compressao/publicar', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id }) });
+    const j = await r.json();
+    dizer(r.status === 201 ? ('no ar como "' + j.fluxo_id + '"') : ('falhou: ' + (j.erro || r.status)));
+    if (r.status === 201) A.ultimaCompressao = id;
+    carregar();
+  };
+  const pararFluxo = async (l) => {
+    const ri = await fetch('/api/ingestoes');
+    const ing = ri.ok ? ((await ri.json()).ingestoes || []) : [];
+    const g = ing.filter((x) => x.fluxo_id === l.fluxo_id).pop();
+    if (!g) { dizer('não achei o fluxo para parar'); return; }
+    await fetch('/api/ingestao/parar', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: g.id, remover: false }) });
+    dizer('parei "' + l.fluxo_id + '"');
+    carregar();
+  };
+  const remover = async (id) => {
+    await fetch('/api/compressao/remover', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id }) });
+    carregar();
+  };
+  const resumo = (j) => 'comprimido: ' + j.entrada.mb + ' MB → ' + j.comprimido.mb + ' MB · ' +
+    (j.corte_pct > 0 ? '↓ ' : '↑ ') + Math.abs(j.corte_pct) + '% · qualidade ' + (j.ssim === null ? '—' : j.ssim) +
+    ' · ' + j.tempo_encode_s + ' s' + (j.crf ? ' · CRF ' + j.crf : '') + '. Agora clique em "Publicar no ar".';
+
+  btnComprimir.onclick = () => {
+    const r = (rotulo.value || '').trim(), b = qualidade.value, qf = fps.value, aud = audio.value;
     if (modo.value === 'arquivo') {
       const f = arquivo.files && arquivo.files[0];
-      if (!f) { progresso.textContent = 'escolha um arquivo de vídeo'; return; }
-      const q = new URLSearchParams({ nome: f.name, rotulo: r || f.name, bitrate: b, repetir: rep, audio: aud });
+      if (!f) { dizer('escolha o arquivo de vídeo'); return; }
+      const q = new URLSearchParams({ nome: f.name, qualidade: b, fps: qf, audio: aud });
       const x = new XMLHttpRequest();
-      x.open('POST', '/api/ingestao/arquivo?' + q.toString());
-      x.upload.onprogress = (e) => { if (e.lengthComputable) progresso.textContent = 'enviando… ' + Math.round(e.loaded / e.total * 100) + '%'; };
+      x.open('POST', '/api/ingestao/comprimir?' + q.toString());
+      x.upload.onprogress = (e) => { if (e.lengthComputable) dizer('enviando o original… ' + Math.round(e.loaded / e.total * 100) + '%'); };
       x.onload = () => {
         let j = {}; try { j = JSON.parse(x.responseText); } catch (e) {}
-        if (x.status === 201) { A.envioForm = null; arquivo.value = ''; rotulo.value = ''; }
-        progresso.textContent = x.status === 201
-          ? ('no ar como "' + j.fluxo_id + '" · entrada ' + mbps((j.entrada || {}).bitrate_kbps) + ' → alvo ' + j.alvo + (j.aviso ? ' · ' + j.aviso : ''))
-          : ('falhou: ' + (j.erro || x.status));
+        if (x.status !== 201) { dizer('falhou: ' + (j.erro || x.status)); return; }
+        A.ultimaCompressao = j.id;
+        dizer(resumo(j));
         carregar();
       };
-      progresso.textContent = 'enviando ' + f.name + '…';
+      dizer('comprimindo ' + f.name + '… (a busca da melhor compressão leva alguns segundos)');
       x.send(f);
     } else {
       const u = (url.value || '').trim();
-      if (!/^https?:\/\//.test(u)) { progresso.textContent = 'cole um link http(s) válido'; return; }
-      fetch('/api/ingestao/url', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: u, rotulo: r || 'vídeo por link', bitrate: b, repetir: rep === '1', audio: aud === '1' }) })
+      if (!/^https?:\/\//.test(u)) { dizer('cole um link http(s) válido'); return; }
+      dizer('baixando e comprimindo o link…');
+      fetch('/api/ingestao/comprimir', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: u, rotulo: r, qualidade: b, fps: qf, audio: aud }) })
         .then(async (x) => ({ s: x.status, j: await x.json() }))
-        .then(({ s, j }) => { if (s === 201) { A.envioForm = null; url.value = ''; rotulo.value = ''; }
-          progresso.textContent = s === 201 ? ('no ar como "' + j.fluxo_id + '" · alvo ' + j.alvo + (j.aviso ? ' · ' + j.aviso : '')) : ('falhou: ' + (j.erro || s)); carregar(); });
+        .then(({ s, j }) => {
+          if (s !== 201) { dizer('falhou: ' + (j.erro || s)); return; }
+          A.ultimaCompressao = j.id;
+          dizer(resumo(j));
+          carregar();
+        });
     }
+  };
+  btnPublicar.onclick = () => {
+    const id = A.ultimaCompressao || (ultimos[0] || {}).id;
+    if (!id) { dizer('comprima um vídeo primeiro'); return; }
+    publicar(id);
   };
 
   carregar();
-  timerEnvios = setInterval(() => { if (A.tela === 'envios') carregar(); }, 4000);
+  if (timerEnvios) { clearInterval(timerEnvios); timerEnvios = null; }
+  timerEnvios = setInterval(() => { if (A.tela === 'envios') carregar(); }, 5000);
 }
 
 function telaAuditoria(t) {

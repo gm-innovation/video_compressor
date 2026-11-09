@@ -193,6 +193,53 @@ def main() -> int:
         checar(rot == "Clipe do YouTube (teste)", "o rotulo digitado nao se perde")
         pa.close(); ctx3.close()
 
+        # --- 5c) app do admin: UMA estrutura só — comprimir, medir e publicar
+        # o dono pediu medições claras no mesmo painel: tempo da compressão, tamanho de entrada e
+        # saída, economia de banda e qualidade; e a coluna "no ar" precisa dizer algo
+        ctx4 = nav.new_context(viewport={"width": 1600, "height": 1000})
+        pb = ctx4.new_page()
+        pb.goto(BASE + "/admin", wait_until="domcontentloaded")
+        pb.fill("#email", "admin@lecsor.test"); pb.fill("#senha", SENHA)
+        pb.click("#form-entrar button")
+        pb.wait_for_selector("#sistema:not(.oculto)", timeout=15000)
+        pb.evaluate("(() => { const b=[...document.querySelectorAll('button,a,li')].find(x=>/Enviar v[ií]deo/i.test(x.textContent)); if(b) b.click(); })()")
+        pb.wait_for_selector("#env-qualidade", timeout=15000)
+        pb.fill("#env-rotulo", "Compressao pela tela (teste)")
+        pb.select_option("#env-qualidade", "crf34")     # compressão máxima: encode rápido
+        pb.set_input_files("#env-arquivo", str(CLIPE))
+        pb.evaluate("(() => { const b=[...document.querySelectorAll('button')].find(x=>/Comprimir e medir/i.test(x.textContent)); b.click(); })()")
+        texto_prog = ""
+        for _ in range(60):
+            pb.wait_for_timeout(2000)
+            try:
+                texto_prog = pb.inner_text("#env-progresso") or ""
+            except Exception:
+                texto_prog = ""
+            if "comprimido" in texto_prog or "falhou" in texto_prog:
+                break
+        print("    progresso:", texto_prog[:200])
+        checar("comprimido" in texto_prog, "a tela diz quanto o vídeo foi comprimido (MB → MB, %, qualidade, tempo)")
+        checar("qualidade" in texto_prog, "a tela informa a qualidade que sobrou (SSIM)")
+        # a tabela precisa trazer as colunas que o dono pediu, com número
+        pb.wait_for_timeout(4000)
+        cabecalho = pb.inner_text("#tela, main, body")
+        for coluna in ["Entrada (original)", "Saída (comprimido)", "Compressão", "Tempo da compressão", "Qualidade"]:
+            checar(coluna in cabecalho, f"a tabela tem a coluna \"{coluna}\"")
+        checar("MB" in cabecalho and "kbps" in cabecalho, "a tabela mostra o tamanho real e o bitrate de entrada e saída")
+        checar("s (" in cabecalho or " s " in cabecalho, "a tabela mostra em quanto tempo a compressão foi feita")
+        checar("alvo" not in cabecalho.lower(), "a coluna confusa \"alvo\" saiu da tela")
+        # publicar a última compressão: etapas 2 e 3 saem do mesmo painel
+        pb.evaluate("(() => { const b=[...document.querySelectorAll('button')].find(x=>/Publicar no ar/i.test(x.textContent)); b.click(); })()")
+        for _ in range(30):
+            pb.wait_for_timeout(1000)
+            if "no ar como" in (pb.inner_text("#env-progresso") or "") or "falhou" in (pb.inner_text("#env-progresso") or ""):
+                break
+        estado = pb.inner_text("#env-progresso") or ""
+        print("    publicar:", estado[:160])
+        checar("no ar como" in estado, "o mesmo painel publica a compressão no ar (etapas 2 e 3 em sequência)")
+        pb.screenshot(path=str(RAIZ / "ground" / "print-admin-envios-final.png"), full_page=True)
+        pb.close(); ctx4.close()
+
         # --- 6) nada de endereco interno nem credencial no que o navegador recebe
         proibido = re.compile(r"rtsp://|:8554|:8890|:9997|:8889|localhost|password|credencial|senha")
         vazou = [u for u in recebido + recebido2 if proibido.search(u)]

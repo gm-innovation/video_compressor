@@ -494,6 +494,11 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(403, {"erro": "so operacao e administrador enviam video de teste"})
             return self._json(200, {"ingestoes": ing_listar(), "atualizado_em": dt.datetime.now().astimezone().isoformat(timespec="seconds")},
                               {"Cache-Control": "no-store"})
+        if rota in ("/api/compressoes", "/api/compressoes/lista"):
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so operacao e administrador veem as compressoes"})
+            return self._json(200, {"compressoes": etapas_pipeline.listar_compressoes()},
+                              {"Cache-Control": "no-store"})
         if rota in ("/api/comprimidos", "/api/envios/comprimidos"):
             if not (self._pode_operar(u) or self._local()):
                 return self._json(403, {"erro": "so operacao e administrador veem os arquivos"})
@@ -644,6 +649,21 @@ class Handler(SimpleHTTPRequestHandler):
                     with conexao() as c:
                         c.execute("DELETE FROM sessoes WHERE token=?", (ck["sessao"].value,))
             return self._json(200, {"ok": True}, {"Set-Cookie": "sessao=; Max-Age=0; Path=/"})
+        if rota in ("/api/compressao/publicar", "/api/compressoes/publicar"):
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so operacao e administrador publicam"})
+            d = self._corpo()
+            r = etapas_pipeline.publicar_compressao(int(d.get("id") or 0),
+                                                    rotulo=d.get("rotulo") or None)
+            if "erro" in r:
+                return self._json(422, r)
+            auditar(u, "publicar_compressao", f"id {d.get('id')} -> {r['fluxo_id']}", self.client_address[0])
+            return self._json(201, r, {"Cache-Control": "no-store"})
+        if rota in ("/api/compressao/remover", "/api/compressoes/remover"):
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so operacao e administrador removem"})
+            d = self._corpo()
+            return self._json(200, etapas_pipeline.remover_compressao(int(d.get("id") or 0)))
         if rota in ("/api/ingestao/arquivo", "/api/envios/arquivo"):
             if not (self._pode_operar(u) or self._local()):
                 return self._json(403, {"erro": "so operacao e administrador enviam video de teste"})
@@ -674,23 +694,35 @@ class Handler(SimpleHTTPRequestHandler):
             q = parse_qs(urlparse(self.path).query)
             def _qc(k, p=""):
                 return (q.get(k) or [p])[0]
-            nome = re.sub(r"[^A-Za-z0-9 ._\-]", "_", Path(_qc("nome", "video.mp4")).name)[:80] or "video.mp4"
-            # o original enviado fica em originais/: nao sobrescreve nem o exemplo nem um clipe em uso
-            origem_dir = RAIZ / "ground" / "envios" / "originais"
-            origem_dir.mkdir(parents=True, exist_ok=True)
-            destino = origem_dir / nome
-            try:
-                self._corpo_bruto(destino)
-            except ValueError as e:
-                return self._json(422, {"erro": str(e)})
-            r = etapas_pipeline.comprimir(str(destino), alvo=_qc("bitrate", "auto"),
-                                         fps=int(_qc("fps", "30") or 30),
-                                         nome=Path(nome).stem,
-                                         audio=_qc("audio", "0") in ("1", "sim", "true"))
+            qualidade = _qc("qualidade", "auto")
+            fps = int(_qc("fps", "30") or 30)
+            tipo_json = "application/json" in (self.headers.get("Content-Type") or "")
+            if tipo_json:
+                d = self._corpo()
+                endereco = str(d.get("url") or "").strip()
+                if not re.match(r"^https?://", endereco):
+                    return self._json(422, {"erro": "informe um link http(s) valido"})
+                r = etapas_pipeline.comprimir(endereco, qualidade=str(d.get("qualidade") or qualidade),
+                                              fps=int(d.get("fps") or fps), audio=bool(d.get("audio", False)),
+                                              nome=str(d.get("rotulo") or "") or None)
+            else:
+                nome = re.sub(r"[^A-Za-z0-9 ._\-]", "_", Path(_qc("nome", "video.mp4")).name)[:80] or "video.mp4"
+                origem_dir = RAIZ / "ground" / "envios" / "originais"
+                origem_dir.mkdir(parents=True, exist_ok=True)
+                destino = origem_dir / nome
+                try:
+                    self._corpo_bruto(destino)
+                except ValueError as e:
+                    return self._json(422, {"erro": str(e)})
+                r = etapas_pipeline.comprimir(str(destino), qualidade=qualidade, fps=fps,
+                                              nome=Path(nome).stem,
+                                              audio=_qc("audio", "0") in ("1", "sim", "true"))
             if not r.get("ok"):
                 return self._json(422, r)
             r["baixar"] = "/api/comprimido/" + r["nome_arquivo"]
-            auditar(u, "comprimir_video", f"{nome} -> {r['nome_arquivo']} (corte {r['corte_pct']}%)", self.client_address[0])
+            auditar(u, "comprimir_video",
+                    f"{r['nome_arquivo']}: {r['entrada']['mb']} MB -> {r['comprimido']['mb']} MB ({r['corte_pct']}%)",
+                    self.client_address[0])
             return self._json(201, r, {"Cache-Control": "no-store"})
         if rota in ("/api/ingestao/url", "/api/envios/url"):
             if not (self._pode_operar(u) or self._local()):
