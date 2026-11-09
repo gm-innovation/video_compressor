@@ -378,3 +378,46 @@ teórico da captura)".
 **O que este número é e o que não é:** é o bruto da captura, não banda que trafegou. Numa câmera de bordo
 que já entrega H.264 (RTSP do DVR), a entrada será o bitrate medido do próprio stream (ex.: 4 Mbps) e a
 economia será a do re-encode — que é o número do produto, comparável ao alvo de ≥73% de corte.
+
+## TESTE REAL ponta-a-ponta: bancada → VPS → app do cliente (09/11/2026, 20:32–20:39 UTC)
+
+Pedido do dono: *"precisamos fazer um teste real com o vídeo comprimido indo pra vps, sendo descomprimido,
+ou sendo enviado para o app do cliente e sendo descomprimido pelo player local"* — agora **tudo no lado
+terra roda na VPS** (`187.127.60.250`), não mais na bancada.
+
+### O que ficou de pé na VPS (durável: sobe sozinho)
+
+| Peça | Como roda | Porta |
+|---|---|---|
+| mediamtx (recebe SRT, publica WebRTC/HLS) | container `mediamtx`, `--restart always`, config em `/opt/pipeline/conf/mediamtx.yml` | SRT 8890/udp, WebRTC 8889/tcp + ICE 8189/udp, HLS 8888/tcp, API 9997 |
+| API + fronts do produto (`/app`, `/admin`) | systemd `pipeline-api` (`enable --now`), `LECSOR_BIND=0.0.0.0`, `Restart=always` | 8085 |
+| fonte de vídeo da própria VPS (relógio queimado) | systemd `pipeline-fonte-vps` (ffmpeg testsrc2 720p30 + drawtext) publicando em `srt://127.0.0.1:8890` | — |
+| ffmpeg/ffprobe | apt (6.1.1) | — |
+
+O código foi copiado para `/opt/pipeline/app` (73 MB) e a API ganhou `LECSOR_BIND` porque antes ela só
+escutava em `127.0.0.1` (o navegador do cliente não alcançava).
+
+### Medições reais (não calculadas)
+
+- **O fluxo atravessou a internet:** a bancada publicou a webcam comprimida (H.264, 720p30) em
+  `srt://187.127.60.250:8890?streamid=publish:vps-webcam-bancada`; o mediamtx da VPS mostrou o caminho
+  `ready`, `tracks: [H264]`, `bytesReceived` crescendo.
+- **Banda real no link (medida na VPS, `/proc/net/dev`, 10 s):** `eth0` recebendo **1,725 Mbps** — que é o
+  vídeo comprimido (≈1,59 Mbps) mais o overhead do SRT/MPEG-TS. **Esse** é o número honesto de banda
+  consumida, não o bruto teórico de 331,8 Mbps.
+- **O app do cliente decodificou:** abrindo `http://187.127.60.250:8085/app` com o player (Chrome, H.264),
+  as janelas ficaram `videoWidth 1280 x 720` com `currentTime` avançando (12,13 s) e `paused: false` para
+  `vps-webcam-bancada` (a webcam daqui, vinda pela VPS) e `vps-sintetica` (fonte da VPS).
+- **Atraso ponta-a-ponta (leitura do relógio queimado):** o quadro da fonte da VPS marcava `17:39:00` no
+  instante da captura às `17:39:00,36–0,42` locais → **abaixo de 1 s** (o relógio queimado tem passo de 1 s,
+  então é uma medida grosseira).
+- **Caminhos sem fonte mostram aviso**: as câmeras de demonstração (`cam-01`, `cam-02`, `cam-conves`) deram
+  `502` no `/whep` porque não têm fluxo na VPS e a tela escreveu "⚠ nenhum envio registrado para esta
+  câmera" — o aviso de erro funcionando no lado terra.
+
+### O que ainda NÃO está pronto
+
+- A **captura/encode da webcam roda nesta bancada** (a câmera é física aqui) — o processo de envio morre se
+  esta máquina desligar; a VPS segue no ar com a fonte sintética própria.
+- **Falta** a coluna "banda no link" na tela (medição da VPS por minuto) e o atraso ponta-a-ponta medido
+  com relógio de precisão (ms), não de 1 s.

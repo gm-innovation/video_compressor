@@ -1175,7 +1175,10 @@ def principal() -> int:
     ing_limpar_vivos()          # envio que ficou 'no_ar' com processo morto
     threading.Thread(target=_fechar_minutos_em_loop, daemon=True).start()
     print(f"[ok] sistema em http://127.0.0.1:{porta}/  (bancada: /  ·  cliente: /app  ·  admin: /admin)")
-    ThreadingHTTPServer(("127.0.0.1", porta), Handler).serve_forever()
+    # por padrão o servidor fica SÓ no loopback da máquina; no lado terra ele precisa aceitar o
+    # acesso do navegador do cliente, então o endereço vem do ambiente (LECSOR_BIND)
+    endereco = (os.environ.get("LECSOR_BIND") or "127.0.0.1", porta)
+    ThreadingHTTPServer(endereco, Handler).serve_forever()
     return 0
 
 

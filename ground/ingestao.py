@@ -316,7 +316,7 @@ def _bombear(ident: int, proc: subprocess.Popen, log: Path):
         with conexao() as c:
             r = c.execute("SELECT * FROM ingestoes WHERE id=?", (ident,)).fetchone()
             if r and r["estado"] != "parado":
-                motivo = _motivo_da_falha(codigo, log, r)
+                motivo = _motivo_da_falha(codigo, log, dict(r) if r is not None else {})
                 # o ffmpeg as vezes sai com codigo 0 sem ter codificado NADA (camera ja em uso, por
                 # exemplo): sem isso a tela pintava um quadro preto e nenhum aviso de erro.
                 c.execute("UPDATE ingestoes SET estado=?, erro=?, atualizado_em=? WHERE id=?",
