@@ -251,6 +251,35 @@ def main() -> int:
             print("      vazou:", vazou[:5])
         nav.close()
 
+    # --- 8) produção (cards de 30 dias) e link/latência em tempo real
+    sys.path.insert(0, str(RAIZ / "ground"))
+    import producao as prod
+    f1 = prod.fechar_minutos()
+    f2 = prod.fechar_minutos()
+    checar(f1["minutos_fechados"] >= 0 and f2["minutos_fechados"] == f1["minutos_fechados"],
+           "fechar_minutos é idempotente (rodar duas vezes não duplica o histórico)")
+    checar(f1["retencao_dias"] >= 1, f"retenção do histórico configurada em {f1['retencao_dias']} dias")
+    res = prod.resumo_producao(dias=30)
+    campos = {"embarcacao", "camera", "compressao_medio_pct", "banda_utilizada_mbps",
+              "banda_economizada_mbps", "horas_streaming", "disponibilidade_pct", "estado"}
+    checar(bool(res["cards"]) and campos <= set(res["cards"][0]),
+           f"o resumo de produção devolve os campos dos cards ({len(res['cards'])} câmera(s) com histórico)")
+    checar(all(c["estado"] in ("enviando", "parado") for c in res["cards"]),
+           "cada card diz se a câmera está enviando ou parada")
+    checar(res["dias"] == 30 and "disponibilidade_pct" in res["cards"][0],
+           "a janela padrão é de 30 dias e traz disponibilidade (%)")
+    lk = prod.link_srt()
+    checar("disponivel" in lk, "o link é lido do SRT (RTT, capacidade, atraso do buffer, perda)")
+    if lk.get("disponivel"):
+        checar({"rtt_ms", "capacidade_link_mbps", "atraso_buffer_ms", "perda_recebida_pct"} <= set(lk),
+               "o link traz RTT, capacidade, atraso do buffer e perda")
+    net = prod.latencia_internet()
+    checar("disponivel" in net or "motivo" in net,
+           "a latência de internet local é medida (ping), com motivo quando não há resposta")
+    atraso = prod.atraso_stream("comp-01")
+    checar("buffer_srt_ms" in atraso and "ponta_a_ponta" in atraso,
+           "o atraso do streaming junta o buffer SRT e a última medição ponta a ponta")
+
     # --- 7) piso com margem, metricas de tempo real e endereco da camera so na operacao
     sys.path.insert(0, str(RAIZ / "ground"))
     import etapas as et
@@ -280,11 +309,21 @@ def main() -> int:
             dados = json.loads(corpo.split("|", 1)[1])
             checar("total" in dados and "fluxos" in dados and {"entrada_mbps", "saida_mbps", "economia_mbps", "compressao_pct"} <= set(dados["total"]),
                    "as métricas trazem entrada, saída, compressão e banda economizada")
+            pg.click("button[data-tela='producao']")
+            pg.wait_for_timeout(4000)
+            prod_txt = pg.inner_text("#prod-resumo")
+            checar("câmera(s) com histórico" in prod_txt or "camera(s) com histórico" in prod_txt.lower(),
+                   "a tela Produção mostra o resumo do período")
+            checar(pg.evaluate("(() => document.querySelector('#prod-dias').options.length)()") >= 4,
+                   "a tela Produção tem filtro de período")
+            pg.screenshot(path=str(RAIZ / "ground" / "print-admin-producao.png"), full_page=True)
             pg.click("button[data-tela='tempo']")
             pg.wait_for_timeout(4000)
             tela = pg.inner_text("#tempo-resumo")
             checar("economia" in tela and "compressão agora" in tela,
                    "a tela Tempo real mostra compressão agora, banda consumida e economizada")
+            checar("internet local" in tela and "atraso do buffer" in tela,
+                   "a tela Tempo real mostra a latência da internet local e o atraso do buffer SRT")
             pg.screenshot(path=str(RAIZ / "ground" / "print-admin-tempo-real.png"), full_page=True)
             # cadastra a camera com IP e porta e confere o que o cliente recebe
             pg.click("button[data-tela='cameras']")

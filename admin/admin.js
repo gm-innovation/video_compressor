@@ -130,6 +130,7 @@ const SUBS = {
   embarcacoes: ['Embarcações', 'Cada embarcação pertence a um cliente.'],
   cameras: ['Câmeras', 'Câmera do produto aponta para um fluxo publicado; nunca guarda credencial de câmera.'],
   tempo: ['Tempo real', 'Como está a compressão, a velocidade de envio e a banda consumida e economizada, atualizando a cada 2 segundos.'],
+  producao: ['Produção', 'Cards por embarcação e câmera: enviando/parado, média de compressão, banda utilizada e economizada, horas de streaming e disponibilidade — com filtro de período.'],
   usuarios: ['Usuários', 'Papéis: cliente (vê a própria empresa), operador e administrador.'],
   analises: ['Análises de vídeo', 'Contagem e eventos sobem de bordo (Fase 5) — sem agente a bordo a tela fica vazia.'],
   auditoria: ['Auditoria', 'Quem viu qual câmera, quando — e o que foi negado.'],
@@ -145,9 +146,10 @@ function desenhar() {
   const tela = $('tela'); limpar(tela);
   if (timerEnvios) { clearInterval(timerEnvios); timerEnvios = null; }
   if (timerTempo) { clearInterval(timerTempo); timerTempo = null; }
+  if (timerProducao) { clearInterval(timerProducao); timerProducao = null; }
   const despacho = { painel: telaPainel, fases: telaFases, medicoes: telaMedicoes, decisoes: telaDecisoes,
     evidencias: telaEvidencias, documentos: telaDocumentos, clientes: telaClientes, embarcacoes: telaEmbarcacoes,
-    cameras: telaCameras, usuarios: telaUsuarios, tempo: telaTempoReal, analises: telaAnalises, marcas: telaMarcas, envios: telaEnvios,
+    cameras: telaCameras, usuarios: telaUsuarios, tempo: telaTempoReal, producao: telaProducao, analises: telaAnalises, marcas: telaMarcas, envios: telaEnvios,
     auditoria: telaAuditoria, saude: telaSaude };
   (despacho[A.tela] || telaPainel)(tela);
 }
@@ -319,10 +321,14 @@ function telaTempoReal(t) {
   const desenharAgora = (m) => {
     const tot = m.total || {};
     const fmt = (v, casas) => (v === null || v === undefined) ? '—' : Number(v).toLocaleString('pt-BR', { maximumFractionDigits: casas === undefined ? 2 : casas });
+    const lk = m.link || {}; const net = m.latencia_internet || {};
     dizer('Atualizado ' + (m.em || '').slice(11, 19) + ' · ' + (tot.fluxos || 0) + ' fluxo(s) no ar · ' +
       'compressão agora: ' + fmt(tot.compressao_pct) + '% · ' +
       'entrada ' + fmt(tot.entrada_mbps, 3) + ' Mbps → saída ' + fmt(tot.saida_mbps, 3) + ' Mbps · ' +
-      'economia ' + fmt(tot.economia_mbps, 3) + ' Mbps · enviado ' + fmt(tot.mb_enviados, 2) + ' MB');
+      'economia ' + fmt(tot.economia_mbps, 3) + ' Mbps · enviado ' + fmt(tot.mb_enviados, 2) + ' MB / ' +
+      '| internet local: ' + (net.disponivel ? fmt(net.ms_medio, 0) + ' ms (' + net.fonte + ')' : 'sem resposta') + ' · ' +
+      'link (SRT): RTT ' + fmt(lk.rtt_ms, 2) + ' ms · capacidade ' + fmt(lk.capacidade_link_mbps, 2) + ' Mbps · ' +
+      'atraso do buffer ' + fmt(lk.atraso_buffer_ms, 0) + ' ms · perda ' + fmt(lk.perda_recebida_pct, 2) + '%');
     limpar(tabelaBox);
     const linhas = (m.fluxos || []).map((f) => ({
       fluxo: f.fluxo_id,
@@ -360,6 +366,7 @@ function telaTempoReal(t) {
   };
   carregar();
   if (timerTempo) { clearInterval(timerTempo); timerTempo = null; }
+  if (timerProducao) { clearInterval(timerProducao); timerProducao = null; }
   timerTempo = setInterval(() => { if (A.tela === 'tempo') carregar(); }, 2000);
 }
 
@@ -503,8 +510,79 @@ function telaMarcas(t) {
    o que a API mede: bitrate de entrada, bitrate de saida, corte, fps e tempo no ar. */
 let timerEnvios = null;
 let timerTempo = null;
+let timerProducao = null;
 const mbps = (k) => (k === null || k === undefined || k === '' ? '—' : (k / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) + ' Mbps');
 const numOu = (v, u) => (v === null || v === undefined || v === '' ? '—' : (Math.round(v * 10) / 10).toLocaleString('pt-BR') + ' ' + (u || ''));
+
+function telaProducao(t) {
+  const topo = document.createElement('div'); topo.className = 'caixa-form';
+  topo.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Produção: embarcação, câmera e os números do período' }));
+  const linha = document.createElement('div'); linha.className = 'linha-form'; topo.appendChild(linha);
+  const selDias = document.createElement('select'); selDias.id = 'prod-dias';
+  for (const d of [1, 7, 15, 30, 90]) selDias.appendChild(Object.assign(document.createElement('option'), { value: String(d), textContent: 'últimos ' + d + ' dia(s)', selected: d === 30 }));
+  const rot1 = document.createElement('div'); rot1.className = 'campo'; rot1.appendChild(Object.assign(document.createElement('label'), { textContent: 'Período' })); rot1.appendChild(selDias);
+  const selEmb = document.createElement('select'); selEmb.id = 'prod-embarcacao';
+  selEmb.appendChild(Object.assign(document.createElement('option'), { value: '', textContent: 'todas as embarcações' }));
+  const rot2 = document.createElement('div'); rot2.className = 'campo'; rot2.appendChild(Object.assign(document.createElement('label'), { textContent: 'Embarcação' })); rot2.appendChild(selEmb);
+  linha.appendChild(rot1); linha.appendChild(rot2);
+  const resumo = document.createElement('div'); resumo.className = 'sub'; resumo.id = 'prod-resumo';
+  topo.appendChild(resumo);
+  const grade = document.createElement('div'); grade.className = 'grade-cartoes'; grade.id = 'prod-cartoes';
+  t.appendChild(topo); t.appendChild(grade);
+  const dizerResumo = (txt) => { resumo.textContent = txt; };
+  const fmt = (v, casas) => (v === null || v === undefined) ? '—' : Number(v).toLocaleString('pt-BR', { maximumFractionDigits: casas === undefined ? 2 : casas });
+
+  const cartao = (c) => {
+    const el = document.createElement('div'); el.className = 'cartao';
+    const cab = document.createElement('div'); cab.className = 'cartao-cab';
+    cab.innerHTML = '<strong>' + c.embarcacao + '</strong><span class="tag ' + (c.estado === 'enviando' ? 'ok' : 'off') + '">' + c.estado + '</span>';
+    el.appendChild(cab);
+    const cam = document.createElement('div'); cam.className = 'cartao-camera'; cam.textContent = '📷 ' + c.camera;
+    el.appendChild(cam);
+    const itens = [
+      ['Média de compressão', c.compressao_medio_pct === null ? '—' : fmt(c.compressao_medio_pct) + '%'],
+      ['Banda utilizada', (c.banda_utilizada_mbps === null ? '—' : fmt(c.banda_utilizada_mbps, 3) + ' Mbps')],
+      ['Banda economizada', (c.banda_economizada_mbps === null ? '—' : fmt(c.banda_economizada_mbps, 3) + ' Mbps')],
+      ['Horas de streaming', fmt(c.horas_streaming) + ' h'],
+      ['Disponibilidade', fmt(c.disponibilidade_pct, 3) + '%'],
+      ['Enviado no período', fmt(c.mb_enviados) + ' MB']
+    ];
+    const ul = document.createElement('div'); ul.className = 'cartao-numeros';
+    for (const [k, v] of itens) {
+      const l = document.createElement('div'); l.innerHTML = '<span>' + k + '</span><b>' + v + '</b>';
+      ul.appendChild(l);
+    }
+    el.appendChild(ul);
+    return el;
+  };
+
+  const puxar = async () => {
+    const q = '?dias=' + encodeURIComponent(selDias.value) + (selEmb.value ? '&embarcacao=' + encodeURIComponent(selEmb.value) : '');
+    const r = await fetch('/api/producao' + q);
+    if (!r.ok) { dizerResumo('sem permissão para ver a produção'); return; }
+    const d = await r.json();
+    if (selEmb.options.length <= 1 && (d.embarcacoes || []).length) {
+      for (const e of d.embarcacoes) selEmb.appendChild(Object.assign(document.createElement('option'), { value: e.id, textContent: e.nome || e.id }));
+    }
+    const tr = (d.tempo_real && d.tempo_real.total) || {};
+    dizerResumo('últimos ' + d.dias + ' dias (desde ' + (d.desde || '').replace('T', ' ') + ') · ' +
+      (d.total.cards || 0) + ' câmera(s) com histórico · ' + fmt(d.total.horas_streaming) + ' h no ar · ' +
+      'economia somada ' + fmt(d.total.banda_economizada_mbps, 3) + ' Mbps · ' +
+      'agora: ' + (tr.enviando || 0) + ' enviando de ' + (tr.fluxos || 0) + ' no ar');
+    limpar(grade);
+    const lista = (d.cards || []).slice().sort((a, b) => a.embarcacao.localeCompare(b.embarcacao) || a.camera.localeCompare(b.camera));
+    if (!lista.length) {
+      grade.appendChild(Object.assign(document.createElement('div'), { className: 'nota', textContent: 'sem histórico no período: o sistema fecha o histórico minuto a minuto enquanto há envio no ar' }));
+    }
+    for (const c of lista) grade.appendChild(cartao(c));
+  };
+  selDias.addEventListener('change', puxar);
+  selEmb.addEventListener('change', puxar);
+  puxar();
+  if (timerProducao) { clearInterval(timerProducao); timerProducao = null; }
+  timerProducao = setInterval(() => { if (A.tela === 'producao') puxar(); }, 30000);
+}
+
 
 function telaEnvios(t) {
   if (!(A.usuario.papel === 'admin' || A.usuario.papel === 'operador')) {
@@ -720,6 +798,7 @@ function telaEnvios(t) {
   carregar();
   if (timerEnvios) { clearInterval(timerEnvios); timerEnvios = null; }
   if (timerTempo) { clearInterval(timerTempo); timerTempo = null; }
+  if (timerProducao) { clearInterval(timerProducao); timerProducao = null; }
   timerEnvios = setInterval(() => { if (A.tela === 'envios') carregar(); }, 5000);
 }
 

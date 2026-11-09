@@ -21,7 +21,11 @@ import sqlite3
 import subprocess
 import time
 import sys
+import threading
 import urllib.error
+import urllib.parse
+from urllib.parse import parse_qs, urlparse
+import urllib.parse
 import urllib.request
 from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -29,6 +33,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ingestao import iniciar as ing_iniciar, parar as ing_parar, listar as ing_listar  # noqa: E402
 import etapas as etapas_pipeline  # noqa: E402
+import producao as producao_pipeline  # noqa: E402
 from urllib.parse import parse_qs, unquote, urlparse
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -545,7 +550,30 @@ class Handler(SimpleHTTPRequestHandler):
         if rota in ("/api/metricas", "/api/tempo-real", "/api/metricas/tempo-real"):
             if not (self._pode_operar(u) or self._local()):
                 return self._json(403, {"erro": "so operacao e administrador veem as metricas"})
-            return self._json(200, etapas_pipeline.metricas_ao_vivo(), {"Cache-Control": "no-store"})
+            corpo = etapas_pipeline.metricas_ao_vivo()
+            corpo["link"] = producao_pipeline.link_srt()
+            corpo["latencia_internet"] = producao_pipeline.latencia_internet()
+            return self._json(200, corpo, {"Cache-Control": "no-store"})
+        if rota in ("/api/tempo-real-completo", "/api/link"):
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so operacao e administrador veem o link"})
+            return self._json(200, {"link": producao_pipeline.link_srt(),
+                                    "latencia_internet": producao_pipeline.latencia_internet(),
+                                    "em": producao_pipeline.agora()}, {"Cache-Control": "no-store"})
+        if rota == "/api/producao":
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so operacao e administrador veem a producao"})
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                dias = max(1, min(365, int((q.get("dias") or ["30"])[0])))
+            except ValueError:
+                dias = 30
+            dados = producao_pipeline.resumo_producao(
+                dias=dias,
+                embarcacao_id=(q.get("embarcacao") or [None])[0],
+                camera_id=(q.get("camera") or [None])[0])
+            dados["tempo_real"] = producao_pipeline.tempo_real()
+            return self._json(200, dados, {"Cache-Control": "no-store"})
         if rota in ("/api/cameras/detalhe", "/api/cameras/interno"):
             # endereco da camera so para a operacao: o app do cliente nunca recebe isso
             if not (u and u["papel"] in PAPEL_ADMIN) and not self._local():
@@ -1062,11 +1090,22 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(b)
 
 
+def _fechar_minutos_em_loop() -> None:
+    """Fecha o historico de producao a cada minuto (card de 30 dias depende disso rodando)."""
+    while True:
+        try:
+            producao_pipeline.fechar_minutos()
+        except Exception as e:
+            print("[aviso] fechar_minutos:", type(e).__name__, e)
+        time.sleep(60)
+
+
 def principal() -> int:
     args = [a for a in sys.argv[1:]]
     semear = "--semear-demo" in args
     porta = next((int(a) for a in args if a.isdigit()), 8765)
     inicializar(semear)
+    threading.Thread(target=_fechar_minutos_em_loop, daemon=True).start()
     print(f"[ok] sistema em http://127.0.0.1:{porta}/  (bancada: /  ·  cliente: /app  ·  admin: /admin)")
     ThreadingHTTPServer(("127.0.0.1", porta), Handler).serve_forever()
     return 0

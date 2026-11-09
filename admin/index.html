@@ -4,6 +4,18 @@
 <title>Admin do projeto e do sistema — LECSOR</title>
 <link rel="stylesheet" href="/fronts/vms.css">
 <link rel="stylesheet" href="/fronts/admin.css">
+
+<style>
+  .grade-cartoes { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; margin-top: 14px; }
+  .cartao { border: 1px solid var(--border, #2a3550); border-radius: 10px; padding: 12px 14px; background: var(--card, rgba(255,255,255,0.03)); }
+  .cartao-cab { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .cartao-camera { color: var(--muted-foreground, #9aa7bd); font-size: 13px; margin: 6px 0 10px; }
+  .cartao-numeros { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; }
+  .cartao-numeros div { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; border-bottom: 1px dashed rgba(255,255,255,0.08); padding-bottom: 3px; }
+  .cartao-numeros span { color: var(--muted-foreground, #9aa7bd); }
+  .tag { font-size: 11px; border-radius: 999px; padding: 2px 8px; border: 1px solid currentColor; }
+  .tag.ok { color: #4ade80; } .tag.off { color: #f87171; }
+</style>
 </head><body>
 
 <section id="entrada" class="entrada">
@@ -35,6 +47,7 @@
     <button class="item" data-tela="clientes"><span class="ic">🏢</span>Clientes</button>
     <button class="item" data-tela="embarcacoes"><span class="ic">🚢</span>Embarcações</button>
     <button class="item" data-tela="cameras"><span class="ic">🎥</span>Câmeras</button>
+    <button class="item" data-tela="producao"><span class="ic">📊</span>Produção</button>
     <button class="item" data-tela="tempo"><span class="ic">⏱</span>Tempo real</button>
     <button class="item" data-tela="envios"><span class="ic">📥</span>Enviar vídeo</button>
     <button class="item" data-tela="usuarios"><span class="ic">👥</span>Usuários</button>

@@ -508,6 +508,12 @@ def descompressao(url_fluxo: str, *, segundos: int = 45, http: str = "http://127
     return resultado
 
 
+def registrar_ponta_a_ponta(fluxo_id: str, ms: float, caminho: str = "ponta a ponta") -> None:
+    """Guarda uma medicao ponta a ponta (relogio queimado lido na tela) para o painel de tempo real."""
+    import producao as _prod
+    _prod.registrar_latencia(fluxo_id, float(ms), caminho)
+
+
 def latencia_ponta_a_ponta(fluxo_id: str, *, alvo: str = "800k", fps: int = 30, segundos: int = 25) -> dict:
     """Ponta a ponta com relogio queimado no quadro: publica um test pattern e deixa o navegador ler.
 

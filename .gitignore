@@ -40,3 +40,6 @@ ground/envios/log/
 GROUND/envios/
 db/*.db-wal
 db/*.db-shm
+.env.*
+supabase/.temp/
+*.env

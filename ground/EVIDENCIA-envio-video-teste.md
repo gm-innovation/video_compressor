@@ -199,3 +199,51 @@ endereço fica **só do lado da operação**: `GET /api/cameras` (o que o app do
 IP, porta ou comando de captura; `GET /api/cameras/detalhe` (operação/admin) devolve `ip`, `porta`,
 `protocolo`, `canal` e o comando de captura com a **senha como variável** (`rtsp://$USUARIO:$SENHA@ip:porta`),
 nunca o valor. O teste `tests/e2e-envios.py` verifica os dois lados.
+
+## Produção em cards, link ao vivo e histórico (09/11/2026)
+
+O dono avisou: em produção é streaming contínuo, exibir envio por envio não se acompanha. Entrou a
+tela **Produção** (`button[data-tela='producao']`), que agrupa **embarcação → câmera** e mostra, com
+filtro de período (1/7/15/30/90 dias) e de embarcação:
+
+    estado (enviando/parado) · média de compressão · banda utilizada · banda economizada
+    horas de streaming · disponibilidade (%) · MB enviados no período
+
+Medido na bancada: 14 cards, "0,36 h no ar", "agora: 1 enviando de 1 no ar".
+
+### Onde cada número nasce
+- **enviando/parado**: `ingestoes.estado` + `atualizado_em` (< 6 s = enviando), o mesmo critério do
+  painel de tempo real.
+- **histórico**: `ground/producao.py` fecha **minuto a minuto** o que foi medido (`telemetria_minuto`),
+  agregando `ingestoes_amostras` (1 amostra/s). É idempotente (`UNIQUE(fluxo_id, minuto)`), roda no
+  próprio `ground/api.py` a cada 60 s e tem **retenção** (`LECSOR_RETENCAO_DIAS`, padrão 30).
+- **disponibilidade (%)**: minutos com medição / minutos da janela, por câmera. Com o histórico de
+  hoje isso dá 0,002% (é honesto: 30 dias × 1 minuto no ar); cresce conforme o sistema roda.
+- **banda utilizada/economizada**: MB × 8 / segundos no ar, contra o bitrate da **fonte original**
+  (do registro de compressão quando o fluxo saiu de um arquivo comprimido, senão da linha de ingestão).
+
+### Link e atraso, em tempo real
+`GET /api/link` (só operação) e o painel Tempo real agora mostram:
+
+    internet local (ping):   23 ms   (média de 4 pacotes; cai para tempo de conexão TCP se o ping for bloqueado)
+    link (SRT, do mediamtx): RTT 0 ms · capacidade 0,33 Mbps · atraso do buffer 120 ms · perda 0%
+
+O RTT e a capacidade de link são estimativas do **próprio SRT** (`msRTT`, `mbpsLinkCapacity`); o
+atraso é o buffer de latência do SRT (`msSendTsbPdDelay`). A medição ponta a ponta (relógio queimado)
+continua sendo rodada à mão (`etapas.latencia_ponta_a_ponta()`) e agora fica **registrada**
+(`latencia_medicoes`) para aparecer junto com o buffer.
+
+## Supabase (projeto novo) e GitHub — pronto para receber as credenciais
+
+Sem ARROW e sem Dock Check, como o dono decidiu. O que já está escrito no repositório:
+
+- `supabase/migrations/20261109140000_pipeline_telemetria.sql`: clientes, embarcações, perfis,
+  câmeras, `telemetria_minuto`, `link_amostras`, views `v_producao_30d` e `v_disponibilidade_30d`,
+  RLS por cliente (o papel `cliente` **não** lê `ip`/`porta` — sai pela view `v_cameras_cliente`),
+  função de retenção e **Cron** horário (`cron.schedule`).
+- `supabase/functions/telemetria-ingestao/index.ts`: Edge Function (Deno) que o servidor de bordo
+  chama com o token da embarcação; a chave de serviço fica só no ambiente da função.
+- `ground/publicar_telemetria.py`: envia o histórico fechado para a Edge Function. Dry-run verificado
+  na bancada (`--simular`): 270 minutos de histórico montados com o link e o ping dentro.
+- GitHub: o repo está em `master` com 31 commits e **sem remote**; falta criar o repositório e apontar
+  o remote quando o dono passar os dados.
