@@ -16,3 +16,55 @@
 [vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 277.167 with rate 1.050 after a lag of 0.981s
 [vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 309.600 with rate 1.050 after a lag of 0.466s
 [vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 312.733 with rate 1.050 after a lag of 0.788s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 344.167 with rate 1.050 after a lag of 0.410s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 359.600 with rate 1.050 after a lag of 0.334s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 362.883 with rate 1.050 after a lag of 0.810s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 363.417 with rate 1.050 after a lag of 1.153s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 363.950 with rate 1.050 after a lag of 1.457s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 364.783 with rate 1.050 after a lag of 2.136s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 369.183 with rate 1.050 after a lag of 2.457s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 425.117 with rate 1.050 after a lag of 0.384s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 426.583 with rate 1.050 after a lag of 0.882s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 427.583 with rate 1.050 after a lag of 1.218s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 430.833 with rate 1.050 after a lag of 1.678s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 431.067 with rate 1.050 after a lag of 2.169s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 431.267 with rate 1.050 after a lag of 2.670s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 431.467 with rate 1.050 after a lag of 3.177s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 431.667 with rate 1.050 after a lag of 3.617s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 431.900 with rate 1.050 after a lag of 4.053s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 435.550 with rate 1.050 after a lag of 4.798s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 436.333 with rate 1.050 after a lag of 5.106s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 436.567 with rate 1.050 after a lag of 5.537s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 437.100 with rate 1.050 after a lag of 5.888s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 440.567 with rate 1.050 after a lag of 6.330s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 446.717 with rate 1.050 after a lag of 6.712s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 446.817 with rate 1.050 after a lag of 7.069s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 447.017 with rate 1.050 after a lag of 7.503s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 449.050 with rate 1.050 after a lag of 7.814s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 449.183 with rate 1.050 after a lag of 8.673s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 468.950 with rate 1.050 after a lag of 8.977s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 469.483 with rate 1.050 after a lag of 9.287s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 470.667 with rate 1.050 after a lag of 9.710s
+[vist#0:0/av1 @ 00000208359390c0] Resumed reading at pts 470.683 with rate 1.050 after a lag of 10.057s
+[libx264 @ 0000020835977d00] VBV underflow (frame 29220, -14760 bits)
+[libx264 @ 0000020835977d00] VBV underflow (frame 29250, -14688 bits)
+[libx264 @ 0000020835977d00] VBV underflow (frame 30120, -19872 bits)
+[libx264 @ 0000020835977d00] VBV underflow (frame 36180, -8736 bits)
+[libx264 @ 0000020835977d00] VBV underflow (frame 36270, -4208 bits)
+[libx264 @ 0000020835977d00] VBV underflow (frame 36450, -42216 bits)
+[libx264 @ 0000020835977d00] VBV underflow (frame 36630, -1480 bits)
+[libx264 @ 0000020835977d00] VBV underflow (frame 36663, -364 bits)
+[libx264 @ 0000020835977d00] VBV underflow (frame 36664, -625 bits)
+[libx264 @ 0000020835977d00] VBV underflow (frame 36666, -2955 bits)
+[libx264 @ 0000020835977d00] VBV underflow (frame 36667, -2225 bits)
+[libx264 @ 0000020835977d00] VBV underflow (frame 36668, -1313 bits)
+[libx264 @ 0000020835977d00] VBV underflow (frame 36669, -2393 bits)
+[libx264 @ 0000020835977d00] VBV underflow (frame 36670, -1313 bits)
+[libx264 @ 0000020835977d00] VBV underflow (frame 36671, -1313 bits)
+[libx264 @ 0000020835977d00] VBV underflow (frame 36672, -1313 bits)
+[libx264 @ 0000020835977d00] VBV underflow (frame 36674, -459 bits)
+[libx264 @ 0000020835977d00] VBV underflow (frame 36675, -1313 bits)
+[libx264 @ 0000020835977d00] VBV underflow (frame 36690, -19348 bits)
+[libx264 @ 0000020835977d00] VBV underflow (frame 36900, -1304 bits)
+[libx264 @ 0000020835977d00] VBV underflow (frame 37050, -16 bits)
+Error closing progress log, loss of information possible: Invalid argument

@@ -123,7 +123,8 @@ def sonda(fonte: str) -> dict:
             "duracao_s": round(float(fm.get("duration") or 0), 2) if fm.get("duration") else None}
 
 def _comando(fonte: str, fluxo_id: str, bitrate: str, codec: str, repetir: bool, tipo: str,
-             srt_host: str, srt_port: int, audio: bool = False, fonte2: str | None = None) -> list[str]:
+             srt_host: str, srt_port: int, audio: bool = False, fonte2: str | None = None,
+             fps: int = 30, arquivo_saida: str | None = None) -> list[str]:
     destino = (f"srt://{srt_host}:{srt_port}?mode=caller&latency=200&pkt_size=1316&streamid=publish:{fluxo_id}")
     cmd = ["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "warning", "-re"]
     if tipo == "arquivo" and repetir:
@@ -133,7 +134,7 @@ def _comando(fonte: str, fluxo_id: str, bitrate: str, codec: str, repetir: bool,
         cmd += ["-i", fonte2, "-map", "0:v:0", "-map", "1:a:0?"]
     cmd += ["-c:v", codec, "-preset", "ultrafast", "-tune", "zerolatency",
             "-b:v", bitrate, "-maxrate", bitrate, "-bufsize", "1M",
-            "-g", "30", "-pix_fmt", "yuv420p"]
+            "-r", str(fps), "-g", str(fps), "-pix_fmt", "yuv420p"]   # 30 fps: menos de 30 fica ruim, 60 gasta banda
     # Audio do clipe de teste pesa mais que o video comprimido (MP2 padrao ~224 kbps): por padrao
     # vai sem audio, para o numero medido ser o do video; quem quiser mantem a 48 kbps mono.
     if audio:
@@ -141,6 +142,9 @@ def _comando(fonte: str, fluxo_id: str, bitrate: str, codec: str, repetir: bool,
     else:
         cmd += ["-an"]
     cmd += ["-f", "mpegts", "-progress", "pipe:1", "-nostats", destino]
+    if arquivo_saida:
+        # guarda o MESMO encode em arquivo (sem recodificar) para o dono baixar e comparar
+        cmd += ["-c", "copy", "-f", "mpegts", arquivo_saida]
     return cmd
 
 def alvo_automatico(entrada_kbps: float | None, fator: float = 0.5, piso: int = 250, teto: int = 8000) -> str:
@@ -154,7 +158,8 @@ def alvo_automatico(entrada_kbps: float | None, fator: float = 0.5, piso: int = 
 def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: str = "auto",
             codec: str = "libx264", repetir: bool = True, tipo: str | None = None, audio: bool = False,
             embarcacao_id: str = "psv-exemplo", srt_host: str = "127.0.0.1", srt_port: int = 8890,
-            registrar_camera: bool = True, abrir_log: bool = True) -> dict:
+            registrar_camera: bool = True, abrir_log: bool = True, fps: int = 30,
+            guardar_arquivo: bool = False) -> dict:
     """Sobe a ingestao. Devolve o registro (com id) para a tela acompanhar."""
     garantir_schema()
     ENVIOS.mkdir(parents=True, exist_ok=True); LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -189,7 +194,9 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
     if ent and alvo_kbps > ent * 1.05:
         aviso = (f"alvo {bitrate} e MAIOR que a entrada ({ent} kbps): a saida vai gastar mais banda que o video enviado. "
                  f"Para comprimir, use alvo abaixo da entrada (ex.: {alvo_automatico(ent)}) — o numero medido e o total do fluxo (video + audio + MPEG-TS).")
-    cmd = _comando(fonte, fluxo_id, bitrate, codec, repetir, tipo, srt_host, srt_port, audio=audio, fonte2=fonte2)
+    arquivo_saida = str(ENVIOS / "log" / f"{fluxo_id}-{int(time.time())}.ts") if guardar_arquivo else None
+    cmd = _comando(fonte, fluxo_id, bitrate, codec, repetir, tipo, srt_host, srt_port, audio=audio,
+                   fonte2=fonte2, fps=fps, arquivo_saida=arquivo_saida)
     log = LOG_DIR / f"{fluxo_id}-{int(time.time())}.log"
     saida = open(log, "ab", buffering=0) if abrir_log else subprocess.DEVNULL
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=saida, cwd=str(RAIZ))
@@ -208,7 +215,7 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
     threading.Thread(target=_bombear, args=(ident, proc, log), daemon=True).start()
     return {"id": ident, "fluxo_id": fluxo_id, "camera_id": camera_id, "pid": proc.pid,
             "comando": " ".join(cmd), "entrada": s, "alvo": bitrate, "aviso": aviso, "log": str(log),
-            "pagina": origem_pagina}
+            "pagina": origem_pagina, "fps_alvo": fps, "arquivo_saida": arquivo_saida}
 
 def _bombear(ident: int, proc: subprocess.Popen, log: Path):
     """Le o -progress do ffmpeg e mantem a tabela ingestoes atualizada."""

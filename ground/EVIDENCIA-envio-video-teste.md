@@ -88,3 +88,33 @@ Banco: `db/schema-ingestao.sql` → `ingestoes` (estado, bitrates, corte, fps, p
   então o app duplicado `LECSOR Operacao` foi desinstalado; ficaram **LECSOR Cliente**, **LECSOR Admin**
   e **LECSOR Pipeline de Video** (bancada/engenharia), cada um com atalho no Menu Iniciar e na Área de
   Trabalho.
+
+## As três etapas medidas separadamente (09/11/2026)
+
+**Etapa 1 — compressão (arquivo inteiro, 30 fps travado).** Tela: Admin → Enviar vídeo → *Comprimir em arquivo*.
+A API é `POST /api/ingestao/comprimir`; o arquivo comprimido fica em `ground/envios/comprimido/` e sai por
+`GET /api/comprimido/<nome>` (download).
+
+| Original | Comprimido | Corte | SSIM | Encode |
+|---|---|---|---|---|
+| `YTDown…Makito-X4-Decoder.mp4` — 28,19 MB, 1809 kbps, 1080p60 | 13,77 MB, 884 kbps, 1080p30 | ↓ 51,17% | 0,9569 | 11,65 s (10,7× o tempo real) |
+| `clipe-do-dono.mp4` — 5,48 MB, 883 kbps, 768x432 | 2,88 MB, 464 kbps, 768x432, 30 fps | ↓ 47,46% | 0,9872 | 0,80 s (62× o tempo real) |
+
+Download conferido byte a byte: o que a tela baixa é exatamente o que o registro diz (2.879.241 bytes).
+
+**Etapa 2 — envio (SRT).** `GET /api/etapas/<fluxo>` lê o mediamtx: `cam-01` — RTT **0,0 ms** na bancada,
+**1,652 Mbps** de média, 57 pacotes perdidos em 8.759 s (0,004%), 5 leitores. Numa bancada máquina-a-máquina
+o trecho de rede não aparece; o número que vale é o da VPS/navio.
+
+**Etapa 3 — descompressão.** `GET /api/etapas/<fluxo>?descompressao=1` abre o fluxo no navegador e mede o
+primeiro quadro: WebRTC (WHEP) **2,296 s** (handshake ICE/DTLS), HLS **0,543 s**.
+
+**Tudo em sequência — espera de ponta a ponta com relógio queimado no quadro.** Test pattern 720p30 a
+800 kbps publicado em SRT; relógio local (ms) injetado na mesma tela do vídeo; leitura de duas capturas:
+**0,308 s** e **0,255 s** (WebRTC, tudo na mesma máquina). O número anterior de 1,568 s incluía o caminho
+da câmera analítica com o agente de IA junto.
+
+> "No ar 300 s" na tela é **tempo no ar** (há quanto tempo o envio está publicado), não atraso. O atraso é
+> o medido acima: ~0,3 s em WebRTC; em HLS ele soma o tamanho do segmento.
+
+30 fps: o encode publica com `-r 30 -g 30` (menos que 30 fica ruim, 60 gasta banda sem ganho visível).

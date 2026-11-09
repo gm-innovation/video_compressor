@@ -28,9 +28,11 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ingestao import iniciar as ing_iniciar, parar as ing_parar, listar as ing_listar  # noqa: E402
-from urllib.parse import parse_qs, urlparse
+import etapas as etapas_pipeline  # noqa: E402
+from urllib.parse import parse_qs, unquote, urlparse
 
 RAIZ = Path(__file__).resolve().parent.parent
+COMPRIMIDOS = RAIZ / "ground" / "envios" / "comprimido"
 BANCO = RAIZ / "db" / "pipeline.db"
 CAMPOS_OBRIGATORIOS = ("valor", "fonte", "data", "hardware_versao", "comando")
 PORTA_WEBRTC, PORTA_HLS, PORTA_API_MEDIAMTX = 8889, 8888, 9997
@@ -407,6 +409,19 @@ class Handler(SimpleHTTPRequestHandler):
     def _pode_operar(self, u) -> bool:
         return bool(u) and u["papel"] in ("admin", "operador")
 
+    def _enviar_arquivo(self, caminho: Path, baixar: bool = True) -> None:
+        if not caminho.exists() or not caminho.is_file():
+            return self._json(404, {"erro": "arquivo nao encontrado"})
+        b = caminho.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "video/mp4")
+        self.send_header("Content-Length", str(len(b)))
+        if baixar:
+            self.send_header("Content-Disposition", f'attachment; filename="{caminho.name}"')
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(b)
+
     def _json(self, codigo: int, corpo, cabecalhos: dict | None = None) -> None:
         b = json.dumps(corpo, ensure_ascii=False).encode()
         self.send_response(codigo)
@@ -479,6 +494,31 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(403, {"erro": "so operacao e administrador enviam video de teste"})
             return self._json(200, {"ingestoes": ing_listar(), "atualizado_em": dt.datetime.now().astimezone().isoformat(timespec="seconds")},
                               {"Cache-Control": "no-store"})
+        if rota in ("/api/comprimidos", "/api/envios/comprimidos"):
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so operacao e administrador veem os arquivos"})
+            COMPRIMIDOS.mkdir(parents=True, exist_ok=True)
+            itens = []
+            for f in sorted(COMPRIMIDOS.glob("*.mp4"), key=lambda x: -x.stat().st_mtime)[:60]:
+                itens.append({"nome": f.name, "bytes": f.stat().st_size, "mb": round(f.stat().st_size / 1e6, 2),
+                              "modificado": dt.datetime.fromtimestamp(f.stat().st_mtime).astimezone().isoformat(timespec="seconds"),
+                              "baixar": f"/api/comprimido/{f.name}"})
+            return self._json(200, {"comprimidos": itens}, {"Cache-Control": "no-store"})
+        if rota.startswith("/api/comprimido/"):
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so operacao e administrador baixam o arquivo"})
+            nome = Path(unquote(rota.split("/api/comprimido/", 1)[1])).name
+            return self._enviar_arquivo(COMPRIMIDOS / nome)
+        if rota.startswith("/api/etapas/"):
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so operacao e administrador medem as etapas"})
+            fluxo = Path(unquote(rota.split("/api/etapas/", 1)[1])).name
+            import urllib.parse as _up
+            q = parse_qs(urlparse(self.path).query)
+            rel = {"envio": etapas_pipeline.envio(fluxo)}
+            if (q.get("descompressao") or ["0"])[0] in ("1", "sim", "true"):
+                rel["descompressao"] = etapas_pipeline.descompressao(fluxo)
+            return self._json(200, rel, {"Cache-Control": "no-store"})
         if rota == "/api/resumo":
             if not (u or self._local()):
                 return self._json(401, {"erro": "entre no sistema"})
@@ -622,11 +662,36 @@ class Handler(SimpleHTTPRequestHandler):
                             bitrate=_q("bitrate", "auto"), codec=_q("codec", "libx264"),
                             repetir=_q("repetir", "1") not in ("0", "false", "nao"), tipo="arquivo",
                             audio=_q("audio", "0") in ("1", "sim", "true"),
+                            fps=int(_q("fps", "30") or 30), guardar_arquivo=_q("guardar", "0") in ("1", "sim", "true"),
                             embarcacao_id=_q("embarcacao", "psv-exemplo"))
             if "erro" in r:
                 return self._json(422, r)
             auditar(u, "envio_video", f"arquivo {nome} ({gravados} bytes) -> {r['fluxo_id']}", self.client_address[0])
             return self._json(201, {"ok": True, "bytes": gravados, **r}, {"Cache-Control": "no-store"})
+        if rota in ("/api/ingestao/comprimir", "/api/envios/comprimir"):
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so operacao e administrador comprimem video"})
+            q = parse_qs(urlparse(self.path).query)
+            def _qc(k, p=""):
+                return (q.get(k) or [p])[0]
+            nome = re.sub(r"[^A-Za-z0-9 ._\-]", "_", Path(_qc("nome", "video.mp4")).name)[:80] or "video.mp4"
+            # o original enviado fica em originais/: nao sobrescreve nem o exemplo nem um clipe em uso
+            origem_dir = RAIZ / "ground" / "envios" / "originais"
+            origem_dir.mkdir(parents=True, exist_ok=True)
+            destino = origem_dir / nome
+            try:
+                self._corpo_bruto(destino)
+            except ValueError as e:
+                return self._json(422, {"erro": str(e)})
+            r = etapas_pipeline.comprimir(str(destino), alvo=_qc("bitrate", "auto"),
+                                         fps=int(_qc("fps", "30") or 30),
+                                         nome=Path(nome).stem,
+                                         audio=_qc("audio", "0") in ("1", "sim", "true"))
+            if not r.get("ok"):
+                return self._json(422, r)
+            r["baixar"] = "/api/comprimido/" + r["nome_arquivo"]
+            auditar(u, "comprimir_video", f"{nome} -> {r['nome_arquivo']} (corte {r['corte_pct']}%)", self.client_address[0])
+            return self._json(201, r, {"Cache-Control": "no-store"})
         if rota in ("/api/ingestao/url", "/api/envios/url"):
             if not (self._pode_operar(u) or self._local()):
                 return self._json(403, {"erro": "so operacao e administrador enviam video de teste"})
@@ -637,6 +702,7 @@ class Handler(SimpleHTTPRequestHandler):
             r = ing_iniciar(endereco, rotulo=str(d.get("rotulo") or "video por link"), fluxo_id=d.get("fluxo_id") or None,
                             bitrate=str(d.get("bitrate") or "auto"), codec=str(d.get("codec") or "libx264"),
                             repetir=bool(d.get("repetir", True)), tipo="url", audio=bool(d.get("audio", False)),
+                                    fps=int(d.get("fps") or 30), guardar_arquivo=bool(d.get("guardar", False)),
                             embarcacao_id=str(d.get("embarcacao") or "psv-exemplo"))
             if "erro" in r:
                 return self._json(422, r)
