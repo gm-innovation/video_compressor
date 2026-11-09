@@ -284,6 +284,7 @@ def tempo_real() -> dict:
             "embarcacao_id": cam.get("embarcacao_id") or d.get("embarcacao_id") or "",
             "tipo": d.get("tipo"),
             "estado": "enviando" if vivo else "parado",
+            "erro": d.get("erro"),
             "idade_s": round(idade, 1) if idade is not None else None,
             "entrada_mbps": round(entrada, 3), "saida_mbps": round(saida, 3),
             "taxa_agora_mbps": round(saida, 3),
@@ -375,9 +376,10 @@ def resumo_producao(*, dias: int = 30, embarcacao_id: str | None = None, camera_
         saida_mbps = round(mb * 8 / segundos, 3) if segundos else None
         entrada_mbps = round((l["entrada_medio"] or 0) / 1000, 3) if l["entrada_medio"] else None
         cam = cameras.get(l["camera_id"]) or {}
-        emb = embarcacoes.get(l["embarcacao_id"]) or {}
+        emb_id = cam.get("embarcacao_id") or l["embarcacao_id"]
+        emb = embarcacoes.get(emb_id) or {}
         card = {
-            "embarcacao_id": l["embarcacao_id"], "embarcacao": emb.get("nome") or l["embarcacao_id"] or "—",
+            "embarcacao_id": emb_id, "embarcacao": emb.get("nome") or emb_id or "—",
             "camera_id": l["camera_id"], "camera": cam.get("rotulo") or l["camera_id"],
             "fluxo_id": l["fluxo_id"], "tipo": (ao_vivo.get(l["fluxo_id"]) or {}).get("tipo"),
             "compressao_medio_pct": (round(l["compressao_medio"], 2)

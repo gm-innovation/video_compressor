@@ -127,10 +127,22 @@ function desenharVisualizar() {
     const marca = document.createElement('span'); marca.className = 'marca-dagua'; marca.dataset.relogio = '1';
     const rot = document.createElement('span'); rot.className = 'rotulo-cam';
     const ponto = document.createElement('span'); ponto.className = 'ponto' + (c.no_ar ? '' : ' ruim');
-    const nome = document.createElement('span'); nome.textContent = c.rotulo + (c.encoder && c.encoder.resolucao ? ' · ' + c.encoder.resolucao : '');
+    const nome = document.createElement('span');
+    nome.textContent = c.rotulo + (c.encoder && c.encoder.resolucao ? ' · ' + c.encoder.resolucao : '') +
+      (!c.no_ar && c.motivo ? ' · ' + c.motivo : '');
     rot.appendChild(ponto); rot.appendChild(nome);
     const caixas = document.createElement('div'); caixas.className = 'caixas'; caixas.id = 'caixas-' + c.id;
-    jan.appendChild(v); jan.appendChild(marca); jan.appendChild(caixas); jan.appendChild(rot);
+    jan.appendChild(v);
+    if (!c.no_ar && c.motivo) {
+      // aviso claro no lugar da tela preta: sem isso o operador nao sabe se a camera caiu ou falhou
+      const aviso = document.createElement('div');
+      aviso.className = 'aviso-cam';
+      aviso.style.cssText = 'position:absolute;left:0;right:0;top:46%;text-align:center;padding:0 12px;' +
+        'color:#ffb4b4;font-size:13px;line-height:1.35;pointer-events:none;text-shadow:0 1px 2px #000';
+      aviso.textContent = '⚠ ' + c.motivo;
+      jan.appendChild(aviso);
+    }
+    jan.appendChild(marca); jan.appendChild(caixas); jan.appendChild(rot);
     grade.appendChild(jan);
     window.Video.ligar(c.id, c.id, v);
     desenharCaixas(c.id);

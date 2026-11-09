@@ -320,3 +320,29 @@ Medido agora, pela tela, com a webcam do notebook no ar de forma contínua:
     imagem que CHEGA     YAVG 141,9 · YMIN 23 · YMAX 248 (tela preta daria YAVG ~16) — imagem real, não preta
     Produção (só enviando) 1 card: embarcação PSV Exemplo (demo) · câmera "Webcam bancada (ao vivo)" · 3,36% (12 de 357 min)
     app do cliente       janela "Webcam bancada (ao vivo)" tocando a imagem real da sala
+
+## Aviso de erro e "webcam ocupada" — o envio do dono não carregava em silêncio (09/11/2026)
+
+O relato: *"apenas a que você inseriu está aparecendo, mas está vinculada ao plsv, não à bancada de testes,
+ou seja, a que eu inseri não está carregando… mas deveria aparecer algum aviso de erro ou algo assim"*.
+
+Causa: a webcam do Windows (dshow) **só abre uma vez**. O envio do dono começou enquanto o da bancada
+ainda segurava o dispositivo; o `ffmpeg` falhou com `Error during demuxing: I/O error` / `Output file is
+empty, nothing was encoded` e **saiu com código 0** — então o fluxo ficava com estado `fim` e **sem motivo**,
+e a tela só pintava um quadro preto, sem dizer nada.
+
+O que mudou:
+1. **Recusa com recado**: `ao_vivo()` confere se a mesma webcam já está num envio vivo (instância viva =
+   `atualizado_em` com menos de 12 s) e devolve **422** com o nome do fluxo que a está usando, em vez de
+   deixar o segundo envio nascer e morrer preto.
+2. **Erro com motivo**: `_motivo_da_falha()` lê o log e o próprio registro (nenhum kbps medido = nenhum
+   quadro saiu) e marca `estado='erro'` com uma frase curta, mesmo quando o ffmpeg sai com código 0.
+3. **Aviso na tela**: a grade do cliente e o Tempo real mostram `⚠ <motivo>` na janela, em vez de silêncio;
+   `GET /api/cameras` passou a devolver `motivo`, e o Tempo real lista por 10 min o envio que **falhou**.
+4. **Bancada de testes**: fonte viva de teste é registrada na **"Bancada de testes (propria)"** (não no
+   "PSV Exemplo (demo)"); o card da Produção segue a embarcação **atual** da câmera, não a do histórico.
+
+Medido: 2º envio da mesma webcam → `422 a webcam "ACER HD User Facing" ja esta em uso pelo fluxo
+"Webcam bancada (ao vivo)" (id 143). Pare esse envio antes de transmitir de novo.`; fonte que não abre →
+`estado='erro'` com motivo; card vivo → `Bancada de testes (propria)` / `enviando` / 1,596 Mbps.
+Suíte `e2e-envios` verde com os 4 checks novos (bloco 11 = 87 verificações, todas ok).

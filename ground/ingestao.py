@@ -245,6 +245,33 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
             "comando": " ".join(cmd), "entrada": s, "alvo": bitrate, "aviso": aviso, "log": str(log),
             "pagina": origem_pagina, "fps_alvo": fps, "arquivo_saida": arquivo_saida}
 
+def _motivo_da_falha(codigo: int, log: Path, r: dict) -> str | None:
+    """Motivo curto quando o envio NAO subiu, para a tela poder avisar em vez de so ficar preta.
+
+    O ffmpeg sai com codigo 0 mesmo quando nao codificou nada, entao o codigo sozinho nao serve:
+    olhamos o log e o proprio registro (nenhum kbps medido = nenhum quadro saiu).
+    """
+    try:
+        texto = Path(log).read_text(encoding="utf-8", errors="replace") if log else ""
+    except Exception:
+        texto = ""
+    baixo = texto.lower()
+    if "i/o error" in baixo or "could not run filter" in baixo or "device already" in baixo \
+            or "device is not available" in baixo or "unspecified error" in baixo:
+        return ("nao consegui abrir a camera: ela pode estar EM USO por outro fluxo, "
+                "ou desconectada/renomeada. Pare o outro envio da mesma webcam (se houver) e transmita de novo.")
+    if "nothing was encoded" in baixo or "no filtered frames" in baixo:
+        return "a fonte nao entregou nenhum quadro (camera ocupada ou desconectada)"
+    if "no such file" in baixo or "not found" in baixo:
+        return "fonte nao encontrada"
+    if codigo and codigo != 0:
+        ultimas = [x.strip() for x in texto.strip().splitlines() if x.strip()][-1:] or [""]
+        return f"ffmpeg saiu com codigo {codigo}: {ultimas[0][:160]}"
+    if not r.get("bitrate_saida_kbps"):
+        return "o envio terminou sem nenhum dado medido (nenhum quadro foi enviado)"
+    return None
+
+
 def _bombear(ident: int, proc: subprocess.Popen, log: Path):
     """Le o -progress do ffmpeg e mantem a tabela ingestoes atualizada."""
     ultimo, ultima_amostra, inicio, ultima_gravacao = {}, time.time(), time.time(), 0.0
@@ -286,8 +313,11 @@ def _bombear(ident: int, proc: subprocess.Popen, log: Path):
         with conexao() as c:
             r = c.execute("SELECT * FROM ingestoes WHERE id=?", (ident,)).fetchone()
             if r and r["estado"] != "parado":
+                motivo = _motivo_da_falha(codigo, log, r)
+                # o ffmpeg as vezes sai com codigo 0 sem ter codificado NADA (camera ja em uso, por
+                # exemplo): sem isso a tela pintava um quadro preto e nenhum aviso de erro.
                 c.execute("UPDATE ingestoes SET estado=?, erro=?, atualizado_em=? WHERE id=?",
-                          ("erro" if codigo else "fim", None if codigo == 0 else f"ffmpeg saiu com codigo {codigo}", agora(), ident))
+                          ("erro" if motivo else "fim", motivo, agora(), ident))
             if r and (r["duracao_s"] or 0) >= 15:
                 c.execute("""INSERT INTO medicoes (valor, fonte, data, hardware_versao, comando)
                              VALUES (?,?,?,?,?)""",
@@ -441,7 +471,7 @@ def capturar(*, tipo: str = "camera", dispositivo: str | None = None, resolucao:
 
 def ao_vivo(*, tipo: str = "camera", dispositivo: str | None = None, resolucao: str = "1920x1080",
             fps: int = 30, rotulo: str | None = None, fluxo_id: str | None = None, bitrate: str = "auto",
-            embarcacao_id: str = "psv-exemplo", srt_host: str = "127.0.0.1", srt_port: int = 8890) -> dict:
+            embarcacao_id: str = "bancada", srt_host: str = "127.0.0.1", srt_port: int = 8890) -> dict:
     """""Envio CONTINUO de uma fonte viva (webcam do notebook ou fonte sintetica), igual a operacao.
 
     Sem duracao determinada e sem laço de arquivo: o ffmpeg le a camera e publica em SRT ate
@@ -453,7 +483,33 @@ def ao_vivo(*, tipo: str = "camera", dispositivo: str | None = None, resolucao: 
         disp = listar_dispositivos()
         dispositivo = disp.get("padrao") or DISPOSITIVO_PADRAO
     nome = (rotulo or "").strip() or ("webcam do notebook" if tipo == "camera" else "teste sintetico")
+    # a webcam do Windows (dshow) so abre UMA vez: dois envios da mesma camera brigam pelo dispositivo
+    # e o segundo fica com quadro preto. Melhor recusar com recado claro do que pintar tela preta.
+    if tipo == "camera":
+        ocupado = _camera_em_uso(dispositivo)
+        if ocupado:
+            return {"erro": (f'a webcam "{dispositivo}" ja esta em uso pelo fluxo "{ocupado["rotulo"]}" '
+                             f'(id {ocupado["id"]}). Pare esse envio antes de transmitir de novo.'),
+                    "ocupada_por": ocupado}
     slug_vivo = re.sub(r"[^a-z0-9]+", "-", unicodedata.normalize("NFKD", nome.lower())).strip("-")[:30].strip("-")
     return iniciar(f"live:{tipo}", rotulo=nome, fluxo_id=fluxo_id or f"vivo-{slug_vivo or tipo}",
                    bitrate=bitrate, tipo=tipo, repetir=False, dispositivo=dispositivo, resolucao=resolucao,
                    fps=fps, embarcacao_id=embarcacao_id, srt_host=srt_host, srt_port=srt_port)
+
+
+def _camera_em_uso(dispositivo: str | None, validade_s: int = 12) -> dict | None:
+    """Diz se algum envio VIVO ainda esta segurando a mesma webcam (dshow nao compartilha o dispositivo)."""
+    alvo = f"dshow:{(dispositivo or DISPOSITIVO_PADRAO).strip()}"
+    with conexao() as c:
+        for r in c.execute("""SELECT id, fluxo_id, rotulo, estado, atualizado_em, fonte, pid FROM ingestoes
+                              WHERE tipo='camera' AND fonte=? ORDER BY id DESC LIMIT 10""", (alvo,)):
+            d = dict(r)
+            if d["estado"] not in ("no_ar", "no ar", "iniciando"):
+                continue
+            try:
+                idade = time.time() - dt.datetime.fromisoformat(d["atualizado_em"]).timestamp()
+            except Exception:
+                continue
+            if idade <= validade_s:
+                return d
+    return None

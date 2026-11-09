@@ -332,7 +332,7 @@ function telaTempoReal(t) {
     limpar(tabelaBox);
     const linhas = (m.fluxos || []).map((f) => ({
       fluxo: f.fluxo_id,
-      comprimindo: f.vivo ? 'sim' : 'sem sinal',
+      comprimindo: f.vivo ? 'sim' : (f.erro ? 'ERRO: ' + f.erro : 'sem sinal'),
       entrada: (f.entrada_mbps === null ? '—' : fmt(f.entrada_mbps, 3) + ' Mbps'),
       saida: (f.saida_mbps === null ? '—' : fmt(f.saida_mbps, 3) + ' Mbps'),
       compressao: (f.compressao_pct === null ? '—' : fmt(f.compressao_pct) + '%'),

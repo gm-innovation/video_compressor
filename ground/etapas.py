@@ -15,6 +15,7 @@ Uso:
   python ground/etapas.py --fonte <arquivo> --so-compressao
 """
 from __future__ import annotations
+import datetime as dt
 import argparse, json, os, re, subprocess, sys, time, urllib.request
 from pathlib import Path
 
@@ -345,7 +346,12 @@ def metricas_ao_vivo() -> dict:
     agora = time.time()
     with conexao_banco() as c:
         linhas, vistas = [], set()
-        for r in c.execute("SELECT * FROM ingestoes WHERE estado IN ('no_ar','no ar') ORDER BY id DESC LIMIT 60"):
+        # inclui o envio que FALHOU nos ultimos minutos: o operador precisa ver o motivo, nao so o silencio
+        corte_erro = (dt.datetime.now().astimezone() - dt.timedelta(minutes=10)).isoformat(timespec="seconds")
+        for r in c.execute("""SELECT * FROM ingestoes
+                               WHERE estado IN ('no_ar','no ar')
+                                  OR (estado='erro' AND atualizado_em >= ?)
+                               ORDER BY id DESC LIMIT 60""", (corte_erro,)):
             d = dict(r)
             if d["fluxo_id"] in vistas:
                 continue
@@ -370,6 +376,7 @@ def metricas_ao_vivo() -> dict:
         d.update({
             "entrada_mbps": round(entrada, 3), "saida_mbps": round(saida, 3),
             "economia_mbps": round(max(0.0, entrada - saida), 3),
+            "erro": d.get("erro"),
             "compressao_pct": round((1 - saida / entrada) * 100, 2) if (entrada and saida) else None,
             "compressao_arquivo_pct": comp.get("compressao_pct"), "ssim": comp.get("ssim"),
             "mbps_agora": round(saida, 3), "fps_agora": d.get("fps"),

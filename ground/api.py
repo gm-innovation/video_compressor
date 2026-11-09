@@ -612,9 +612,23 @@ class Handler(SimpleHTTPRequestHandler):
                     if not pode_ver_camera(u, cam):
                         continue
                     p = mt.get(cam["fluxo_id"], {})
-                    # so o que a tela precisa: sem endereco de camera, sem credencial, sem porta interna
+                    no_ar = bool(p.get("ready")) and bool(p.get("tracks"))
+                    # por que NAO esta no ar: estado e motivo do ultimo envio (a tela avisa em vez de
+                    # deixar so um quadro preto). Sem endereco de camera, sem credencial, sem porta.
+                    ult = c.execute("""SELECT estado, erro, atualizado_em FROM ingestoes
+                                       WHERE fluxo_id=? ORDER BY id DESC LIMIT 1""", (cam["fluxo_id"],)).fetchone()
+                    motivo = ""
+                    if not no_ar and ult:
+                        if ult["erro"]:
+                            motivo = ult["erro"]
+                        elif ult["estado"] in ("parado", "fim"):
+                            motivo = "envio parado"
+                        elif ult["estado"] == "iniciando":
+                            motivo = "iniciando o envio…"
+                        else:
+                            motivo = "sem sinal"
                     saida.append({"id": cam["id"], "rotulo": cam["rotulo"], "embarcacao_id": cam["embarcacao_id"],
-                                  "local": cam["local"], "no_ar": bool(p.get("ready")), "tracks": p.get("tracks", []),
+                                  "local": cam["local"], "no_ar": no_ar, "motivo": motivo, "tracks": p.get("tracks", []),
                                   "leitores": len(p.get("readers", [])), "encoder": perfil_encoder(cam["fluxo_id"])})
             return self._json(200, {"cameras": saida})
         if rota == "/api/decisoes":

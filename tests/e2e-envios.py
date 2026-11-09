@@ -306,6 +306,36 @@ def main() -> int:
     st, err = _pedir("/api/ingestao/ao-vivo", {"tipo": "webcam-inventada"})
     checar(st == 422, "envio contínuo de fonte desconhecida é recusado com 422")
 
+    # --- 11) aviso de ERRO visível e webcam ocupada (caso do dono: o envio dele não carregava em silêncio)
+    for _i in http("/api/ingestoes")["ingestoes"]:          # solta a webcam de qualquer envio vivo anterior
+        if (_i["fluxo_id"] or "").startswith("vivo-"):
+            _pedir("/api/ingestao/parar", {"id": _i["id"], "remover": True})
+    time.sleep(2)
+    st, r1 = _pedir("/api/ingestao/ao-vivo", {"tipo": "camera", "fps": 30, "rotulo": "webcam e2e (ocupada)"})
+    checar(st == 201, "liguei um envio vivo da webcam para testar a ocupação ({})".format(r1.get("fluxo_id")))
+    if st == 201:
+        time.sleep(10)
+        st2, r2 = _pedir("/api/ingestao/ao-vivo", {"tipo": "camera", "fps": 30, "rotulo": "webcam e2e (segundo)"})
+        checar(st2 == 422 and "em uso" in (r2.get("erro") or ""),
+               "segundo envio da MESMA webcam é recusado com recado claro em vez de tela preta ({})".format(
+                   (r2.get("erro") or "")[:70]))
+        prod = http("/api/producao?dias=30&so_enviando=1")
+        meus = [c for c in prod["cards"] if c["fluxo_id"] == r1["fluxo_id"]]
+        checar(bool(meus) and "Bancada" in meus[0]["embarcacao"],
+               "fonte de teste vivo cai na BANCADA de testes, não no PSV de exemplo ({})".format(
+                   meus[0]["embarcacao"] if meus else "?"))
+        _pedir("/api/ingestao/parar", {"id": r1["id"], "remover": True})
+    st3, r3 = _pedir("/api/ingestao/ao-vivo", {"tipo": "camera", "dispositivo": "Camera Que Nao Existe",
+                                               "fps": 30, "rotulo": "teste-falha-e2e"})
+    if st3 == 201:
+        time.sleep(8)
+        falha = [l for l in http("/api/ingestoes")["ingestoes"] if l["rotulo"] == "teste-falha-e2e"]
+        checar(bool(falha) and falha[0]["estado"] == "erro" and bool(falha[0].get("erro")),
+               "fonte que não abre fica marcada como ERRO com motivo, em vez de silêncio ({})".format(
+                   (falha[0].get("erro") or "")[:60] if falha else "nada"))
+        if falha:
+            _pedir("/api/ingestao/parar", {"id": falha[0]["id"], "remover": True})
+
     # --- 8) produção (cards de 30 dias) e link/latência em tempo real
     sys.path.insert(0, str(RAIZ / "ground"))
     import producao as prod
