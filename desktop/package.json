@@ -1,0 +1,31 @@
+{
+  "name": "lecsor-pipeline-video-desktop",
+  "productName": "LECSOR Pipeline de Video",
+  "version": "0.1.0",
+  "description": "Aplicativo Windows com as tres superficies do pipeline de video bordo-terra (bancada, cliente e admin).",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "verificar": "electron . --verificar",
+    "empacotar": "electron-builder --win nsis",
+    "empacotar:pasta": "electron-builder --win dir"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "br.com.lecsor.pipelinevideo",
+    "productName": "LECSOR Pipeline de Video",
+    "files": ["main.js", "preload.js", "servidor.js", "config.json", "janelas/**"],
+    "win": { "target": ["nsis"], "artifactName": "LECSOR-Pipeline-Video-${version}-${arch}.${ext}" },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "LECSOR Pipeline de Video"
+    }
+  }
+}

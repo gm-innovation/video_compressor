@@ -1,0 +1,10 @@
+{
+  "base": "http://127.0.0.1:8765",
+  "abrirAoIniciar": ["cliente", "admin", "bancada"],
+  "modoQuiosque": false,
+  "servidorLocal": {
+    "ligado": false,
+    "repo": "",
+    "portaApi": 8765
+  }
+}

@@ -29,3 +29,7 @@ analytics/saida/
 analytics/*.log
 auto.crt
 auto.key
+
+desktop/node_modules/
+desktop/dist/
+desktop-logs/

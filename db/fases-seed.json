@@ -85,8 +85,8 @@
     "numero": 10,
     "nome": "Fase 7 — Aplicativo Windows (Electron) para os tres sistemas",
     "prioridade": "P0",
-    "status": "pendente",
-    "criterio_aceite": "instalador .exe em maquina Windows limpa (sem Python, Node ou ffmpeg) com cliente e admin funcionando dentro do aplicativo e lado terra apontando para a VPS, com log de instalacao e desinstalacao",
-    "evidencia": ""
+    "status": "em andamento",
+    "criterio_aceite": "instalador .exe abre as tres superficies em maquina Windows limpa, com video ao vivo no cliente, PDF pelo admin e nenhuma credencial no renderer",
+    "evidencia": "ground/EVIDENCIA-fase7-desktop.md"
   }
 ]
