@@ -524,7 +524,18 @@ function telaProducao(t) {
   const selEmb = document.createElement('select'); selEmb.id = 'prod-embarcacao';
   selEmb.appendChild(Object.assign(document.createElement('option'), { value: '', textContent: 'todas as embarcações' }));
   const rot2 = document.createElement('div'); rot2.className = 'campo'; rot2.appendChild(Object.assign(document.createElement('label'), { textContent: 'Embarcação' })); rot2.appendChild(selEmb);
-  linha.appendChild(rot1); linha.appendChild(rot2);
+  const selCam = document.createElement('select'); selCam.id = 'prod-camera';
+  selCam.appendChild(Object.assign(document.createElement('option'), { value: '', textContent: 'todas as câmeras' }));
+  const rot3 = document.createElement('div'); rot3.className = 'campo';
+  rot3.appendChild(Object.assign(document.createElement('label'), { textContent: 'Câmera' })); rot3.appendChild(selCam);
+  const rot4 = document.createElement('div'); rot4.className = 'campo';
+  rot4.appendChild(Object.assign(document.createElement('label'), { textContent: 'Mostrar' }));
+  const selEnv = document.createElement('select'); selEnv.id = 'prod-so-enviando';
+  for (const [v, r] of [['0', 'todas'], ['1', 'só as que estão enviando']]) {
+    selEnv.appendChild(Object.assign(document.createElement('option'), { value: v, textContent: r }));
+  }
+  rot4.appendChild(selEnv);
+  linha.appendChild(rot1); linha.appendChild(rot2); linha.appendChild(rot3); linha.appendChild(rot4);
   const resumo = document.createElement('div'); resumo.className = 'sub'; resumo.id = 'prod-resumo';
   topo.appendChild(resumo);
   const grade = document.createElement('div'); grade.className = 'grade-cartoes'; grade.id = 'prod-cartoes';
@@ -537,7 +548,8 @@ function telaProducao(t) {
     const cab = document.createElement('div'); cab.className = 'cartao-cab';
     cab.innerHTML = '<strong>' + c.embarcacao + '</strong><span class="tag ' + (c.estado === 'enviando' ? 'ok' : 'off') + '">' + c.estado + '</span>';
     el.appendChild(cab);
-    const cam = document.createElement('div'); cam.className = 'cartao-camera'; cam.textContent = '📷 ' + c.camera;
+    const cam = document.createElement('div'); cam.className = 'cartao-camera';
+    cam.textContent = '📷 ' + c.camera + (c.sem_historico ? ' · enviando agora (sem minuto fechado ainda)' : '');
     el.appendChild(cam);
     const itens = [
       ['Média de compressão', c.compressao_medio_pct === null ? '—' : fmt(c.compressao_medio_pct) + '%'],
@@ -545,7 +557,8 @@ function telaProducao(t) {
       ['Banda economizada', (c.banda_economizada_mbps === null ? '—' : fmt(c.banda_economizada_mbps, 3) + ' Mbps'
         + (c.entrada_mbps ? ' (entrada ' + fmt(c.entrada_mbps, 3) + ')' : ''))],
       ['Horas de streaming', fmt(c.horas_streaming) + ' h'],
-      ['Disponibilidade', fmt(c.disponibilidade_pct, 2) + '% (' + fmt(c.minutos_no_ar, 0) + ' de ' + fmt(A.prodJanelaMin, 0) + ' min)'],
+      ['Disponibilidade', (c.disponibilidade_pct === null || c.disponibilidade_pct === undefined)
+        ? '—' : fmt(c.disponibilidade_pct, 2) + '% (' + fmt(c.minutos_no_ar, 0) + ' de ' + fmt(A.prodJanelaMin, 0) + ' min)'],
       ['Enviado no período', fmt(c.mb_enviados) + ' MB']
     ];
     const ul = document.createElement('div'); ul.className = 'cartao-numeros';
@@ -558,7 +571,10 @@ function telaProducao(t) {
   };
 
   const puxar = async () => {
-    const q = '?dias=' + encodeURIComponent(selDias.value) + (selEmb.value ? '&embarcacao=' + encodeURIComponent(selEmb.value) : '');
+    const q = '?dias=' + encodeURIComponent(selDias.value) +
+      (selEmb.value ? '&embarcacao=' + encodeURIComponent(selEmb.value) : '') +
+      (selCam.value ? '&camera=' + encodeURIComponent(selCam.value) : '') +
+      (selEnv.value === '1' ? '&so_enviando=1' : '');
     const r = await fetch('/api/producao' + q);
     if (!r.ok) { dizerResumo('sem permissão para ver a produção'); return; }
     const d = await r.json();
@@ -567,10 +583,19 @@ function telaProducao(t) {
     }
     const tr = (d.tempo_real && d.tempo_real.total) || {};
     A.prodJanelaMin = d.janela_efetiva_min || 0;
+    const antes = selCam.value;
+    selCam.innerHTML = '';
+    selCam.appendChild(Object.assign(document.createElement('option'), { value: '', textContent: 'todas as câmeras' }));
+    for (const [idc, nomec] of (d.cameras || [])) {
+      selCam.appendChild(Object.assign(document.createElement('option'), { value: idc, textContent: nomec }));
+    }
+    if (antes) selCam.value = antes;
     const horas = (d.janela_efetiva_min || 0) / 60;
     dizerResumo('janela pedida: ' + d.dias + ' dia(s) · o sistema já roda ' + fmt(horas, 1) + ' h (desde ' + (d.desde || '').replace('T', ' ') +
       ') — a disponibilidade usa esse período, não os ' + d.dias + ' dias cheios · ' +
-      (d.total.cards || 0) + ' câmera(s) com histórico · ' + fmt(d.total.horas_streaming) + ' h no ar · ' +
+      (d.so_enviando ? 'mostrando só as que estão enviando · ' : '') +
+      (d.camera ? 'câmera "' + (d.cards[0] ? d.cards[0].camera : d.camera) + '" · ' : '') +
+      (d.total.cards || 0) + ' câmera(s)' + (d.total.enviando ? ' (' + d.total.enviando + ' enviando)' : '') + ' · ' + fmt(d.total.horas_streaming) + ' h no ar · ' +
       'economia somada ' + fmt(d.total.banda_economizada_mbps, 3) + ' Mbps · ' +
       'agora: ' + (tr.enviando || 0) + ' enviando de ' + (tr.fluxos || 0) + ' no ar');
     limpar(grade);
@@ -582,6 +607,8 @@ function telaProducao(t) {
   };
   selDias.addEventListener('change', puxar);
   selEmb.addEventListener('change', puxar);
+  selCam.addEventListener('change', puxar);
+  selEnv.addEventListener('change', puxar);
   puxar();
   if (timerProducao) { clearInterval(timerProducao); timerProducao = null; }
   timerProducao = setInterval(() => { if (A.tela === 'producao') puxar(); }, 30000);
@@ -658,7 +685,10 @@ function telaEnvios(t) {
   t.appendChild(caixa);
 
   const legenda = document.createElement('div'); legenda.className = 'sub';
-  legenda.textContent = 'Entrada = tamanho do seu vídeo original · Saída = tamanho depois de comprimir · ' +
+  legenda.textContent = 'Fonte viva (webcam do notebook ou teste sintético) transmite CONTINUAMENTE, igual à operação: ' +
+    'a imagem é a real da câmera e o envio só para quando você clicar em "parar". ' +
+    'Arquivo e link continuam com o caminho de comprimir, medir e publicar. ' +
+    'Entrada = tamanho do seu vídeo original · Saída = tamanho depois de comprimir · ' +
     'Compressão = quanta banda foi economizada · Tempo = quanto a compressão levou · Qualidade = semelhança com o ' +
     'original (1,000 = idêntico) · No ar = desde quando o vídeo comprimido está publicado.' +
         ' · PISO: compressão de pelo menos 73% e qualidade de pelo menos 0,9733 nominal, com margem de 0,002 ' +
@@ -698,7 +728,10 @@ function telaEnvios(t) {
     arquivo.parentElement.style.display = ehArquivo ? '' : 'none';
     url.parentElement.style.display = ehLink ? '' : 'none';
     rv.style.display = modo.value === 'camera' ? '' : 'none';
-    rs.style.display = ehViva ? '' : 'none';
+    rs.style.display = 'none';            // fonte viva: envio CONTÍNUO, sem tempo determinado
+    // streaming não tem "comprimir e medir" nem "publicar depois": é ao vivo, direto
+    btnComprimir.textContent = ehViva ? 'Transmitir ao vivo (contínuo)' : '1) Comprimir e medir';
+    btnPublicar.style.display = ehViva ? 'none' : '';
     if (modo.value === 'camera') preencherDispositivos();
   };
   modo.onchange = () => { trocarModo(); guardar(); };
@@ -796,20 +829,15 @@ function telaEnvios(t) {
     if (modo.value === 'camera' || modo.value === 'sintetica') {
       const tipo = modo.value;
       const nomeFonte = tipo === 'camera' ? (dispositivo.value || 'webcam do notebook') : 'teste sintético';
-      dizer('capturando ' + segundos.value + ' s de ' + nomeFonte + '…');
-      fetch('/api/ingestao/capturar', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tipo: tipo, dispositivo: dispositivo.value, segundos: Number(segundos.value) || 10,
-          fps: Number(qf) || 30, rotulo: r || nomeFonte }) })
+      dizer('ligando o envio contínuo de ' + nomeFonte + '… (sem tempo determinado: só para quando você mandar)');
+      fetch('/api/ingestao/ao-vivo', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tipo: tipo, dispositivo: dispositivo.value, fps: Number(qf) || 30,
+          rotulo: r || nomeFonte }) })
         .then(async (x) => ({ s: x.status, j: await x.json() }))
-        .then(async ({ s, j }) => {
-          if (s !== 201) { dizer('falhou ao capturar: ' + (j.erro || s)); return; }
-          dizer('capturei ' + j.segundos + ' s de ' + j.dispositivo + ' (' + j.resolucao + ' · ' + Math.round(j.bitrate_kbps) + ' kbps). Comprimindo…');
-          const x = await fetch('/api/ingestao/comprimir', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ arquivo: j.nome, rotulo: r || nomeFonte, qualidade: b, fps: qf, audio: aud }) });
-          const k = await x.json();
-          if (x.status !== 201) { dizer('falhou ao comprimir: ' + (k.erro || x.status)); return; }
-          A.ultimaCompressao = k.id;
-          dizer(resumo(k));
+        .then(({ s, j }) => {
+          if (s !== 201) { dizer('falhou ao transmitir: ' + (j.erro || s)); return; }
+          dizer('NO AR: "' + (j.rotulo || nomeFonte) + '" enviando sem parar (alvo ' + j.alvo + '). ' +
+            'Acompanhe em Tempo real e Produção; para parar, use "parar" na linha abaixo.');
           carregar();
         });
       return;

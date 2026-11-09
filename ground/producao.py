@@ -281,7 +281,8 @@ def tempo_real() -> dict:
             "fluxo_id": d["fluxo_id"], "rotulo": d.get("rotulo") or d["fluxo_id"],
             "camera_id": cam.get("id") or d.get("camera_id") or d["fluxo_id"],
             "camera_rotulo": cam.get("rotulo") or d.get("rotulo") or d["fluxo_id"],
-            "embarcacao_id": cam.get("embarcacao_id") or "",
+            "embarcacao_id": cam.get("embarcacao_id") or d.get("embarcacao_id") or "",
+            "tipo": d.get("tipo"),
             "estado": "enviando" if vivo else "parado",
             "idade_s": round(idade, 1) if idade is not None else None,
             "entrada_mbps": round(entrada, 3), "saida_mbps": round(saida, 3),
@@ -312,16 +313,21 @@ def tempo_real() -> dict:
 
 
 # --------------------------------------------------------------------------- 30 dias / cards
-def resumo_producao(*, dias: int = 30, embarcacao_id: str | None = None, camera_id: str | None = None) -> dict:
+def resumo_producao(*, dias: int = 30, embarcacao_id: str | None = None, camera_id: str | None = None,
+                    so_enviando: bool = False) -> dict:
     """Cards de producao: por embarcacao e por camera, com a janela pedida (padrao 30 dias).
 
-    Duas regras que o dono cobrou:
+    Regras que o dono cobrou:
 
     - **entrada e' a da FONTE ORIGINAL**: vem do proprio minuto fechado (`entrada_kbps`, que o rollup
       ja corrige pelo registro da compressao). Ler a ultima ingestao daria o arquivo JA comprimido e
       a economia apareceria como zero.
     - **disponibilidade e' proporcional ao periodo que o sistema realmente rodou**, nunca aos 30 dias
       cheios: se o historico comeca hoje, o denominador vai do primeiro minuto ate agora.
+    - **fonte que esta enviando AGORA aparece mesmo sem historico fechado** (webcam ao vivo, por
+      exemplo): senao o rotulo criado pelo dono nao apareceria em lugar nenhum e ele nao teria como
+      saber se a camera esta no ar.
+    - filtros: por embarcacao, por camera (id OU rotulo) e `so_enviando` (apenas quem esta enviando).
     """
     garantir_tabelas()
     agora_dt = datetime.now(FUSO)
@@ -352,15 +358,17 @@ def resumo_producao(*, dias: int = 30, embarcacao_id: str | None = None, camera_
     comeco = comeco_pedido
     if primeiro:
         try:
-            primeiro_dt = datetime.fromisoformat(primeiro).replace(tzinfo=FUSO) if len(primeiro) <= 16 \
-                else datetime.fromisoformat(primeiro)
+            primeiro_dt = datetime.fromisoformat(primeiro) if len(primeiro) <= 16 else datetime.fromisoformat(primeiro)
+            if primeiro_dt.tzinfo is None:
+                primeiro_dt = primeiro_dt.replace(tzinfo=FUSO)
             if primeiro_dt > comeco:
                 comeco = primeiro_dt
         except Exception:
             pass
     minutos_janela = max(1, int((agora_dt - comeco).total_seconds() // 60))
-    ao_vivo = {f["fluxo_id"]: f["estado"] for f in tempo_real()["fluxos"]}
-    cards = []
+    vivo = tempo_real()
+    ao_vivo = {f["fluxo_id"]: f for f in vivo["fluxos"]}
+    cards, por_fluxo = [], {}
     for l in linhas:
         segundos = l["segundos"] or 0
         mb = l["mb"] or 0
@@ -368,11 +376,10 @@ def resumo_producao(*, dias: int = 30, embarcacao_id: str | None = None, camera_
         entrada_mbps = round((l["entrada_medio"] or 0) / 1000, 3) if l["entrada_medio"] else None
         cam = cameras.get(l["camera_id"]) or {}
         emb = embarcacoes.get(l["embarcacao_id"]) or {}
-        disponibilidade = round(min(100.0, (l["minutos"] or 0) / minutos_janela * 100), 3)
-        cards.append({
+        card = {
             "embarcacao_id": l["embarcacao_id"], "embarcacao": emb.get("nome") or l["embarcacao_id"] or "—",
             "camera_id": l["camera_id"], "camera": cam.get("rotulo") or l["camera_id"],
-            "fluxo_id": l["fluxo_id"],
+            "fluxo_id": l["fluxo_id"], "tipo": (ao_vivo.get(l["fluxo_id"]) or {}).get("tipo"),
             "compressao_medio_pct": (round(l["compressao_medio"], 2)
                                      if (l["compressao_medio"] is not None and l["compressao_medio"] >= 0) else None),
             "entrada_mbps": entrada_mbps,
@@ -382,10 +389,37 @@ def resumo_producao(*, dias: int = 30, embarcacao_id: str | None = None, camera_
             "horas_streaming": round(segundos / 3600, 2),
             "mb_enviados": round(mb, 2),
             "minutos_no_ar": l["minutos"] or 0,
-            "disponibilidade_pct": disponibilidade,
+            "disponibilidade_pct": round(min(100.0, (l["minutos"] or 0) / minutos_janela * 100), 3),
             "de": l["de"], "ate": l["ate"],
-            "estado": ao_vivo.get(l["fluxo_id"], "parado"),
+            "estado": (ao_vivo.get(l["fluxo_id"]) or {}).get("estado", "parado"),
+        }
+        cards.append(card); por_fluxo[l["fluxo_id"]] = card
+    # quem esta enviando AGORA e ainda nao tem minuto fechado (fonte viva recem-ligada)
+    for f in vivo["fluxos"]:
+        if f["fluxo_id"] in por_fluxo or f.get("estado") != "enviando":
+            continue
+        cam = cameras.get(f.get("camera_id") or "") or {}
+        emb = embarcacoes.get(f.get("embarcacao_id") or cam.get("embarcacao_id") or "") or {}
+        cards.append({
+            "embarcacao_id": f.get("embarcacao_id") or cam.get("embarcacao_id") or "",
+            "embarcacao": emb.get("nome") or f.get("embarcacao_id") or "—",
+            "camera_id": f.get("camera_id") or f["fluxo_id"],
+            "camera": f.get("camera_rotulo") or cam.get("rotulo") or f.get("rotulo") or f["fluxo_id"],
+            "fluxo_id": f["fluxo_id"], "tipo": f.get("tipo"), "compressao_medio_pct": None,
+            "entrada_mbps": None, "banda_utilizada_mbps": f.get("saida_mbps") or None,
+            "banda_economizada_mbps": None,
+            "horas_streaming": round((f.get("segundos_no_ar") or 0) / 3600, 2),
+            "mb_enviados": round(f.get("mb_enviados") or 0, 2), "minutos_no_ar": 0,
+            "disponibilidade_pct": None, "de": None, "ate": None, "estado": "enviando",
+            "sem_historico": True,
         })
+    if camera_id:
+        alvo = camera_id.lower()
+        cards = [c for c in cards if alvo in str(c["camera_id"]).lower() or alvo in str(c["camera"]).lower()]
+    if embarcacao_id:
+        cards = [c for c in cards if c["embarcacao_id"] == embarcacao_id]
+    if so_enviando:
+        cards = [c for c in cards if c["estado"] == "enviando"]
     cards.sort(key=lambda x: (x["embarcacao"], x["camera"]))
     tot = {
         "cards": len(cards),
@@ -393,12 +427,15 @@ def resumo_producao(*, dias: int = 30, embarcacao_id: str | None = None, camera_
         "mb_enviados": round(sum(c["mb_enviados"] for c in cards), 2),
         "banda_utilizada_mbps": round(sum(c["banda_utilizada_mbps"] or 0 for c in cards), 3),
         "banda_economizada_mbps": round(sum(c["banda_economizada_mbps"] or 0 for c in cards), 3),
+        "enviando": sum(1 for c in cards if c["estado"] == "enviando"),
     }
-    return {"dias": int(dias), "desde": comeco.strftime("%Y-%m-%dT%H:%M"),
-            "janela_efetiva_dias": round(minutos_janela / 1440, 3), "janela_efetiva_min": minutos_janela,
-            "primeiro_minuto": primeiro, "agora": agora_dt.strftime("%Y-%m-%dT%H:%M"),
-            "cards": cards, "total": tot,
+    return {"dias": int(dias), "desde": comeco.strftime("%Y-%m-%dT%H:%M"), "so_enviando": bool(so_enviando),
+            "camera": camera_id, "janela_efetiva_dias": round(minutos_janela / 1440, 3),
+            "janela_efetiva_min": minutos_janela, "primeiro_minuto": primeiro,
+            "agora": agora_dt.strftime("%Y-%m-%dT%H:%M"), "cards": cards, "total": tot,
             "embarcacoes": [{"id": k, "nome": v.get("nome")} for k, v in embarcacoes.items()],
+            "cameras": sorted({(c["camera_id"], c["camera"]) for c in cards
+                               if (c["camera"] or "").strip()}, key=lambda x: str(x[1])),
             "nota": ("disponibilidade = minutos no ar / minutos do periodo que o sistema ja rodou "
                      "(nao dos 30 dias cheios quando o historico e' mais curto)")}
 

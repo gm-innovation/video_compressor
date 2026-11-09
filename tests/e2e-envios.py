@@ -8,7 +8,7 @@
 5. o que o navegador recebe nao tem endereco interno nem credencial.
 """
 from __future__ import annotations
-import json, os, re, subprocess, sys, time, urllib.request
+import json, os, re, subprocess, sys, time, urllib.parse, urllib.request
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -287,6 +287,25 @@ def main() -> int:
     st, err = _pedir("/api/ingestao/capturar", {"tipo": "televisao"})
     checar(st == 422, "captura de uma fonte desconhecida é recusada com 422")
 
+    # --- 10) envio CONTÍNUO de fonte viva + filtros da tela Produção
+    st, vivo = _pedir("/api/ingestao/ao-vivo", {"tipo": "sintetica", "fps": 30, "rotulo": "vivo e2e (sintetico)"})
+    checar(st == 201 and vivo.get("fluxo_id"), f"liguei um envio CONTÍNUO de fonte viva ({vivo.get('fluxo_id')} · alvo {vivo.get('alvo')})")
+    if st == 201:
+        time.sleep(9)
+        prod = http("/api/producao?dias=30&so_enviando=1")
+        meus = [c for c in prod["cards"] if c["fluxo_id"] == vivo["fluxo_id"]]
+        checar(bool(meus) and meus[0]["estado"] == "enviando",
+               "o envio contínuo aparece na Produção como 'enviando' com o rótulo que eu dei ({})".format(
+                   (meus[0]["camera"] if meus else "?")))
+        checar(all(c["estado"] == "enviando" for c in prod["cards"]),
+               "o filtro 'só as que estão enviando' não devolve câmera parada ({} card(s))".format(prod["total"]["cards"]))
+        filtrado = http("/api/producao?dias=30&camera=" + urllib.parse.quote(vivo["fluxo_id"]))
+        checar(filtrado["total"]["cards"] <= 2 and any(c["fluxo_id"] == vivo["fluxo_id"] for c in filtrado["cards"]),
+               "o filtro por câmera traz só a câmera pedida ({} card(s))".format(filtrado["total"]["cards"]))
+        _pedir("/api/ingestao/parar", {"id": vivo["id"], "remover": True})
+    st, err = _pedir("/api/ingestao/ao-vivo", {"tipo": "webcam-inventada"})
+    checar(st == 422, "envio contínuo de fonte desconhecida é recusado com 422")
+
     # --- 8) produção (cards de 30 dias) e link/latência em tempo real
     sys.path.insert(0, str(RAIZ / "ground"))
     import producao as prod
@@ -356,10 +375,16 @@ def main() -> int:
             pg.click("button[data-tela='producao']")
             pg.wait_for_timeout(4000)
             prod_txt = pg.inner_text("#prod-resumo")
-            checar("câmera(s) com histórico" in prod_txt or "camera(s) com histórico" in prod_txt.lower(),
+            checar(("câmera(s)" in prod_txt or "camera(s)" in prod_txt.lower()) and "janela pedida" in prod_txt,
                    "a tela Produção mostra o resumo do período")
             checar(pg.evaluate("(() => document.querySelector('#prod-dias').options.length)()") >= 4,
                    "a tela Produção tem filtro de período")
+            checar(pg.evaluate("(() => !!document.querySelector('#prod-camera') && !!document.querySelector('#prod-so-enviando'))()"),
+                   "a tela Produção tem filtro por câmera e por 'só as que estão enviando'")
+            pg.select_option("#prod-so-enviando", "1")
+            pg.wait_for_timeout(4000)
+            checar("só as que estão enviando" in pg.inner_text("#prod-resumo"),
+                   "escolher 'só as que estão enviando' filtra os cards de verdade")
             pg.screenshot(path=str(RAIZ / "ground" / "print-admin-producao.png"), full_page=True)
             pg.click("button[data-tela='tempo']")
             pg.wait_for_timeout(4000)

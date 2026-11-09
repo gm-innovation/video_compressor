@@ -32,7 +32,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ingestao import iniciar as ing_iniciar, parar as ing_parar, listar as ing_listar  # noqa: E402
-from ingestao import capturar as ing_capturar, listar_dispositivos as ing_dispositivos
+from ingestao import capturar as ing_capturar, listar_dispositivos as ing_dispositivos, ao_vivo as ing_ao_vivo
 import etapas as etapas_pipeline  # noqa: E402
 import producao as producao_pipeline  # noqa: E402
 from urllib.parse import parse_qs, unquote, urlparse
@@ -572,7 +572,8 @@ class Handler(SimpleHTTPRequestHandler):
             dados = producao_pipeline.resumo_producao(
                 dias=dias,
                 embarcacao_id=(q.get("embarcacao") or [None])[0],
-                camera_id=(q.get("camera") or [None])[0])
+                camera_id=(q.get("camera") or [None])[0],
+                so_enviando=(q.get("so_enviando") or ["0"])[0] in ("1", "sim", "true"))
             dados["tempo_real"] = producao_pipeline.tempo_real()
             return self._json(200, dados, {"Cache-Control": "no-store"})
         if rota in ("/api/dispositivos", "/api/envios/dispositivos"):
@@ -745,6 +746,21 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(422, r)
             auditar(u, "envio_video", f"arquivo {nome} ({gravados} bytes) -> {r['fluxo_id']}", self.client_address[0])
             return self._json(201, {"ok": True, "bytes": gravados, **r}, {"Cache-Control": "no-store"})
+        if rota in ("/api/ingestao/ao-vivo", "/api/envios/ao-vivo"):
+            # STREAMING CONTINUO de uma fonte viva (webcam do notebook / fonte sintetica):
+            # sem duracao determinada, igual a operacao — so para quando mandarem parar.
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so operacao e administrador transmitem ao vivo"})
+            d = self._corpo()
+            r = ing_ao_vivo(tipo=str(d.get("tipo") or "camera"),
+                            dispositivo=(str(d.get("dispositivo") or "").strip() or None),
+                            resolucao=str(d.get("resolucao") or "1920x1080"), fps=int(d.get("fps") or 30),
+                            rotulo=str(d.get("rotulo") or ""), fluxo_id=(str(d.get("fluxo_id") or "").strip() or None),
+                            bitrate=str(d.get("bitrate") or "auto"))
+            if "erro" in r:
+                return self._json(422, r)
+            auditar(u, "transmitir_ao_vivo", f"{r['fluxo_id']} ({r['alvo']})", self.client_address[0])
+            return self._json(201, r, {"Cache-Control": "no-store"})
         if rota in ("/api/ingestao/capturar", "/api/envios/capturar"):
             if not (self._pode_operar(u) or self._local()):
                 return self._json(403, {"erro": "so operacao e administrador capturam video de teste"})

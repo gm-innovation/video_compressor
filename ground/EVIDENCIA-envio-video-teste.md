@@ -294,3 +294,29 @@ Erro de base corrigido no caminho: `registrar_compressao()` montava o INSERT com
 valores** (`17 values for 18 columns`) e a exceção era engolida por um `try/except` — a compressão
 media certo mas **não ia para o banco** (id vinha `None` e "publicar" respondia
 "compressao nao encontrada"). Corrigido o placeholder que faltava.
+
+## Envio CONTÍNUO de fonte viva, rótulo visível e filtros na Produção (09/11/2026)
+
+O dono cortou o meio-caminho: "Comprimir e medir"/"Publicar no ar" **não valem para streaming** —
+ele quer envio **contínuo, como na operação**, e a **imagem real** da webcam. Também cobrou: o
+**rótulo** criado ao definir a fonte não aparecia em lugar nenhum, e a tela **Produção** precisava
+de filtro por câmera e de "só as que estão enviando".
+
+- `POST /api/ingestao/ao-vivo` (`ingestao.ao_vivo()`) liga o envio **sem duração determinada**: o
+  ffmpeg lê a webcam (`-f dshow`) ou o gerador (`testsrc2`) e publica em SRT **até alguém parar** —
+  sem `-re`, sem `-stream_loop`, sem `-t`. A fonte vai para o banco como `dshow:<dispositivo>`.
+- No painel **Enviar vídeo**, escolhendo webcam/sintético o botão passa a ser **"Transmitir ao vivo
+  (contínuo)"** (o campo de segundos desaparece e "Publicar no ar" sai da tela); a legenda diz que a
+  imagem é a real da câmera e que o envio só para quando o dono mandar.
+- `Produção` ganhou os filtros **Câmera** e **Mostrar (todas / só as que estão enviando)** e o resumo
+  declara o filtro em vigor. Fonte que está enviando **agora** aparece como card mesmo sem minuto
+  fechado (marcada "enviando agora (sem minuto fechado ainda)") — era por isso que o rótulo sumia.
+- `tempo_real()` passou a informar o `tipo` da fonte (camera/sintetica/arquivo/url).
+
+Medido agora, pela tela, com a webcam do notebook no ar de forma contínua:
+
+    fluxo                vivo-webcam-bancada-ao-vivo · rótulo "Webcam bancada (ao vivo)" · dshow:ACER HD User Facing
+    envio contínuo       30,1 fps · 1,594 Mbps · 12,37 MB enviados · sem duração determinada
+    imagem que CHEGA     YAVG 141,9 · YMIN 23 · YMAX 248 (tela preta daria YAVG ~16) — imagem real, não preta
+    Produção (só enviando) 1 card: embarcação PSV Exemplo (demo) · câmera "Webcam bancada (ao vivo)" · 3,36% (12 de 357 min)
+    app do cliente       janela "Webcam bancada (ao vivo)" tocando a imagem real da sala

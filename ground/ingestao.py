@@ -124,12 +124,19 @@ def sonda(fonte: str) -> dict:
 
 def _comando(fonte: str, fluxo_id: str, bitrate: str, codec: str, repetir: bool, tipo: str,
              srt_host: str, srt_port: int, audio: bool = False, fonte2: str | None = None,
-             fps: int = 30, arquivo_saida: str | None = None, copiar: bool = False) -> list[str]:
+             fps: int = 30, arquivo_saida: str | None = None, copiar: bool = False,
+             dispositivo: str | None = None, resolucao: str = "1920x1080") -> list[str]:
     destino = (f"srt://{srt_host}:{srt_port}?mode=caller&latency=200&pkt_size=1316&streamid=publish:{fluxo_id}")
-    cmd = ["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "warning", "-re"]
-    if tipo == "arquivo" and repetir:
-        cmd += ["-stream_loop", "-1"]
-    cmd += ["-i", fonte]
+    cmd = ["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "warning"]
+    if tipo in ("camera", "sintetica"):
+        # FONTE VIVA: a webcam (ou o gerador) entrega no tempo real — nada de -re nem de laço,
+        # o envio e' CONTINUO, igual a operacao. Sem -t: so para quando o dono mandar parar.
+        cmd += _args_fonte_viva(tipo, dispositivo, resolucao, fps)
+    else:
+        cmd += ["-re"]
+        if tipo == "arquivo" and repetir:
+            cmd += ["-stream_loop", "-1"]
+        cmd += ["-i", fonte]
     if fonte2 and audio:   # yt-dlp entrega video e audio em enderecos separados: junta os dois
         cmd += ["-i", fonte2, "-map", "0:v:0", "-map", "1:a:0?"]
     if copiar:
@@ -165,7 +172,8 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
             codec: str = "libx264", repetir: bool = True, tipo: str | None = None, audio: bool = False,
             embarcacao_id: str = "psv-exemplo", srt_host: str = "127.0.0.1", srt_port: int = 8890,
             registrar_camera: bool = True, abrir_log: bool = True, fps: int = 30,
-            guardar_arquivo: bool = False, copiar: bool = False) -> dict:
+            guardar_arquivo: bool = False, copiar: bool = False,
+            dispositivo: str | None = None, resolucao: str = "1920x1080") -> dict:
     """Sobe a ingestao. Devolve o registro (com id) para a tela acompanhar."""
     garantir_schema()
     ENVIOS.mkdir(parents=True, exist_ok=True); LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -190,9 +198,19 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
         fonte = direto              # endereco do CDN (so vai para o log)
         if titulo and (not rotulo or rotulo == "vídeo por link"):
             rotulo = titulo
-    s = sonda(fonte)
-    if not bitrate or bitrate == "auto":
-        bitrate = alvo_automatico(s.get("bitrate_kbps"))
+    if tipo in ("camera", "sintetica"):
+        # fonte viva: nao ha arquivo para sondar. A resolucao vem do pedido e o alvo e' fixo
+        # (o numero medido passa a ser o do envio CONTINUO, lido do -progress do ffmpeg).
+        s = {"resolucao": (resolucao or "1920x1080") if tipo == "sintetica" else (dispositivo or "webcam"),
+             "fps": float(fps or 30), "bitrate_kbps": None,
+             "dispositivo": (dispositivo or DISPOSITIVO_PADRAO) if tipo == "camera" else "testsrc2"}
+        repetir = False
+        if not bitrate or bitrate == "auto":
+            bitrate = "2500k" if tipo == "sintetica" else "1500k"
+    else:
+        s = sonda(fonte)
+        if not bitrate or bitrate == "auto":
+            bitrate = alvo_automatico(s.get("bitrate_kbps"))
     # avisa quando o alvo escolhido gasta MAIS que a entrada (o clipe sai maior do que entrou)
     aviso = ""
     ent = s.get("bitrate_kbps")
@@ -202,7 +220,8 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
                  f"Para comprimir, use alvo abaixo da entrada (ex.: {alvo_automatico(ent)}) — o numero medido e o total do fluxo (video + audio + MPEG-TS).")
     arquivo_saida = str(ENVIOS / "log" / f"{fluxo_id}-{int(time.time())}.ts") if guardar_arquivo else None
     cmd = _comando(fonte, fluxo_id, bitrate, codec, repetir, tipo, srt_host, srt_port, audio=audio,
-                   fonte2=fonte2, fps=fps, arquivo_saida=arquivo_saida, copiar=copiar)
+                   fonte2=fonte2, fps=fps, arquivo_saida=arquivo_saida, copiar=copiar,
+                   dispositivo=dispositivo, resolucao=resolucao)
     log = LOG_DIR / f"{fluxo_id}-{int(time.time())}.log"
     saida = open(log, "ab", buffering=0) if abrir_log else subprocess.DEVNULL
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=saida, cwd=str(RAIZ))
@@ -210,7 +229,10 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
         cur = c.execute("""INSERT INTO ingestoes (fluxo_id, camera_id, rotulo, fonte, tipo, repetir, codec,
               bitrate_alvo, resolucao, fps_nativo, bitrate_entrada_kbps, estado, pid, log, criado_em, atualizado_em)
               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (fluxo_id, camera_id, rotulo or slug, origem_pagina or fonte, tipo, 1 if repetir else 0, codec, bitrate,
+            (fluxo_id, camera_id, rotulo or slug,
+             origem_pagina or (f"dshow:{dispositivo or DISPOSITIVO_PADRAO}" if tipo == "camera"
+                               else (f"lavfi:testsrc2:{resolucao}" if tipo == "sintetica" else fonte)),
+             tipo, 1 if repetir else 0, codec, bitrate,
              s.get("resolucao"), s.get("fps"), s.get("bitrate_kbps"), "iniciando", proc.pid, str(log), agora(), agora()))
         ident = cur.lastrowid
         if registrar_camera:
@@ -415,3 +437,23 @@ def capturar(*, tipo: str = "camera", dispositivo: str | None = None, resolucao:
             "dispositivo": (dispositivo or DISPOSITIVO_PADRAO) if tipo == "camera" else "testsrc2",
             "segundos": round(time.time() - t0, 1), "resolucao": s.get("resolucao"), "fps": s.get("fps"),
             "mb": round(destino.stat().st_size / 1e6, 2), "bitrate_kbps": s.get("bitrate_kbps")}
+
+
+def ao_vivo(*, tipo: str = "camera", dispositivo: str | None = None, resolucao: str = "1920x1080",
+            fps: int = 30, rotulo: str | None = None, fluxo_id: str | None = None, bitrate: str = "auto",
+            embarcacao_id: str = "psv-exemplo", srt_host: str = "127.0.0.1", srt_port: int = 8890) -> dict:
+    """""Envio CONTINUO de uma fonte viva (webcam do notebook ou fonte sintetica), igual a operacao.
+
+    Sem duracao determinada e sem laço de arquivo: o ffmpeg le a camera e publica em SRT ate
+    alguem parar. A imagem e a REAL da webcam (nao ha clipe, nao ha tela preta sintetizada).
+    """
+    if tipo not in ("camera", "sintetica"):
+        return {"erro": "fonte ao vivo invalida: use 'camera' (webcam) ou 'sintetica'"}
+    if tipo == "camera" and not (dispositivo or "").strip():
+        disp = listar_dispositivos()
+        dispositivo = disp.get("padrao") or DISPOSITIVO_PADRAO
+    nome = (rotulo or "").strip() or ("webcam do notebook" if tipo == "camera" else "teste sintetico")
+    slug_vivo = re.sub(r"[^a-z0-9]+", "-", unicodedata.normalize("NFKD", nome.lower())).strip("-")[:30].strip("-")
+    return iniciar(f"live:{tipo}", rotulo=nome, fluxo_id=fluxo_id or f"vivo-{slug_vivo or tipo}",
+                   bitrate=bitrate, tipo=tipo, repetir=False, dispositivo=dispositivo, resolucao=resolucao,
+                   fps=fps, embarcacao_id=embarcacao_id, srt_host=srt_host, srt_port=srt_port)
