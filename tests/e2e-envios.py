@@ -324,6 +324,14 @@ def main() -> int:
         checar(bool(meus) and "Bancada" in meus[0]["embarcacao"],
                "fonte de teste vivo cai na BANCADA de testes, não no PSV de exemplo ({})".format(
                    meus[0]["embarcacao"] if meus else "?"))
+        # entrada/compressao/economia de uma fonte CRUA: sem fonte comprimida, vale o bruto equivalente
+        checar(bool(meus) and (meus[0].get("entrada_mbps") or 0) > 300
+               and (meus[0].get("banda_economizada_mbps") or 0) > 0
+               and "bruto" in (meus[0].get("entrada_fonte") or ""),
+               "fonte crua mostra entrada (bruto), compressão e banda economizada ({})".format(
+                   "entrada {} Mbps bruto · economia {} Mbps · compressão {}%".format(
+                       meus[0].get("entrada_mbps"), meus[0].get("banda_economizada_mbps"),
+                       meus[0].get("compressao_medio_pct")) if meus else "?"))
         _pedir("/api/ingestao/parar", {"id": r1["id"], "remover": True})
     st3, r3 = _pedir("/api/ingestao/ao-vivo", {"tipo": "camera", "dispositivo": "Camera Que Nao Existe",
                                                "fps": 30, "rotulo": "teste-falha-e2e"})
