@@ -165,16 +165,25 @@ function desenharCaixas(cameraId) {
   const ag = S.agentesPorCamera[cameraId];
   if (!ag) return;
   const jan = $('palco').querySelector(`[data-cam="${cameraId}"]`);
+  /* Linha e zonas vêm em fração do quadro (0..1) desenhadas pelo operador: o SVG estica junto
+     com a janela, então a marca aparece exatamente onde foi desenhada. */
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 100 56.25');
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.setAttribute('class', 'camada-ia');
+  const criar = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+  for (const z of (ag.zonas || [])) {
+    svg.appendChild(criar('rect', { x: z.x * 100, y: z.y * 56.25, width: z.l * 100, height: z.a * 56.25,
+                                    fill: 'rgba(239,68,68,.14)', stroke: '#ef4444', 'stroke-width': .35 }));
+  }
   for (const l of (ag.linhas || [])) {
     if (!l || !l.a || !l.b) continue;
-    const marca = document.createElement('div');
-    marca.className = 'linha-ia';
-    const horizontal = l.a[1] === l.b[1];
-    if (horizontal) { marca.style.left = '0'; marca.style.right = '0'; marca.style.top = '50%'; marca.style.height = '2px'; }
-    else { marca.style.top = '0'; marca.style.bottom = '0'; marca.style.left = '50%'; marca.style.width = '2px';
-           marca.style.background = 'repeating-linear-gradient(0deg,var(--azul) 0 6px,transparent 6px 12px)'; }
-    alvo.appendChild(marca);
+    const e = criar('line', { x1: l.a[0] * 100, y1: l.a[1] * 56.25, x2: l.b[0] * 100, y2: l.b[1] * 56.25,
+                              stroke: '#38bdf8', 'stroke-width': .5, 'stroke-dasharray': '2 1.5', 'class': 'linha-ia' });
+    svg.appendChild(e);
   }
+  alvo.appendChild(svg);
   for (const c of (ag.caixas || [])) {
     const d = document.createElement('div');
     d.className = 'caixa';
@@ -187,7 +196,10 @@ function desenharCaixas(cameraId) {
   if (ultima && jan) {
     const selo = document.createElement('span');
     selo.className = 'selo-ia';
-    selo.innerHTML = `👤 <b>${(ag.caixas || []).length}</b> agora · entrou <b>${ultima.entrou}</b> · saiu <b>${ultima.saiu}</b>`;
+    const idade = Number(ag.caixas_idade || 0);
+    const quando = idade >= 2 ? `há ${idade.toFixed(0)}s` : 'agora';
+    selo.innerHTML = `👤 <b>${(ag.caixas || []).length}</b> ${quando} · entrou <b>${ultima.entrou}</b> · saiu <b>${ultima.saiu}</b>`;
+    if (idade >= 5) selo.classList.add('ia-velha');   // deteccao antiga: mostra, mas apagada
     jan.appendChild(selo);
   }
 }

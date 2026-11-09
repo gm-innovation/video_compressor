@@ -104,3 +104,7 @@ button.principal{background:var(--marca);color:#fff;border:0;border-radius:9px;p
 .agente-linha{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--texto2);margin:0 0 10px}
 .agente-linha .sinal{width:8px;height:8px;border-radius:50%;background:var(--ruim)}
 .agente-linha .sinal.noar{background:var(--ok)}
+
+/* Deteccao que ja passou de 5 s: a marca continua na tela, mas apagada (nao finge ao vivo). */
+.selo-ia.ia-velha { opacity: .55; }
+.caixas svg.camada-ia line.linha-ia { opacity: .85; }

@@ -64,6 +64,12 @@ class Agente:
                       for z in (perfil.get("zonas") or [])]
         self.eventos_pendentes: list[dict] = []
         self.erros = 0
+        self.marcas: dict | None = None        # linha e zonas desenhadas pelo operador na tela
+        self.zonas_fracao: list[dict] = []     # zonas em fracao do quadro, do jeito que vao para a tela
+        self.caixas_recentes: list[dict] = []  # ultima deteccao vista (a tela nao pisca entre quadros)
+        self.caixas_em = 0.0                   # instante da ultima deteccao, em segundos do agente
+        self.ultimas_marcas_em = 0.0
+        self.linha_atual: dict | None = self.p.get("linha")   # em pixel (perfil) ou None ate converter a marca
 
     # ---------------------------------------------------------------- envio
     def _post(self, rota: str, corpo: dict) -> bool:
@@ -89,7 +95,8 @@ class Agente:
         self.eventos_pendentes = eventos + self.eventos_pendentes
         return 0
 
-    def enviar_contagem(self, quadros: int, analisados: int, tempo_s: float, caixas: list, estado: str) -> bool:
+    def enviar_contagem(self, quadros: int, analisados: int, tempo_s: float, caixas: list, estado: str,
+                        idade_caixas: float = 0.0) -> bool:
         c = self.contador
         if c is None:
             entrou = saiu = pico = 0
@@ -102,8 +109,53 @@ class Agente:
             "fps": round(analisados / tempo_s, 2) if tempo_s > 0 else 0.0,
             "quadros": quadros, "entrou": entrou, "saiu": saiu, "pico": pico,
             "janela_inicio": self.inicio_iso, "janela_fim": agora(),
-            "caixas": caixas, "linhas": [self.p.get("linha")] if self.p.get("linha") else [],
+            "caixas": caixas, "caixas_idade": idade_caixas,
+            "linhas": [self.linha_atual] if self.linha_atual else [], "zonas": self.zonas_fracao,
             "erros": self.erros})
+
+    # ---------------------------------------------------------------- marcas do operador
+    def buscar_marcas(self) -> None:
+        """Le da API a linha e as zonas que o operador desenhou (em fracao do quadro)."""
+        if self.sem_api:
+            return
+        req = urllib.request.Request(f"{self.api}/api/analytics/marcas?camera_id={self.p['camera_id']}",
+                                     headers={"X-Chave-Analytics": self.chave})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                d = json.loads(r.read() or b"{}")
+            self.marcas = d
+            print(f"  marcas do operador: linha={'sim' if d.get('linha') else 'não'} "
+                  f"zonas={len(d.get('zonas') or [])}" + (f" (por {d.get('atualizado_por')})" if d.get('atualizado_por') else ""))
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as e:
+            self.erros += 1
+            print(f"  ! nao consegui ler as marcas: {e}")
+
+    def montar_marcas(self, largura: int, altura: int) -> None:
+        """Converte as marcas (fracao do quadro) para pixel e passa a usa-las no lugar do perfil."""
+        if not self.marcas:
+            return
+        linha = self.marcas.get("linha")
+        if linha:
+            a_px = [linha["a"][0] * largura, linha["a"][1] * altura]
+            b_px = [linha["b"][0] * largura, linha["b"][1] * altura]
+            cfg = self.p.get("linha") or {}
+            self.contador = ContadorLinha(tuple(a_px), tuple(b_px),
+                                          quadros_de_confirmacao=int(cfg.get("confirmacao", 3)),
+                                          espera_s=float(cfg.get("espera_s", 1.5)),
+                                          fps=float(self.p.get("fps_nominal", 12)),
+                                          sentido_positivo=cfg.get("sentido_positivo", "entrada"))
+            self.linha_atual = {"a": [round(v, 4) for v in linha["a"]], "b": [round(v, 4) for v in linha["b"]]}
+            print(f"  linha do operador em uso: {self.linha_atual}")
+        zonas = self.marcas.get("zonas") or []
+        self.zonas_fracao = [{"nome": z.get("nome") or "zona", "x": z["x"], "y": z["y"], "l": z["l"], "a": z["a"]} for z in zonas]
+        if zonas:
+            self.zonas = []
+            for z in zonas:
+                x, y, l, alt = z["x"] * largura, z["y"] * altura, z["l"] * largura, z["a"] * altura
+                self.zonas.append(ZonaRisco(z.get("nome") or "zona",
+                                            [(x, y), (x + l, y), (x + l, y + alt), (x, y + alt)],
+                                            segundos=float(z.get("segundos") or 2.0), espera_s=float(z.get("espera_s", 30))))
+            print(f"  zonas do operador em uso: {[z.nome for z in self.zonas]}")
 
     # ---------------------------------------------------------------- laco
     def rodar(self, fonte: str, duracao: float = 0.0, limite_quadros: int = 0) -> dict:
@@ -125,6 +177,9 @@ class Agente:
                 if self.contador:
                     self.contador.fps = float(container.streams.video[0].average_rate or 12) or 12
                 for quadro in container.decode(video=0):
+                    if quadros == 0 or (time.time() - self.ultimas_marcas_em) > 120:
+                        self.ultimas_marcas_em = time.time()
+                        self.buscar_marcas()
                     quadros += 1
                     tempo_s = time.time() - inicio
                     if limite_quadros and quadros > limite_quadros:
@@ -134,6 +189,8 @@ class Agente:
                     analisados += 1
                     img = quadro.to_ndarray(format="rgb24")
                     h, w = img.shape[:2]
+                    if quadros == 1:
+                        self.montar_marcas(w, h)
                     deteccoes = self.detector.detectar(img, self.classes)
                     alvos = self.rastreador.atualizar(deteccoes)
                     eventos = []
@@ -150,17 +207,20 @@ class Agente:
                     if eventos:
                         n = self.enviar_eventos()
                         print(f"  evento(s): {[e['tipo'] for e in eventos]} — gravados: {n}")
-                    ultimas_caixas = [{"classe": d["nome"], "confianca": round(d["confianca"], 2),
-                                       "caixa": [round(d["caixa"][0] / w, 4), round(d["caixa"][1] / h, 4),
-                                                 round(d["caixa"][2] / w, 4), round(d["caixa"][3] / h, 4)]}
-                                      for d in deteccoes]
+                    if deteccoes:   # guarda a ultima deteccao: o cliente ve a marca ate o quadro seguinte
+                        self.caixas_recentes = [{"classe": d["nome"], "confianca": round(d["confianca"], 2),
+                                                 "caixa": [round(d["caixa"][0] / w, 4), round(d["caixa"][1] / h, 4),
+                                                           round(d["caixa"][2] / w, 4), round(d["caixa"][3] / h, 4)]}
+                                                for d in deteccoes]
+                        self.caixas_em = tempo_s
                     if tempo_s - ultimo_anuncio >= self.anuncio_s:
                         ultimo_anuncio = tempo_s
                         c = self.contador
                         print(f"  t={tempo_s:6.1f}s quadros={quadros:5d} analisados={analisados:5d} "
                               f"pessoas_agora={len(alvos):2d} entrou={c.entrou if c else 0} saiu={c.saiu if c else 0} "
                               f"pico={c.pico if c else 0}")
-                        self.enviar_contagem(quadros, analisados, tempo_s, ultimas_caixas, "no ar")
+                        self.enviar_contagem(quadros, analisados, tempo_s,
+                                             self.caixas_recentes, "no ar", round(tempo_s - self.caixas_em, 1))
                     if duracao and tempo_s >= duracao:
                         break
                 container.close()

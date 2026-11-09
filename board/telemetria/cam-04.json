@@ -1,0 +1,8 @@
+{
+ "id": "cam-04",
+ "pid": 556220,
+ "evento": "encode iniciado",
+ "iniciado_em": "2026-11-09T08:33:26.676-03:00",
+ "fps": 25,
+ "comando": "ffmpeg -hide_banner -loglevel warning -re -f lavfi -i smptebars=size=1280x720:rate=25 -vf drawtext=font=Consolas:text='%{localtime\\:%T}.%{eif\\:mod(t*1000\\,1000)\\:d\\:3} f%{n}':fontsize=34:fontcolor=white:box=1:boxcolor=black@0.6:x=18:y=18 -output_ts_offset 1794224006.677 -c:v libx264 -preset ultrafast -tune zerolatency -b:v 1200k -maxrate 1200k -bufsize 1M -g 30 -pix_fmt yuv420p -f mpegts srt://127.0.0.1:8890?mode=caller&latency=200&pkt_size=1316&streamid=publish:cam-04"
+}

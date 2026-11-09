@@ -1,6 +1,32 @@
 [
-  {"id": "cam-01", "fonte": "testsrc2=size=1280x720:rate=30", "codec": "libx264", "bitrate": "1500k",
-   "srt_host": "127.0.0.1", "srt_port": 8890, "streamid": "cam-01", "relogio": true},
-  {"id": "cam-02", "fonte": "testsrc2=size=1280x720:rate=30", "codec": "libx264", "bitrate": "800k",
-   "srt_host": "127.0.0.1", "srt_port": 8890, "streamid": "cam-02", "relogio": true}
+  {
+    "id": "cam-01",
+    "fonte": "testsrc2=size=1280x720:rate=30",
+    "codec": "libx264",
+    "bitrate": "1500k",
+    "srt_host": "127.0.0.1",
+    "srt_port": 8890,
+    "streamid": "cam-01",
+    "relogio": true
+  },
+  {
+    "id": "cam-02",
+    "fonte": "testsrc2=size=1280x720:rate=30",
+    "codec": "libx264",
+    "bitrate": "800k",
+    "srt_host": "127.0.0.1",
+    "srt_port": 8890,
+    "streamid": "cam-02",
+    "relogio": true
+  },
+  {
+    "id": "cam-04",
+    "fonte": "smptebars=size=1280x720:rate=25",
+    "codec": "libx264",
+    "bitrate": "1200k",
+    "srt_host": "127.0.0.1",
+    "srt_port": 8890,
+    "streamid": "cam-04",
+    "relogio": true
+  }
 ]

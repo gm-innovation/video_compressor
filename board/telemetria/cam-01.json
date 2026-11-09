@@ -1,8 +1,8 @@
 {
  "id": "cam-01",
- "pid": 526472,
+ "pid": 553948,
  "evento": "encode iniciado",
- "iniciado_em": "2026-11-06T16:35:42.034-03:00",
+ "iniciado_em": "2026-11-09T08:33:26.325-03:00",
  "fps": 30,
- "comando": "ffmpeg -hide_banner -loglevel warning -re -f lavfi -i testsrc2=size=1280x720:rate=30 -vf drawtext=font=Consolas:text='%{localtime\\:%T}.%{eif\\:mod(t*1000\\,1000)\\:d\\:3} f%{n}':fontsize=34:fontcolor=white:box=1:boxcolor=black@0.6:x=18:y=18 -output_ts_offset 1793993742.034 -c:v libx264 -preset ultrafast -tune zerolatency -b:v 1500k -maxrate 1500k -bufsize 1M -g 30 -pix_fmt yuv420p -f mpegts srt://127.0.0.1:8890?mode=caller&latency=200&pkt_size=1316&streamid=publish:cam-01"
+ "comando": "ffmpeg -hide_banner -loglevel warning -re -f lavfi -i testsrc2=size=1280x720:rate=30 -vf drawtext=font=Consolas:text='%{localtime\\:%T}.%{eif\\:mod(t*1000\\,1000)\\:d\\:3} f%{n}':fontsize=34:fontcolor=white:box=1:boxcolor=black@0.6:x=18:y=18 -output_ts_offset 1794224006.326 -c:v libx264 -preset ultrafast -tune zerolatency -b:v 1500k -maxrate 1500k -bufsize 1M -g 30 -pix_fmt yuv420p -f mpegts srt://127.0.0.1:8890?mode=caller&latency=200&pkt_size=1316&streamid=publish:cam-01"
 }

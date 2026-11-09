@@ -27,3 +27,5 @@ analytics/midia/
 analytics/saida/
 .venv/
 analytics/*.log
+auto.crt
+auto.key

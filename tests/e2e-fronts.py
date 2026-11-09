@@ -8,10 +8,28 @@ Uso: python tests/e2e-fronts.py [url]
 """
 from __future__ import annotations
 import os
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
+
+RAIZ = Path(__file__).resolve().parents[1]
+
+
+def subir_agente(segundos: int = 90):
+    """Sobe o agente de análise de bordo para o teste não depender de sorte: sem ele não há
+    caixa de detecção nem contagem chegando na tela. Devolve o processo para encerrar depois."""
+    env = dict(os.environ)
+    for poluido in ("PYTHONPATH", "PYTHONHOME"):
+        env.pop(poluido, None)
+    env.update({k: v for k, v in (l.strip().split("=", 1)
+                                  for l in (RAIZ / "ground/.env.local").read_text(encoding="utf-8").splitlines() if "=" in l)})
+    return subprocess.Popen([str(RAIZ / ".venv/Scripts/python.exe"), "-u", "analytics/agente.py",
+                             "--perfil", "analytics/perfis/cam-03.json", "--duracao", str(segundos)],
+                            cwd=str(RAIZ), env=env, stdout=open(SAIDA / "_agente-fronts.log", "w"),
+                            stderr=subprocess.STDOUT)
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8765"
 SENHA = os.environ.get("LECSOR_SENHA_DEMO", "")
@@ -103,7 +121,8 @@ def verificar_admin(navegador) -> None:
     pag.wait_for_timeout(1500)
     texto = pag.locator("#tela").inner_text()
     checar("cadastro de cliente pela tela (ou já cadastrado, sem erro na tela)",
-           ("armador-e2e" in texto) and ("cliente cadastrado" in texto or "já existe" in texto))
+           ("armador-e2e" in texto) and
+           any(m in texto for m in ("cliente cadastrado", "já existe", "ja existe")))
     checar("cliente aparece na tabela", "Armador E2E" in pag.locator(".tabela").inner_text())
     pag.screenshot(path=str(SAIDA / "_front-admin-clientes.png"))
     ctx.close()
@@ -135,14 +154,21 @@ def verificar_analises(navegador) -> None:
     checar("modelo e quadros por segundo informados", bool(ag.get("modelo")) and (ag.get("fps") or 0) > 0,
            f"{ag.get('modelo')} @ {ag.get('fps')} q/s")
     caixas = 0
-    for _ in range(5):  # o agente pode estar entre detecções: tenta algumas vezes
+    for _ in range(10):  # a detecção depende de haver pessoa no quadro: tenta por ~40 s
         caixas = pag.locator(".caixa").count()
         if caixas:
             break
         pag.wait_for_timeout(4000)
-        pag.click("#btn-ia"); pag.click("#btn-ia")
-        pag.wait_for_timeout(2500)
+    pico = 0
+    try:
+        import sqlite3
+        con = sqlite3.connect(RAIZ / "db/pipeline.db"); con.row_factory = sqlite3.Row
+        r = con.execute("SELECT max(pico) AS p FROM analytics_contagens WHERE camera_id='cam-03-analitico'").fetchone()
+        pico = int(r["p"] or 0); con.close()
+    except Exception:
+        pass
     checar("caixa de detecção desenhada sobre o vídeo", caixas >= 1, f"{caixas} caixa(s)")
+    checar("o agente realmente detectou pessoas nesta rodada", pico >= 1, f"pico de {pico} pessoa(s) na janela")
     pag.screenshot(path=str(SAIDA / "_front-cliente-ia.png"))
     ctx.close()
 
@@ -166,6 +192,8 @@ def verificar_analises(navegador) -> None:
 
 
 def main() -> int:
+    agente = subir_agente()   # a tela de IA precisa de um agente vivo produzindo deteccao
+    time.sleep(20)
     if not SENHA:
         print("defina LECSOR_SENHA_DEMO com a senha das contas de demonstracao")
         return 2
@@ -179,6 +207,7 @@ def main() -> int:
         verificar_admin(nav)
         verificar_analises(nav)
         nav.close()
+    agente.terminate()
     print("\nRESULTADO:", "tudo passou" if not falhas else f"{len(falhas)} falha(s): " + "; ".join(falhas))
     return 0 if not falhas else 1
 

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Sobe o lado terra na bancada: mediamtx recebendo SRT e publicando WebRTC/HLS.
-# Argumento opcional: caminho do config (padrao grounds/mediamtx.yml).
+# Argumento opcional: caminho do config (padrao ground/mediamtx.yml).
 set -euo pipefail
 raiz="$(cd "$(dirname "$0")/.." && pwd)"
-bin="$raiz/tools/mediamtx/mediamtx.exe"
+bin="$(cygpath -m "$raiz/tools/mediamtx/mediamtx.exe" 2>/dev/null || echo "$raiz/tools/mediamtx/mediamtx.exe")"
 [ -x "$bin" ] || { echo "mediamtx nao encontrado em $bin (baixe o release windows_amd64)" >&2; exit 2; }
-cfg="${1:-$raiz/ground/mediamtx.yml}"
+cfg="$(cygpath -m "${1:-$raiz/ground/mediamtx.yml}" 2>/dev/null || echo "${1:-$raiz/ground/mediamtx.yml}")"
 echo "[ground] mediamtx com $cfg"
 exec "$bin" "$cfg"

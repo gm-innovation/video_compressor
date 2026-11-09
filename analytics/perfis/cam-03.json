@@ -4,7 +4,7 @@
   "fonte": "rtsp://127.0.0.1:8554/cam-03",
   "modelo": "analytics/modelos/yolov10n.onnx",
   "tamanho": 640,
-  "confianca": 0.35,
+  "confianca": 0.25,
   "classes": [
     0
   ],

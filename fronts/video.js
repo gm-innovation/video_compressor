@@ -39,15 +39,47 @@ window.Video = (function () {
       if (!r.ok) throw new Error('whep ' + r.status);
       await pc.setRemoteDescription({ type: 'answer', sdp: await r.text() });
       est.tentativa = 0;
+      est.travadas = 0;
+      if (est.hls) { try { est.hls.destroy(); } catch (e) {} est.hls = null; }
     } catch (e) {
-      if (window.Hls && window.Hls.isSupported()) {
-        marcar(id, 'reserva (HLS)', 'rec');
-        est.hls = new window.Hls({ lowLatencyMode: true });
-        est.hls.loadSource('/hls/' + encodeURIComponent(fluxo) + '/index.m3u8');
-        est.hls.attachMedia(video);
-      } else {
-        reagendar(id, fluxo, video);
-      }
+      reserva(id, fluxo, video);
+    }
+    vigiar(id, fluxo, video);
+  }
+
+  /* Vigia o relogio do proprio video: sessao WebRTC pode ficar "conectada" sem receber quadro
+     nenhum (o publicador caiu e a ultima imagem congela). Sem isso a tela mente para o cliente. */
+  function vigiar(id, fluxo, video) {
+    const est = ligados.get(id) || {}; ligados.set(id, est);
+    est.video = video;
+    est.ultimo = video.currentTime;
+    est.paradoDesde = Date.now();
+    if (est.vigia) return;
+    est.vigia = setInterval(() => {
+      const v = est.video;
+      if (!v || document.visibilityState !== 'visible') { est.paradoDesde = Date.now(); return; }
+      if (!v.srcObject && !est.hls) { est.paradoDesde = Date.now(); return; }
+      if (v.currentTime > est.ultimo + 0.05) { est.ultimo = v.currentTime; est.paradoDesde = Date.now(); est.travadas = 0; return; }
+      if (Date.now() - est.paradoDesde < 4000) return;
+      est.paradoDesde = Date.now();
+      est.travadas = (est.travadas || 0) + 1;
+      if (est.travadas >= 2) reserva(id, fluxo, video); else reagendar(id, fluxo, video);
+    }, 1500);
+  }
+
+  function reserva(id, fluxo, video) {
+    const est = ligados.get(id) || {}; ligados.set(id, est);
+    if (window.Hls && window.Hls.isSupported()) {
+      marcar(id, 'reserva (HLS)', 'rec');
+      if (est.pc) { try { est.pc.close(); } catch (e) {} est.pc = null; }
+      if (est.hls) { try { est.hls.destroy(); } catch (e) {} }
+      video.classList.remove('reconectando');
+      est.hls = new window.Hls({ lowLatencyMode: true });
+      est.hls.loadSource('/hls/' + encodeURIComponent(fluxo) + '/index.m3u8');
+      est.hls.attachMedia(video);
+      ligados.set(id, est);
+    } else {
+      reagendar(id, fluxo, video);
     }
   }
 
@@ -70,6 +102,7 @@ window.Video = (function () {
     const est = ligados.get(id);
     if (!est) return;
     if (est.timer) clearTimeout(est.timer);
+    if (est.vigia) clearInterval(est.vigia);
     if (est.pc) { try { est.pc.close(); } catch (e) {} }
     if (est.hls) { try { est.hls.destroy(); } catch (e) {} }
     ligados.delete(id);

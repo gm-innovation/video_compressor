@@ -79,5 +79,14 @@
     "status": "pendente",
     "criterio_aceite": "relatorio de piloto com uptime e banda por camera medidos a bordo",
     "evidencia": ""
+  },
+  {
+    "id": "fase-7",
+    "numero": 10,
+    "nome": "Fase 7 — Aplicativo Windows (Electron) para os tres sistemas",
+    "prioridade": "P0",
+    "status": "pendente",
+    "criterio_aceite": "instalador .exe em maquina Windows limpa (sem Python, Node ou ffmpeg) com cliente e admin funcionando dentro do aplicativo e lado terra apontando para a VPS, com log de instalacao e desinstalacao",
+    "evidencia": ""
   }
 ]

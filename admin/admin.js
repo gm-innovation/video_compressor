@@ -124,6 +124,7 @@ const SUBS = {
   usuarios: ['Usuários', 'Papéis: cliente (vê a própria empresa), operador e administrador.'],
   analises: ['Análises de vídeo', 'Contagem e eventos sobem de bordo (Fase 5) — sem agente a bordo a tela fica vazia.'],
   auditoria: ['Auditoria', 'Quem viu qual câmera, quando — e o que foi negado.'],
+  marcas: ['Marcas e zonas', 'A linha de contagem e as zonas de risco que o agente de bordo usa, desenhadas aqui.'],
   saude: ['Saúde do sistema', 'Estado da API, do lado terra e das contagens do banco.']
 };
 
@@ -134,7 +135,8 @@ function desenhar() {
   const tela = $('tela'); limpar(tela);
   const despacho = { painel: telaPainel, fases: telaFases, medicoes: telaMedicoes, decisoes: telaDecisoes,
     evidencias: telaEvidencias, documentos: telaDocumentos, clientes: telaClientes, embarcacoes: telaEmbarcacoes,
-    cameras: telaCameras, usuarios: telaUsuarios, analises: telaAnalises, auditoria: telaAuditoria, saude: telaSaude };
+    cameras: telaCameras, usuarios: telaUsuarios, analises: telaAnalises, marcas: telaMarcas,
+    auditoria: telaAuditoria, saude: telaSaude };
   (despacho[A.tela] || telaPainel)(tela);
 }
 
@@ -335,6 +337,89 @@ function telaAnalises(t) {
     { rotulo: 'Início', campo: 'inicio' }, { rotulo: 'Confiança', campo: 'confianca' },
     { rotulo: 'Metadados', campo: 'metadados' }],
     d.eventos || [], 'sem evento registrado'));
+}
+
+/* Marcas e zonas: o operador desenha a linha de contagem e a zona de risco; o agente de bordo
+   le daqui ao iniciar. Tudo em fracao do quadro (0..1) — nada de endereco nem credencial. */
+function telaMarcas(t) {
+  if (!(A.usuario.papel === 'admin' || A.usuario.papel === 'operador')) {
+    t.appendChild(recado('Só a operação e o administrador desenham as marcas.', true)); return;
+  }
+  const caixa = document.createElement('div'); caixa.className = 'caixa-form';
+  caixa.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Linha de contagem e zona de risco' }));
+  const seletor = document.createElement('div'); seletor.className = 'linha-form'; caixa.appendChild(seletor);
+  const sel = document.createElement('select'); sel.id = 'mk-camera';
+  for (const c of A.cameras) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.rotulo; sel.appendChild(o); }
+  const rotSel = document.createElement('div'); rotSel.appendChild(Object.assign(document.createElement('label'), { textContent: 'Câmera' }));
+  rotSel.appendChild(sel); seletor.appendChild(rotSel);
+
+  const linha = document.createElement('div'); linha.className = 'linha-form'; caixa.appendChild(linha);
+  const vazios = { 'mk-ax': '0.4', 'mk-ay': '0', 'mk-bx': '0.4', 'mk-by': '1', 'mk-znome': 'área de risco', 'mk-zx': '0.1', 'mk-zy': '0.6', 'mk-zl': '0.8', 'mk-za': '0.3', 'mk-zs': '2' };
+  const campos = {};
+  for (const [id, rot, valor] of [['mk-ax', 'linha A x', vazios['mk-ax']], ['mk-ay', 'linha A y', vazios['mk-ay']],
+                                  ['mk-bx', 'linha B x', vazios['mk-bx']], ['mk-by', 'linha B y', vazios['mk-by']],
+                                  ['mk-znome', 'zona (nome)', vazios['mk-znome']], ['mk-zx', 'zona x', vazios['mk-zx']],
+                                  ['mk-zy', 'zona y', vazios['mk-zy']], ['mk-zl', 'zona largura', vazios['mk-zl']],
+                                  ['mk-za', 'zona altura', vazios['mk-za']], ['mk-zs', 'zona segundos', vazios['mk-zs']]]) {
+    campos[id] = campo(linha, id, rot, valor);
+  }
+  const vista = document.createElement('div'); vista.id = 'mk-vista';
+  vista.style.cssText = 'position:relative;width:100%;max-width:520px;aspect-ratio:16/9;background:#0b1220;border:1px solid var(--borda2);border-radius:10px;margin:12px 0';
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 100 56.25'); svg.setAttribute('width', '100%'); svg.setAttribute('height', '100%');
+  svg.id = 'mk-svg'; vista.appendChild(svg); caixa.appendChild(vista);
+  const onde = document.createElement('div'); caixa.appendChild(onde);
+
+  const desenharVista = () => {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    const num = (id) => parseFloat(String(campos[id].value).replace(',', '.'));
+    const mk = (tag, attrs) => { const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+      for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+    const wz = (id) => { const z = A.marcasAbertas || {}; const cz = (z.zonas || [])[0] || {}; return cz; };
+    const linhaAberta = (A.marcasAbertas || {}).linha;
+    const l = [Number.isFinite(num('mk-ax')) ? num('mk-ax') : (linhaAberta ? linhaAberta.a[0] : 0.4),
+               Number.isFinite(num('mk-ay')) ? num('mk-ay') : (linhaAberta ? linhaAberta.a[1] : 0),
+               Number.isFinite(num('mk-bx')) ? num('mk-bx') : (linhaAberta ? linhaAberta.b[0] : 0.4),
+               Number.isFinite(num('mk-by')) ? num('mk-by') : (linhaAberta ? linhaAberta.b[1] : 1)];
+    svg.appendChild(mk('line', { x1: l[0] * 100, y1: l[1] * 56.25, x2: l[2] * 100, y2: l[3] * 56.25,
+                                 stroke: '#38bdf8', 'stroke-width': 0.8, 'stroke-dasharray': '2 1.5' }));
+    const z = [num('mk-zx'), num('mk-zy'), num('mk-zl'), num('mk-za')];
+    if (z.every(Number.isFinite)) svg.appendChild(mk('rect', { x: z[0] * 100, y: z[1] * 56.25, width: z[2] * 100,
+      height: z[3] * 56.25, fill: 'rgba(56,189,248,.18)', stroke: '#38bdf8', 'stroke-width': 0.4 }));
+  };
+
+  const carregar = async () => {
+    const r = await api('/api/analytics/marcas?camera_id=' + encodeURIComponent(sel.value));
+    A.marcasAbertas = (r.ok && r.corpo) ? r.corpo : { linha: null, zonas: [] };
+    const l = A.marcasAbertas.linha;
+    if (l) { campos['mk-ax'].value = l.a[0]; campos['mk-ay'].value = l.a[1]; campos['mk-bx'].value = l.b[0]; campos['mk-by'].value = l.b[1]; }
+    const z = (A.marcasAbertas.zonas || [])[0];
+    if (z) { campos['mk-znome'].value = z.nome; campos['mk-zx'].value = z.x; campos['mk-zy'].value = z.y;
+             campos['mk-zl'].value = z.l; campos['mk-za'].value = z.a; campos['mk-zs'].value = z.segundos; }
+    desenharVista();
+  };
+  sel.addEventListener('change', carregar);
+  for (const k in campos) campos[k].addEventListener('input', desenharVista);
+
+  const botoes = document.createElement('div'); botoes.style.display = 'flex'; botoes.style.gap = '8px';
+  botoes.appendChild(botao('Salvar marcas', 'marca', async () => {
+    const num = (id) => parseFloat(String(campos[id].value).replace(',', '.'));
+    const corpo = { camera_id: sel.value, linha: { a: [num('mk-ax'), num('mk-ay')], b: [num('mk-bx'), num('mk-by')] },
+      zonas: [{ nome: campos['mk-znome'].value, x: num('mk-zx'), y: num('mk-zy'), l: num('mk-zl'),
+                a: num('mk-za'), segundos: num('mk-zs') }] };
+    const r = await api('/api/analytics/marcas', { method: 'POST', body: JSON.stringify(corpo) });
+    await carregar();
+    mostrarRecado(r.ok ? `marcas gravadas em ${sel.value} (o agente lê ao iniciar)` : 'recusado: ' + JSON.stringify(r.corpo), !r.ok);
+  }));
+  botoes.appendChild(botao('Limpar marca', '', async () => {
+    const r = await api('/api/analytics/marcas', { method: 'POST', body: JSON.stringify({ camera_id: sel.value, linha: null, zonas: [] }) });
+    await carregar();
+    mostrarRecado(r.ok ? 'marca removida' : 'recusado: ' + JSON.stringify(r.corpo), !r.ok);
+  }));
+  caixa.appendChild(botoes);
+  t.appendChild(caixa);
+  caixa.appendChild(onde);
+  carregar();
 }
 
 function telaAuditoria(t) {

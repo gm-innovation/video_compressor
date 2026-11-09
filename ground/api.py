@@ -259,7 +259,7 @@ def analises() -> dict:
         q = lambda sql, *a: [dict(r) for r in c.execute(sql, a).fetchall()]
         agentes = q("SELECT * FROM analytics_agentes ORDER BY camera_id")
         for ag in agentes:
-            for campo in ("caixas", "linhas"):
+            for campo in ("caixas", "linhas", "zonas"):
                 try:
                     ag[campo] = json.loads(ag[campo] or "[]")
                 except json.JSONDecodeError:
@@ -270,6 +270,51 @@ def analises() -> dict:
                 "gerado_em": dt.datetime.now().astimezone().isoformat(timespec="seconds")}
 
 
+def ler_marcas(camera_id: str = "") -> dict:
+    """Marcas desenhadas pelo operador (linha e zonas), em fracao do quadro."""
+    with conexao() as c:
+        if camera_id:
+            r = c.execute("SELECT * FROM analytics_marcas WHERE camera_id=?", (camera_id,)).fetchone()
+            if not r:
+                return {"camera_id": camera_id, "linha": None, "zonas": []}
+            return {"camera_id": r["camera_id"], "linha": json.loads(r["linha"]) if r["linha"] else None,
+                    "zonas": json.loads(r["zonas"] or "[]"), "atualizado_em": r["atualizado_em"],
+                    "atualizado_por": r["atualizado_por"]}
+        return {"marcas": [dict(x) for x in c.execute("SELECT * FROM analytics_marcas ORDER BY camera_id").fetchall()]}
+
+
+def gravar_marcas(usuario, camera_id: str, linha, zonas: list) -> dict:
+    """Grava a linha e as zonas da camera. Tudo em fracao do quadro (0..1), validado na borda."""
+    def ponto(p, nome):
+        x, y = float(p[0]), float(p[1])
+        if not (0 <= x <= 1 and 0 <= y <= 1):
+            raise ValueError(f"{nome}: coordenada fora do quadro ({x}, {y})")
+        return [round(x, 4), round(y, 4)]
+
+    if linha is not None:
+        linha = {"a": ponto(linha["a"], "linha.a"), "b": ponto(linha["b"], "linha.b")}
+    limpas = []
+    for z in zonas or []:
+        x, y, l, a2 = (float(z.get(k, 0)) for k in ("x", "y", "l", "a"))
+        if not (0 <= x <= 1 and 0 <= y <= 1 and 0 < l <= 1 and 0 < a2 <= 1):
+            raise ValueError(f"zona {z.get('nome', '')}: retangulo fora do quadro")
+        limpas.append({"nome": str(z.get("nome") or "zona"), "x": round(x, 4), "y": round(y, 4),
+                       "l": round(l, 4), "a": round(a2, 4), "segundos": float(z.get("segundos") or 2.0)})
+    agora = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+    with conexao() as c:
+        if not c.execute("SELECT 1 FROM cameras WHERE id=?", (camera_id,)).fetchone():
+            raise LookupError(f"camera {camera_id!r} nao cadastrada")
+        c.execute("""INSERT INTO analytics_marcas (camera_id,linha,zonas,atualizado_em,atualizado_por)
+                     VALUES (:camera_id,:linha,:zonas,:atualizado_em,:atualizado_por)
+                     ON CONFLICT(camera_id) DO UPDATE SET linha=:linha, zonas=:zonas,
+                       atualizado_em=:atualizado_em, atualizado_por=:atualizado_por""",
+                  {"camera_id": camera_id, "linha": json.dumps(linha or "", ensure_ascii=False),
+                   "zonas": json.dumps(limpas, ensure_ascii=False), "atualizado_em": agora,
+                   "atualizado_por": (usuario["email"] if usuario else "agente")})
+    auditar(usuario, "marcas_gravadas", camera_id)
+    return ler_marcas(camera_id)
+
+
 def registrar_eventos(camera_id: str, eventos: list) -> int:
     """Grava eventos de analise da camera. O video NAO sobe: so o evento e a contagem."""
     agora = dt.datetime.now().astimezone().isoformat(timespec="seconds")
@@ -278,11 +323,11 @@ def registrar_eventos(camera_id: str, eventos: list) -> int:
             raise LookupError(f"camera {camera_id!r} nao cadastrada")
         for ev in eventos[:500]:
             inicio = str(ev.get("em") or agora)
-            c.execute("""INSERT INTO analytics_eventos (camera_id,tipo,inicio,fim,confianca,clipe,metadados)
-                         VALUES (?,?,?,?,?,?,?)""",
+            c.execute("""INSERT INTO analytics_eventos (camera_id,tipo,inicio,fim,confianca,clipe,metadados,criado_em)
+                         VALUES (?,?,?,?,?,?,?,?)""",
                       (camera_id, str(ev.get("tipo") or "contagem"), inicio, ev.get("fim"),
                        float(ev.get("confianca") or 0.0), str(ev.get("clipe") or ""),
-                       json.dumps(ev.get("metadados") or {}, ensure_ascii=False)))
+                       json.dumps(ev.get("metadados") or {}, ensure_ascii=False), agora))
     return len(eventos[:500])
 
 
@@ -294,22 +339,24 @@ def registrar_contagem(camera_id: str, d: dict) -> int:
     with conexao() as c:
         if not c.execute("SELECT 1 FROM cameras WHERE id=?", (camera_id,)).fetchone():
             raise LookupError(f"camera {camera_id!r} nao cadastrada")
-        cur = c.execute("""INSERT INTO analytics_contagens (camera_id,janela_inicio,janela_fim,entrou,saiu,pico,fonte)
-                           VALUES (?,?,?,?,?,?,?)""",
+        cur = c.execute("""INSERT INTO analytics_contagens (camera_id,janela_inicio,janela_fim,entrou,saiu,pico,fonte,criado_em)
+                           VALUES (?,?,?,?,?,?,?,?)""",
                         (camera_id, inicio, fim, int(d.get("entrou") or 0), int(d.get("saiu") or 0),
-                         int(d.get("pico") or 0), str(d.get("fonte") or "")))
+                         int(d.get("pico") or 0), str(d.get("fonte") or ""), agora))
         ident = cur.lastrowid
         estado = str(d.get("estado") or "no ar")
-        c.execute("""INSERT INTO analytics_agentes (camera_id,nome,modelo,fonte,fps,quadros,estado,caixas,linhas,erros,ultimo_visto)
-                     VALUES (:camera_id,:nome,:modelo,:fonte,:fps,:quadros,:estado,:caixas,:linhas,:erros,:ultimo_visto)
+        c.execute("""INSERT INTO analytics_agentes (camera_id,nome,modelo,fonte,fps,quadros,estado,caixas,caixas_idade,linhas,zonas,erros,ultimo_visto)
+                     VALUES (:camera_id,:nome,:modelo,:fonte,:fps,:quadros,:estado,:caixas,:caixas_idade,:linhas,:zonas,:erros,:ultimo_visto)
                      ON CONFLICT(camera_id) DO UPDATE SET nome=:nome, modelo=:modelo, fonte=:fonte, fps=:fps,
-                       quadros=:quadros, estado=:estado, caixas=:caixas, linhas=:linhas, erros=:erros,
+                       quadros=:quadros, estado=:estado, caixas=:caixas, caixas_idade=:caixas_idade, linhas=:linhas, zonas=:zonas, erros=:erros,
                        ultimo_visto=:ultimo_visto""",
                   {"camera_id": camera_id, "nome": str(d.get("agente") or "agente-bordo"),
                    "modelo": str(d.get("modelo") or ""), "fonte": str(d.get("fonte") or ""),
                    "fps": float(d.get("fps") or 0.0), "quadros": int(d.get("quadros") or 0),
                    "estado": estado, "caixas": json.dumps(d.get("caixas") or [], ensure_ascii=False),
                    "linhas": json.dumps(d.get("linhas") or [], ensure_ascii=False),
+                   "caixas_idade": float(d.get("caixas_idade") or 0.0),
+                   "zonas": json.dumps(d.get("zonas") or [], ensure_ascii=False),
                    "erros": int(d.get("erros") or 0), "ultimo_visto": agora})
     return ident
 
@@ -468,6 +515,17 @@ class Handler(SimpleHTTPRequestHandler):
             if not u:
                 return self._json(401, {"erro": "entre no sistema"})
             return self._json(200, {"eventos": ler_tudo()["eventos"]})
+        if rota == "/api/analytics/marcas":
+            consulta = parse_qs(urlparse(self.path).query)
+            alvo = (consulta.get("camera_id") or [""])[0]
+            if not (u or self._chave_analytics()):
+                return self._json(401, {"erro": "entre no sistema"})
+            if alvo and u and not self._chave_analytics():
+                with conexao() as c:
+                    cam = c.execute("SELECT * FROM cameras WHERE id=?", (alvo,)).fetchone()
+                if not pode_ver_camera(u, cam):
+                    return self._json(403, {"erro": "camera fora do seu contrato"})
+            return self._json(200, ler_marcas(alvo) if alvo else ler_marcas())
         if rota == "/api/analises":
             if not (u or self._local()):
                 return self._json(401, {"erro": "entre no sistema"})
@@ -504,6 +562,17 @@ class Handler(SimpleHTTPRequestHandler):
                     with conexao() as c:
                         c.execute("DELETE FROM sessoes WHERE token=?", (ck["sessao"].value,))
             return self._json(200, {"ok": True}, {"Set-Cookie": "sessao=; Max-Age=0; Path=/"})
+        if rota == "/api/analytics/marcas":
+            if not (u and u["papel"] in PAPEL_ADMIN):
+                return self._json(403, {"erro": "so operacao e administrador desenham as marcas"})
+            d = self._corpo()
+            try:
+                marcas = gravar_marcas(u, str(d.get("camera_id") or ""), d.get("linha"), list(d.get("zonas") or []))
+            except LookupError as e:
+                return self._json(422, {"erro": str(e)})
+            except (ValueError, TypeError, KeyError) as e:
+                return self._json(422, {"erro": f"marca invalida: {e}"})
+            return self._json(201, {"ok": True, "marcas": marcas})
         if rota == "/api/analytics/eventos":
             if not self._chave_analytics():
                 return self._json(401, {"erro": "chave do agente de analise ausente ou invalida"})
@@ -589,8 +658,13 @@ class Handler(SimpleHTTPRequestHandler):
             if faltando:
                 return self._json(422, {"erro": "cliente incompleto", "campos_faltando": faltando})
             with conexao() as c:
-                if c.execute("SELECT 1 FROM clientes WHERE id=?", (d["id"],)).fetchone():
-                    return self._json(409, {"erro": "cliente ja existe"})
+                ja = c.execute("SELECT nome FROM clientes WHERE id=?", (d["id"],)).fetchone()
+                if ja:
+                    # recadastrar o mesmo cliente com o mesmo nome nao e erro (a tela pode reenviar);
+                    # trocar o nome de um identificador ja usado e que e conflito
+                    if str(ja["nome"]).strip() == str(d["nome"]).strip():
+                        return self._json(200, {"id": d["id"], "nome": d["nome"], "ja_existia": True})
+                    return self._json(409, {"erro": "cliente ja existe com outro nome"})
                 c.execute("INSERT INTO clientes (id,nome) VALUES (?,?)", (d["id"], d["nome"]))
             auditar(u, "criar_cliente", d["id"], self.client_address[0])
             return self._json(201, {"id": d["id"], "nome": d["nome"]})
@@ -656,10 +730,11 @@ class Handler(SimpleHTTPRequestHandler):
             if not (d.get("camera_id") and d.get("tipo") and d.get("inicio")):
                 return self._json(422, {"erro": "camera_id, tipo e inicio sao obrigatorios"})
             with conexao() as c:
-                cur = c.execute("""INSERT INTO analytics_eventos (camera_id,tipo,inicio,fim,confianca,clipe,metadados)
-                                   VALUES (?,?,?,?,?,?,?)""",
+                cur = c.execute("""INSERT INTO analytics_eventos (camera_id,tipo,inicio,fim,confianca,clipe,metadados,criado_em)
+                                   VALUES (?,?,?,?,?,?,?,?)""",
                                 (d["camera_id"], d["tipo"], d["inicio"], d.get("fim"), d.get("confianca"),
-                                 d.get("clipe", ""), json.dumps(d.get("metadados", {}), ensure_ascii=False)))
+                                 d.get("clipe", ""), json.dumps(d.get("metadados", {}), ensure_ascii=False),
+                                 dt.datetime.now().astimezone().isoformat(timespec="seconds")))
             return self._json(201, {"id": cur.lastrowid, "status": "evento gravado"})
         if rota == "/api/contagens":
             chave = os.environ.get("LECSOR_CHAVE_ANALYTICS", "")
