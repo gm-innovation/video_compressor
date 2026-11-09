@@ -175,6 +175,7 @@ def main() -> int:
             print("      vazou:", vazou[:5])
         nav.close()
 
+    limpar_testes()   # nao deixa os envios do teste poluindo a grade do cliente
     print(("\nTUDO OK" if not falhas else f"\n{len(falhas)} FALHA(S): " + "; ".join(falhas)))
     return 1 if falhas else 0
 
