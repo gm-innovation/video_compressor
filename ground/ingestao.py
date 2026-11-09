@@ -506,10 +506,48 @@ def _camera_em_uso(dispositivo: str | None, validade_s: int = 12) -> dict | None
             d = dict(r)
             if d["estado"] not in ("no_ar", "no ar", "iniciando"):
                 continue
+            # o processo tem que estar VIVO: depois de reiniciar a API o registro fica 'no_ar' mas o
+            # ffmpeg morreu junto, e sem isso a camera parecia ocupada para sempre.
+            if not _processo_vivo(d.get("pid")):
+                continue
             try:
                 idade = time.time() - dt.datetime.fromisoformat(d["atualizado_em"]).timestamp()
             except Exception:
-                continue
+                idade = 0
             if idade <= validade_s:
                 return d
     return None
+
+
+def _processo_vivo(pid) -> bool:
+    if not pid:
+        return False
+    try:
+        saida = subprocess.run(["tasklist", "/FI", f"PID eq {int(pid)}", "/NH"],
+                               capture_output=True, text=True, timeout=5).stdout
+        return str(int(pid)) in saida
+    except Exception:
+        try:
+            os.kill(int(pid), 0)
+            return True
+        except OSError:
+            return False
+
+
+def limpar_vivos_mortos() -> int:
+    """Marca como parado o envio que ficou 'no_ar' mas cujo ffmpeg morreu (ex.: reinicio da API).
+
+    Sem isso a camera parecia ocupada para sempre e o proximo envio era recusado sem motivo real.
+    """
+    n = 0
+    with conexao() as c:
+        for r in c.execute("""SELECT id, pid, rotulo FROM ingestoes
+                              WHERE estado IN ('no_ar','no ar','iniciando')"""):
+            if not _processo_vivo(r["pid"]):
+                c.execute("""UPDATE ingestoes SET estado='erro',
+                             erro=COALESCE(erro,'o envio caiu quando o servico foi reiniciado'),
+                             atualizado_em=? WHERE id=?""", (agora(), r["id"]))
+                n += 1
+    if n:
+        print(f"[envios] {n} envio(s) vivo(s) marcados como parados no inicio (processo morto)", flush=True)
+    return n

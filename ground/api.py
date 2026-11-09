@@ -33,6 +33,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ingestao import iniciar as ing_iniciar, parar as ing_parar, listar as ing_listar  # noqa: E402
 from ingestao import capturar as ing_capturar, listar_dispositivos as ing_dispositivos, ao_vivo as ing_ao_vivo
+from ingestao import limpar_vivos_mortos as ing_limpar_vivos
 import etapas as etapas_pipeline  # noqa: E402
 import producao as producao_pipeline  # noqa: E402
 from urllib.parse import parse_qs, unquote, urlparse
@@ -186,7 +187,9 @@ def semear_usuarios_demo() -> None:
     """
     demo = [("cliente@armador-demo.test", "Cliente do armador (demo)", "cliente", "armador-demo"),
             ("operacao@lecsor.test", "Operacao LECSOR (demo)", "operador", None),
-            ("admin@lecsor.test", "Administrador LECSOR (demo)", "admin", None)]
+            ("admin@lecsor.test", "Administrador LECSOR (demo)", "admin", None),
+            # a bancada e da LECSOR: este login de teste abre o app do cliente vendo a bancada
+            ("cliente@lecsor.test", "Bancada de testes (cliente interno)", "cliente", "lecsor")]
     with conexao() as c:
         for email, nome, papel, cliente_id in demo:
             if c.execute("SELECT 1 FROM usuarios WHERE email=?", (email,)).fetchone():
@@ -618,8 +621,10 @@ class Handler(SimpleHTTPRequestHandler):
                     ult = c.execute("""SELECT estado, erro, atualizado_em FROM ingestoes
                                        WHERE fluxo_id=? ORDER BY id DESC LIMIT 1""", (cam["fluxo_id"],)).fetchone()
                     motivo = ""
-                    if not no_ar and ult:
-                        if ult["erro"]:
+                    if not no_ar:
+                        if not ult:
+                            motivo = "nenhum envio registrado para esta câmera"
+                        elif ult["erro"]:
                             motivo = ult["erro"]
                         elif ult["estado"] in ("parado", "fim"):
                             motivo = "envio parado"
@@ -1167,6 +1172,7 @@ def principal() -> int:
     semear = "--semear-demo" in args
     porta = next((int(a) for a in args if a.isdigit()), 8765)
     inicializar(semear)
+    ing_limpar_vivos()          # envio que ficou 'no_ar' com processo morto
     threading.Thread(target=_fechar_minutos_em_loop, daemon=True).start()
     print(f"[ok] sistema em http://127.0.0.1:{porta}/  (bancada: /  ·  cliente: /app  ·  admin: /admin)")
     ThreadingHTTPServer(("127.0.0.1", porta), Handler).serve_forever()
