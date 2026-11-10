@@ -133,8 +133,9 @@ function desenharVisualizar() {
     const rot = document.createElement('span'); rot.className = 'rotulo-cam';
     const ponto = document.createElement('span'); ponto.className = 'ponto' + (c.no_ar ? '' : ' ruim');
     const nome = document.createElement('span');
-    nome.textContent = c.rotulo + (c.encoder && c.encoder.resolucao ? ' · ' + c.encoder.resolucao : '') +
-      (!c.no_ar && c.motivo ? ' · ' + c.motivo : '');
+    // guarda o texto fixo: o motivo entra e sai conforme o estado, e o pintarEstados() reescreve
+    nome.dataset.base = c.rotulo + (c.encoder && c.encoder.resolucao ? ' · ' + c.encoder.resolucao : '');
+    nome.textContent = nome.dataset.base + (!c.no_ar && c.motivo ? ' · ' + c.motivo : '');
     rot.appendChild(ponto); rot.appendChild(nome);
     const caixas = document.createElement('div'); caixas.className = 'caixas'; caixas.id = 'caixas-' + c.id;
     jan.appendChild(v);
@@ -206,6 +207,9 @@ function pintarEstados() {
       b.onclick = (ev) => { ev.stopPropagation(); energia(c.id, !c.no_ar); };
     }
     pintarAviso(c, jan);
+    // o rotulo tambem segue o estado: o motivo entra quando a camera cai e sai quando ela volta
+    const nome = jan.querySelector('.rotulo-cam span:last-child');
+    if (nome && nome.dataset.base) nome.textContent = nome.dataset.base + (!c.no_ar && c.motivo ? ' · ' + c.motivo : '');
     // a camera voltou depois de desligada/caida: rearma o player, senao a janela fica preta
     // mesmo com o fluxo no ar (o player sozinho pode demorar ou desistir depois de varios erros).
     const v = jan.querySelector('video');
