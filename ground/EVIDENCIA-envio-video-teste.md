@@ -438,3 +438,18 @@ Pergunta do dono: *"a compressão funcionou? quanto comprimiu e qual a qualidade
 **Atenção ao número:** o "bruto teórico" de 331,8 Mbps é o equivalente do sensor cru (720p30 4:2:0) e não é
 o que a câmera gera — o que a webcam realmente escreve é ~12,8 Mbps. Contra ESSE valor, a compressão real
 do fluxo vivo é **≈88%** (12,8 → 1,5 Mbps), que é o número comparável ao piso de 73% fixado pelo dono.
+
+## Prova de que o video sai da bancada e chega na VPS (10/11/2026, 09:38-09:44 UTC)
+
+Teste de "desligar a fonte": com o app do cliente tocando o fluxo, o envio da bancada foi derrubado e a VPS mediu o efeito.
+
+| momento | conexao SRT na VPS | recebido na VPS | enviado ao player | app do cliente |
+|---|---|---|---|---|
+| com o envio ligado | `publish vps-webcam-bancada` de **189.1.136.122** (IP publico desta bancada), RTT 29,4 ms | **1,494 Mbps** | **2,988 Mbps** em 2 sessoes WebRTC | `videoWidth 1280`, tocando |
+| 15 s depois de matar o ffmpeg da bancada | **nenhuma** | **0** | **0**, zero leitores | **todos os videos w=0 e pausados** |
+| 35 s depois de religar o envio | de **189.1.136.122:53280**, RTT 23,1 ms, perda 0 | **1,513 Mbps** | — | apos recarregar: **1280, currentTime 23,1 s, tocando** |
+
+Linha de comando do ffmpeg que publica nesta bancada:
+`srt://187.127.60.250:8890?mode=caller&latency=200&pkt_size=1316&streamid=publish:vps-webcam-bancada` (dshow `video=ACER HD User Facing`, `-video_size 1280x720`, libx264 `-b:v 1500k`).
+
+Contabilidade cruzada: 189.632.100 bytes recebidos na VPS (~189,6 MB) contra 184,1 MB contados pelo ffmpeg na bancada na mesma janela — diferenca compativel com o overhead de MPEG-TS/SRT.
