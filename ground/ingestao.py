@@ -267,10 +267,16 @@ def _motivo_da_falha(codigo: int, log: Path, r: dict) -> str | None:
     except Exception:
         texto = ""
     baixo = texto.lower()
-    if "i/o error" in baixo or "could not run filter" in baixo or "device already" in baixo \
-            or "device is not available" in baixo or "unspecified error" in baixo:
-        return ("nao consegui abrir a camera: ela pode estar EM USO por outro fluxo, "
-                "ou desconectada/renomeada. Pare o outro envio da mesma webcam (se houver) e transmita de novo.")
+    # PRIMEIRO o link: "I/O error" aqui quase sempre vem do muxer/soquete SRT (a rede caiu ou o IP
+    # publico mudou), NAO da camera — culpar a camera fazia o dono procurar defeito onde nao tinha.
+    if ("wsagetoverlappedresult" in baixo or "error submitting a packet to the muxer" in baixo
+            or "error muxing a packet" in baixo or "[srt" in baixo or "srt.ks" in baixo):
+        return ("o link com o servidor caiu no meio do envio (a camera esta bem): "
+                "tentando reconectar sozinho")
+    if "could not run filter" in baixo or "device already" in baixo or "device is not available" in baixo \
+            or "unspecified error" in baixo or "i/o error" in baixo:
+        return ("a camera nao abriu: pode estar em uso por outro envio ou desconectada — "
+                "mande parar o outro envio e ligue de novo")
     if "nothing was encoded" in baixo or "no filtered frames" in baixo:
         return "a fonte nao entregou nenhum quadro (camera ocupada ou desconectada)"
     if "no such file" in baixo or "not found" in baixo:

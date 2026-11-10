@@ -133,9 +133,9 @@ function desenharVisualizar() {
     const rot = document.createElement('span'); rot.className = 'rotulo-cam';
     const ponto = document.createElement('span'); ponto.className = 'ponto' + (c.no_ar ? '' : ' ruim');
     const nome = document.createElement('span');
-    // guarda o texto fixo: o motivo entra e sai conforme o estado, e o pintarEstados() reescreve
+    // o rotulo carrega so o essencial; o motivo completo aparece no aviso dentro da janela
     nome.dataset.base = c.rotulo + (c.encoder && c.encoder.resolucao ? ' · ' + c.encoder.resolucao : '');
-    nome.textContent = nome.dataset.base + (!c.no_ar && c.motivo ? ' · ' + c.motivo : '');
+    nome.textContent = nome.dataset.base + (c.no_ar ? '' : ' · fora do ar');
     rot.appendChild(ponto); rot.appendChild(nome);
     const caixas = document.createElement('div'); caixas.className = 'caixas'; caixas.id = 'caixas-' + c.id;
     jan.appendChild(v);
@@ -156,8 +156,9 @@ function desenharVisualizar() {
     // aviso no lugar da tela preta: sem isso o operador nao sabe se a camera caiu, foi desligada
     // ou falhou. Fica sempre no DOM e o pintarEstados() atualiza o texto a cada 5 s.
     const aviso = document.createElement('div'); aviso.className = 'aviso-cam';
-    aviso.style.cssText = 'position:absolute;left:0;right:0;top:46%;text-align:center;padding:0 12px;' +
-      'color:#ffb4b4;font-size:13px;line-height:1.35;pointer-events:none;text-shadow:0 1px 2px #000';
+    aviso.style.cssText = 'position:absolute;left:8%;right:8%;top:34%;text-align:center;padding:0 6px;' +
+      'color:#ffb4b4;font-size:12px;line-height:1.3;pointer-events:none;text-shadow:0 1px 2px #000;' +
+      'max-height:3.9em;overflow:hidden';
     jan.appendChild(aviso);
     pintarAviso(c, jan);
     jan.appendChild(marca); jan.appendChild(caixas); jan.appendChild(rot);
@@ -209,7 +210,7 @@ function pintarEstados() {
     pintarAviso(c, jan);
     // o rotulo tambem segue o estado: o motivo entra quando a camera cai e sai quando ela volta
     const nome = jan.querySelector('.rotulo-cam span:last-child');
-    if (nome && nome.dataset.base) nome.textContent = nome.dataset.base + (!c.no_ar && c.motivo ? ' · ' + c.motivo : '');
+    if (nome && nome.dataset.base) nome.textContent = nome.dataset.base + (c.no_ar ? '' : ' · fora do ar');
     // a camera voltou depois de desligada/caida: rearma o player, senao a janela fica preta
     // mesmo com o fluxo no ar (o player sozinho pode demorar ou desistir depois de varios erros).
     const v = jan.querySelector('video');

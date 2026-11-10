@@ -47,6 +47,24 @@ checar("parar inexistente devolve erro", "erro" in p, str(p))
 # 4) o marcador de "desligada pela tela" e' o estado 'parado' no banco
 checar("_foi_desligada existe no remetente", hasattr(__import__("enviar_para_vps"), "_foi_desligada"))
 
+# 5) o motivo da falha separa LINK de CAMERA (o dono foi enganado por isso: o app dizia
+#    "camera em uso" quando o que caiu foi o link SRT)
+from pathlib import Path as _P  # noqa: E402
+import tempfile  # noqa: E402
+
+with tempfile.NamedTemporaryFile("w", suffix=".log", delete=False, encoding="utf-8") as _f:
+    _f.write("12:07:57/!W:SRT.ks: CChannel::sendto call on ::WSAGetOverlappedResult failed with error: 0\n"
+             "[vost#0:0/libx264] Error submitting a packet to the muxer: I/O error\n")
+    _link = _P(_f.name)
+with tempfile.NamedTemporaryFile("w", suffix=".log", delete=False, encoding="utf-8") as _f:
+    _f.write("[dshow @ 0x1] Could not run filter\nCould not open video device: device already in use\n")
+    _cam = _P(_f.name)
+
+m_link = ingestao._motivo_da_falha(-5, _link, {})
+m_cam = ingestao._motivo_da_falha(1, _cam, {})
+checar("queda do link SRT vira recado de link", "link" in (m_link or "").lower(), str(m_link))
+checar("camera ocupada continua recado de camera", "camera" in (m_cam or "").lower() and "link" not in (m_cam or "").lower(), str(m_cam))
+
 print()
 if falhas:
     print(f"{len(falhas)} falha(s): " + ", ".join(falhas))
