@@ -138,33 +138,79 @@ def fechar_minutos(*, limpar_amostras: bool = False) -> dict:
 
 
 # --------------------------------------------------------------------------- link e atraso
-def _mediamtx(caminho: str) -> dict:
+_MEDIAMTX_FORA: dict = {}          # host -> instante ate quando pular (falhou agora ha pouco)
+
+
+def _mediamtx(caminho: str, host: str | None = None, timeout: float = 1.0) -> dict:
+    import time as _t
+    h = host or "127.0.0.1"
+    # mediamtx que nao esta no ar custa o timeout inteiro a cada tela: lembra a falha por 30 s
+    if _MEDIAMTX_FORA.get(h, 0) > _t.time():
+        return {}
+    base = MEDIAMTX_API if not host else f"http://{host}:{MEDIAMTX_API.rsplit(':', 1)[-1]}"
     try:
-        return json.loads(urllib.request.urlopen(MEDIAMTX_API + caminho, timeout=6).read())
+        return json.loads(urllib.request.urlopen(base + caminho, timeout=timeout).read())
     except Exception:
+        _MEDIAMTX_FORA[h] = _t.time() + 30
         return {}
 
 
-def link_srt(fluxo_id: str | None = None) -> dict:
+def _hosts_mediamtx() -> list[str]:
+    """Hosts que podem ter fluxo: esta maquina e cada lado terra usado por um envio recente.
+
+    O SRT da webcam desta bancada termina na VPS; consultar so o mediamtx local dizia
+    'nenhuma conexao SRT agora' com o fluxo no ar.
+    """
+    hosts = ["127.0.0.1"]
+    try:
+        with conexao_banco() as c:
+            for r in c.execute("""SELECT DISTINCT srt_host FROM ingestoes
+                                  WHERE srt_host IS NOT NULL AND srt_host <> ''
+                                  ORDER BY id DESC LIMIT 10"""):
+                h = str(r["srt_host"] or "").strip()
+                if h and h not in hosts:
+                    hosts.append(h)
+    except Exception:
+        pass
+    return hosts
+
+
+_CACHE_LINK: dict = {}
+
+
+def link_srt(fluxo_id: str | None = None, validade_s: float = 2.0) -> dict:
     """O que o SRT sabe do LINK: RTT, taxa que cabe no link, perdas e o atraso do buffer.
 
     `msSendTsbPdDelay`/`msReceiveTsbPdDelay` e' o buffer de latencia do SRT em ms (o atraso que o
     transporte assume). `mbpsLinkCapacity` e' a capacidade estimada do link pelo proprio SRT —
     e' o numero que mais se aproxima de "qual a banda que a internet local aguenta".
     """
-    dados = _mediamtx("/v3/srtconns/list").get("items", [])
+    _g = _CACHE_LINK.get(fluxo_id)
+    if _g and time.time() - _g[0] < validade_s:
+        return _g[1]
+    dados = []
+    for _h in _hosts_mediamtx():
+        dados = _mediamtx("/v3/srtconns/list", _h).get("items", [])
+        if dados:
+            break
     if fluxo_id:
         dados = [d for d in dados if str(d.get("path") or "").strip("/") == fluxo_id] or dados
     pubs = [d for d in dados if d.get("state") == "publish"]
     leituras = [d for d in dados if d.get("state") in ("read", "idle", "publish")]
-    escolhida = (pubs or leituras or [None])[0]
+
+    def _de_fora(d: dict) -> bool:
+        """O SRT que interessa e' o que VEM PELA INTERNET; 172.17.x/127.x e' rede interna do Docker."""
+        ip = str(d.get("remoteAddr") or "").split(":")[0]
+        return bool(ip) and not (ip.startswith("172.1") or ip.startswith("127.") or ip.startswith("172.2"))
+
+    escolhida = (( [d for d in pubs if _de_fora(d)] or pubs or leituras or [None])[0])
     if not escolhida:
         return {"disponivel": False, "motivo": "nenhuma conexao SRT agora"}
     def _n(k, casas=2):
         v = escolhida.get(k)
         return round(float(v), casas) if isinstance(v, (int, float)) else None
     atraso = escolhida.get("msSendTsbPdDelay") or escolhida.get("msReceiveTsbPdDelay")
-    return {
+    _saida = {
         "disponivel": True,
         "fluxo": str(escolhida.get("path") or "").strip("/") or None,
         "remoto": escolhida.get("remoteAddr"),
@@ -178,12 +224,14 @@ def link_srt(fluxo_id: str | None = None) -> dict:
         "atraso_buffer_ms": round(float(atraso), 1) if isinstance(atraso, (int, float)) else None,
         "fonte": "estatisticas do mediamtx (SRT)",
     }
+    _CACHE_LINK[fluxo_id] = (time.time(), _saida)
+    return _saida
 
 
 _CACHE_PING: dict = {"em": 0.0, "dados": None}
 
 
-def latencia_internet(alvo: str | None = None, *, validade_s: int = 15) -> dict:
+def latencia_internet(alvo: str | None = None, *, validade_s: int = 60) -> dict:
     """Latencia da internet local, com cache curto (ping leva ~1,5 s; o painel atualiza a cada 2 s)."""
     """Latencia da internet local: ping no alvo (padrao 8.8.8.8).
 
@@ -196,7 +244,8 @@ def latencia_internet(alvo: str | None = None, *, validade_s: int = 15) -> dict:
         return _CACHE_PING["dados"]
     t0 = time.time()
     try:
-        p = subprocess.run(["ping", "-n", "4", "-w", "1200", alvo], capture_output=True, timeout=20)
+        # 2 pings bastam para dizer a latencia e custam ~1,2 s em vez de ~3 s (a tela abria devagar)
+        p = subprocess.run(["ping", "-n", "2", "-w", "1000", alvo], capture_output=True, timeout=20)
         txt = (p.stdout or b"").decode("cp850", "replace") + (p.stderr or b"").decode("cp850", "replace")
     except Exception as e:
         return {"alvo": alvo, "disponivel": False, "motivo": f"ping falhou: {type(e).__name__}"}
@@ -252,8 +301,14 @@ def registrar_latencia(fluxo_id: str, ms: float, caminho: str = "") -> None:
 
 
 # --------------------------------------------------------------------------- tempo real
-def tempo_real() -> dict:
+_CACHE_VIVO: dict = {}
+
+
+def tempo_real(validade_s: float = 2.0) -> dict:
     """Estado agora, por fluxo, com o que o dono pediu: enviando/parado, compressao, banda do link."""
+    # cache curto: a tela se atualiza a cada 2 s e o calculo leva ~2 s (mediamtx + rollup)
+    if _CACHE_VIVO.get("dados") and time.time() - _CACHE_VIVO.get("em", 0) < validade_s:
+        return _CACHE_VIVO["dados"]
     garantir_tabelas()
     with conexao_banco() as c:
         vistas, linhas = set(), []
@@ -312,20 +367,32 @@ def tempo_real() -> dict:
             continue
         total["fluxos"] += 1
         total["enviando"] += 1
-        total["entrada_mbps"] += f["entrada_mbps"]
-        total["saida_mbps"] += f["saida_mbps"]
-        total["banda_economizada_mbps"] += f["banda_economizada_mbps"]
+        # or 0.0: fluxo sem entrada medida (fonte crua) devolve None e derrubava a tela inteira
+        # com TypeError — a Producao do admin ficava vazia e demorada.
+        total["entrada_mbps"] += f["entrada_mbps"] or 0.0
+        total["saida_mbps"] += f["saida_mbps"] or 0.0
+        total["banda_economizada_mbps"] += f["banda_economizada_mbps"] or 0.0
         total["mb_enviados"] += f["mb_enviados"] or 0
     for k, v in list(total.items()):
         total[k] = round(v, 3) if isinstance(v, float) else v
     total["compressao_agora_pct"] = (round((1 - total["saida_mbps"] / total["entrada_mbps"]) * 100, 2)
                                      if total["entrada_mbps"] else None)
-    return {"em": agora(), "fluxos": fluxos, "total": total, "link": link}
+    _saida = {"em": agora(), "fluxos": fluxos, "total": total, "link": link}
+    _CACHE_VIVO["em"], _CACHE_VIVO["dados"] = time.time(), _saida
+    return _saida
 
 
 # --------------------------------------------------------------------------- 30 dias / cards
+_CACHE_RESUMO: dict = {}
+
+
 def resumo_producao(*, dias: int = 30, embarcacao_id: str | None = None, camera_id: str | None = None,
                     so_enviando: bool = False) -> dict:
+    # cache de 4 s: a tela pede de novo a cada 2 s e o calculo dos cards leva ~2 s
+    _k = (int(dias), embarcacao_id, camera_id, bool(so_enviando))
+    _g = _CACHE_RESUMO.get(_k)
+    if _g and time.time() - _g[0] < 4.0:
+        return _g[1]
     """Cards de producao: por embarcacao e por camera, com a janela pedida (padrao 30 dias).
 
     Regras que o dono cobrou:
@@ -452,14 +519,16 @@ def resumo_producao(*, dias: int = 30, embarcacao_id: str | None = None, camera_
         "banda_economizada_mbps": round(sum(c["banda_economizada_mbps"] or 0 for c in cards), 3),
         "enviando": sum(1 for c in cards if c["estado"] == "enviando"),
     }
-    return {"dias": int(dias), "desde": comeco.strftime("%Y-%m-%dT%H:%M"), "so_enviando": bool(so_enviando),
-            "camera": camera_id, "janela_efetiva_dias": round(minutos_janela / 1440, 3),
-            "janela_efetiva_min": minutos_janela, "primeiro_minuto": primeiro,
-            "agora": agora_dt.strftime("%Y-%m-%dT%H:%M"), "cards": cards, "total": tot,
-            "embarcacoes": [{"id": k, "nome": v.get("nome")} for k, v in embarcacoes.items()],
-            "cameras": sorted({(c["camera_id"], c["camera"]) for c in cards
-                               if (c["camera"] or "").strip()}, key=lambda x: str(x[1])),
-            "nota": ("disponibilidade = minutos no ar / minutos do periodo que o sistema ja rodou "
-                     "(nao dos 30 dias cheios quando o historico e' mais curto)")}
+    _saida = {"dias": int(dias), "desde": comeco.strftime("%Y-%m-%dT%H:%M"), "so_enviando": bool(so_enviando),
+              "camera": camera_id, "janela_efetiva_dias": round(minutos_janela / 1440, 3),
+              "janela_efetiva_min": minutos_janela, "primeiro_minuto": primeiro,
+              "agora": agora_dt.strftime("%Y-%m-%dT%H:%M"), "cards": cards, "total": tot,
+              "embarcacoes": [{"id": k, "nome": v.get("nome")} for k, v in embarcacoes.items()],
+              "cameras": sorted({(c["camera_id"], c["camera"]) for c in cards
+                                 if (c["camera"] or "").strip()}, key=lambda x: str(x[1])),
+              "nota": ("disponibilidade = minutos no ar / minutos do periodo que o sistema ja rodou "
+                       "(nao dos 30 dias cheios quando o historico e' mais curto)")}
+    _CACHE_RESUMO[_k] = (time.time(), _saida)
+    return _saida
 
 

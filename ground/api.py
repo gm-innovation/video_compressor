@@ -43,6 +43,7 @@ COMPRIMIDOS = RAIZ / "ground" / "envios" / "comprimido"
 BANCO = RAIZ / "db" / "pipeline.db"
 CAMPOS_OBRIGATORIOS = ("valor", "fonte", "data", "hardware_versao", "comando")
 PORTA_WEBRTC, PORTA_HLS, PORTA_API_MEDIAMTX = 8889, 8888, 9997
+_CACHE_METRICAS: dict = {}
 DURACAO_SESSAO_H = 12
 INICIADO_EM = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
 PAPEL_ADMIN = ("operador", "admin")
@@ -217,16 +218,75 @@ def inserir_medicao(dados: dict) -> tuple[int, dict]:
 
 
 # --------------------------------------------------------------------------- estado do lado terra
-def mediamtx_json(caminho: str) -> dict:
+_CACHE_HOST = {}          # host -> (quando, resposta, validade): falha fica em cache mais tempo
+
+
+def mediamtx_json(caminho: str, host: str = "127.0.0.1", timeout: float = 1.0) -> dict:
+    """Le a API do mediamtx de um host, com cache curto.
+
+    Sem cache, um mediamtx que NAO esta no ar custa o timeout inteiro a cada requisicao (no Windows
+    o connect para porta fechada chega a pendurar ~2 s) e a tela do dono demora para abrir.
+    Sucesso fica em cache 2 s; falha, 10 s.
+    """
+    import time as _t
+    agora_m = _t.time()
+    guardado = _CACHE_HOST.get(host)
+    if guardado and agora_m - guardado[0] < guardado[2]:
+        return guardado[1]
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{PORTA_API_MEDIAMTX}{caminho}", timeout=3) as r:
-            return json.loads(r.read().decode())
+        with urllib.request.urlopen(f"http://{host}:{PORTA_API_MEDIAMTX}{caminho}", timeout=timeout) as r:
+            dados = json.loads(r.read().decode())
+        _CACHE_HOST[host] = (agora_m, dados, 2.0)
+        return dados
     except Exception:
+        _CACHE_HOST[host] = (agora_m, {}, 10.0)
         return {}
 
 
+def hosts_com_fluxo() -> list[str]:
+    """Todos os mediamtx que podem ter fluxo: esta maquina + cada host usado pelos envios recentes.
+
+    Sem isso o painel procurava o video so no mediamtx local e dizia 'sem sinal' para um fluxo que
+    estava no ar em outro servidor (a webcam desta bancada publica na VPS).
+    """
+    hosts = ["127.0.0.1"]
+    try:
+        with conexao() as c:
+            for r in c.execute("""SELECT DISTINCT srt_host FROM ingestoes
+                                  WHERE srt_host IS NOT NULL AND srt_host <> ''
+                                  ORDER BY id DESC LIMIT 10"""):
+                h = (r["srt_host"] or "").strip()
+                if h and h not in hosts:
+                    hosts.append(h)
+    except Exception:
+        pass
+    return hosts
+
+
+_CACHE_MEDIAMTX = {"em": 0.0, "dados": {}}
+
+
+def caminhos_do_mediamtx(validade_s: float = 2.0) -> dict:
+    """Junta a lista de caminhos de TODOS os mediamtx conhecidos (local + lado terra).
+
+    Fica em cache por 2 s: sem isso cada tela pagava o tempo de sondar o servidor remoto e o
+    painel demorava para abrir.
+    """
+    import time as _t
+    agora_m = _t.time()
+    if _CACHE_MEDIAMTX["dados"] and (agora_m - _CACHE_MEDIAMTX["em"]) < validade_s:
+        return _CACHE_MEDIAMTX["dados"]
+    mt = {}
+    for h in hosts_com_fluxo():
+        for p in mediamtx_json("/v3/paths/list", h).get("items", []):
+            mt[p["name"]] = p          # o local tem prioridade; o remoto completa o resto
+    if mt:
+        _CACHE_MEDIAMTX["em"], _CACHE_MEDIAMTX["dados"] = agora_m, mt
+    return mt
+
+
 def fluxos() -> dict:
-    mt = {p["name"]: p for p in mediamtx_json("/v3/paths/list").get("items", [])}
+    mt = caminhos_do_mediamtx()
     itens = []
     with conexao() as c:
         for cam in c.execute("SELECT * FROM cameras WHERE ativo=1 ORDER BY id").fetchall():
@@ -554,9 +614,15 @@ class Handler(SimpleHTTPRequestHandler):
         if rota in ("/api/metricas", "/api/tempo-real", "/api/metricas/tempo-real"):
             if not (self._pode_operar(u) or self._local()):
                 return self._json(403, {"erro": "so operacao e administrador veem as metricas"})
+            # 2 s de cache: metricas + link + ping somam segundos e a tela se atualiza a cada 2 s
+            import time as _t
+            g = _CACHE_METRICAS.get("d")
+            if g and _t.time() - g[0] < 2.0:
+                return self._json(200, g[1], {"Cache-Control": "no-store"})
             corpo = etapas_pipeline.metricas_ao_vivo()
             corpo["link"] = producao_pipeline.link_srt()
             corpo["latencia_internet"] = producao_pipeline.latencia_internet()
+            _CACHE_METRICAS["d"] = (_t.time(), corpo)
             return self._json(200, corpo, {"Cache-Control": "no-store"})
         if rota in ("/api/tempo-real-completo", "/api/link"):
             if not (self._pode_operar(u) or self._local()):
@@ -607,7 +673,7 @@ class Handler(SimpleHTTPRequestHandler):
             if not u:
                 return self._json(401, {"erro": "entre no sistema"})
             emb = parse_qs(urlparse(self.path).query).get("embarcacao", [None])[0]
-            mt = {p["name"]: p for p in mediamtx_json("/v3/paths/list").get("items", [])}
+            mt = caminhos_do_mediamtx()      # local + lado terra
             saida = []
             with conexao() as c:
                 sql = "SELECT * FROM cameras WHERE ativo=1" + (" AND embarcacao_id=?" if emb else "")
@@ -1076,6 +1142,23 @@ class Handler(SimpleHTTPRequestHandler):
         return self._json(404, {"erro": "rota inexistente"})
 
     # ---- porta unica do video
+    def _host_do_fluxo(self, fluxo: str) -> str:
+        """Onde o fluxo foi PUBLICADO (quem tem o video para servir ao player).
+
+        127.0.0.1 = esta maquina; um IP = o lado terra (ex.: a VPS). Sem isso o painel do cliente
+        procurava o video so no mediamtx local e mostrava 'sem sinal' mesmo com o fluxo no ar em outro
+        servidor — foi o caso da webcam desta bancada, publicada na VPS.
+        """
+        try:
+            with conexao() as c:
+                r = c.execute("""SELECT srt_host FROM ingestoes WHERE fluxo_id=?
+                                 ORDER BY (estado IN ('no_ar','no ar')) DESC, id DESC LIMIT 1""",
+                              (fluxo,)).fetchone()
+            host = (r["srt_host"] if r else None) or ""
+        except Exception:
+            host = ""
+        return host.strip() or "127.0.0.1"
+
     def _whep(self, camera_id: str, usuario) -> None:
         # Sem sessao so a propria maquina do servidor ve o fluxo (painel de bancada); de fora, 401.
         if not usuario and not self._local():
@@ -1089,7 +1172,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(403, {"erro": "voce nao tem acesso a esta camera"})
         fluxo = cam["fluxo_id"]
         corpo = self.rfile.read(int(self.headers.get("Content-Length") or 0))
-        req = urllib.request.Request(f"http://127.0.0.1:{PORTA_WEBRTC}/{fluxo}/whep", data=corpo,
+        servidor = self._host_do_fluxo(fluxo)      # o mediamtx que TEM o fluxo (local ou lado terra)
+        req = urllib.request.Request(f"http://{servidor}:{PORTA_WEBRTC}/{fluxo}/whep", data=corpo,
                                      headers={"Content-Type": self.headers.get("Content-Type", "application/sdp")},
                                      method="POST")
         try:
@@ -1120,7 +1204,8 @@ class Handler(SimpleHTTPRequestHandler):
         if usuario and not pode_ver_camera(usuario, cam):
             return self._json(403, {"erro": "voce nao tem acesso a esta camera"})
         try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{PORTA_HLS}/{cam['fluxo_id']}{resto_fluxo}", timeout=10) as r:
+            servidor = self._host_do_fluxo(cam["fluxo_id"])
+            with urllib.request.urlopen(f"http://{servidor}:{PORTA_HLS}/{cam['fluxo_id']}{resto_fluxo}", timeout=10) as r:
                 dados, tipo = r.read(), r.headers.get("Content-Type", "application/octet-stream")
         except Exception:
             return self._json(502, {"erro": "HLS indisponivel"})

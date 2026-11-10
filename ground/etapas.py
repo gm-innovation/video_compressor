@@ -16,6 +16,7 @@ Uso:
 """
 from __future__ import annotations
 import datetime as dt
+import time as _time
 import argparse, json, os, re, subprocess, sys, time, urllib.request
 from pathlib import Path
 
@@ -338,7 +339,10 @@ def passa_pisos(compressao_pct: float | None, ssim: float | None) -> tuple[bool,
     return (not falta), falta
 
 
-def metricas_ao_vivo() -> dict:
+_CACHE_VIVO: dict = {}
+
+
+def metricas_ao_vivo(validade_s: float = 2.0) -> dict:
     """Numeros do streaming AGORA: compressao, velocidade de envio, banda consumida e economizada.
 
     Fonte: o proprio remetente. O ffmpeg de envio publica o -progress e a ingestao grava taxa, fps,
@@ -346,6 +350,10 @@ def metricas_ao_vivo() -> dict:
     envio esta vivo agora). A entrada vem da fonte original: do registro da compressao quando o fluxo
     saiu de um arquivo comprimido, senao do proprio registro de ingestao.
     """
+    _g = _CACHE_VIVO.get("v")
+    if _g and _time.time() - _g[0] < validade_s:
+        return _g[1]
+
     agora = time.time()
     with conexao_banco() as c:
         linhas, vistas = [], set()
@@ -405,7 +413,9 @@ def metricas_ao_vivo() -> dict:
             total[k] = round(v, 3)
     total["compressao_pct"] = (round((1 - total["saida_mbps"] / total["entrada_mbps"]) * 100, 2)
                                if total["entrada_mbps"] else None)
-    return {"em": _agora(), "fluxos": fluxos, "total": total}
+    _saida = {"em": _agora(), "fluxos": fluxos, "total": total}
+    _CACHE_VIVO["v"] = (_time.time(), _saida)
+    return _saida
 
 
 def _agora() -> str:

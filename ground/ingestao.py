@@ -32,6 +32,12 @@ def garantir_schema():
     sql = (RAIZ / "db" / "schema-ingestao.sql").read_text(encoding="utf-8")
     with conexao() as c:
         c.executescript(sql)
+        # colunas novas em banco que ja existia (CREATE TABLE IF NOT EXISTS nao altera tabela pronta)
+        for coluna, tipo in (("srt_host", "TEXT"),):
+            try:
+                c.execute(f"ALTER TABLE ingestoes ADD COLUMN {coluna} {tipo}")
+            except sqlite3.OperationalError:
+                pass
 
 def hw() -> str:
     gpu = "sem nvidia-smi"
@@ -201,7 +207,7 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
     if tipo in ("camera", "sintetica"):
         # fonte viva: nao ha arquivo para sondar. A resolucao vem do pedido e o alvo e' fixo
         # (o numero medido passa a ser o do envio CONTINUO, lido do -progress do ffmpeg).
-        s = {"resolucao": (resolucao or "1920x1080") if tipo == "sintetica" else (dispositivo or "webcam"),
+        s = {"resolucao": _resolucao_valida(resolucao, "1920x1080" if tipo == "sintetica" else "1280x720"),
              "fps": float(fps or 30), "bitrate_kbps": None,
              "dispositivo": (dispositivo or DISPOSITIVO_PADRAO) if tipo == "camera" else "testsrc2"}
         repetir = False
@@ -227,13 +233,15 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=saida, cwd=str(RAIZ))
     with conexao() as c:
         cur = c.execute("""INSERT INTO ingestoes (fluxo_id, camera_id, rotulo, fonte, tipo, repetir, codec,
-              bitrate_alvo, resolucao, fps_nativo, bitrate_entrada_kbps, estado, pid, log, criado_em, atualizado_em)
-              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+              bitrate_alvo, resolucao, fps_nativo, bitrate_entrada_kbps, estado, pid, log, srt_host,
+              criado_em, atualizado_em)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (fluxo_id, camera_id, rotulo or slug,
              origem_pagina or (f"dshow:{dispositivo or DISPOSITIVO_PADRAO}" if tipo == "camera"
                                else (f"lavfi:testsrc2:{resolucao}" if tipo == "sintetica" else fonte)),
              tipo, 1 if repetir else 0, codec, bitrate,
-             s.get("resolucao"), s.get("fps"), s.get("bitrate_kbps"), "iniciando", proc.pid, str(log), agora(), agora()))
+             s.get("resolucao"), s.get("fps"), s.get("bitrate_kbps"), "iniciando", proc.pid, str(log),
+             srt_host, agora(), agora()))
         ident = cur.lastrowid
         if tipo in ("camera", "sintetica"):
             # a resolucao real da webcam so se sabe DEPOIS que ela publica: sonda o caminho uma vez
@@ -438,7 +446,18 @@ def listar_dispositivos() -> dict:
 def _args_fonte_viva(tipo: str, dispositivo: str | None, resolucao: str, fps: int) -> list[str]:
     if tipo == "sintetica":
         return ["-f", "lavfi", "-i", f"testsrc2=size={resolucao or '1920x1080'}:rate={fps or 30}"]
-    return ["-f", "dshow", "-rtbufsize", "256M", "-i", f'video={dispositivo or DISPOSITIVO_PADRAO}']
+    # -video_size EXPLICITO: sem ele a webcam entrega o que quiser e o registro ficava SEM resolucao
+    # (guardava o nome do dispositivo), o que zerava a entrada/compressao na tela.
+    return ["-f", "dshow", "-rtbufsize", "256M", "-framerate", str(fps or 30),
+            "-video_size", _resolucao_valida(resolucao, "1280x720"),
+            "-i", f'video={dispositivo or DISPOSITIVO_PADRAO}']
+
+
+def _resolucao_valida(txt: str | None, padrao: str = "1280x720") -> str:
+    """Devolve 'LARGURAxALTURA'. Fonte viva nao tem arquivo para sondar: se o que veio nao for
+    uma resolucao (ex.: o nome do dispositivo da webcam), usa o padrao pedido."""
+    m = re.match(r"^\s*(\d{2,5})\s*[xX]\s*(\d{2,5})\s*$", txt or "")
+    return f"{m.group(1)}x{m.group(2)}" if m else padrao
 
 
 def capturar(*, tipo: str = "camera", dispositivo: str | None = None, resolucao: str = "1920x1080",

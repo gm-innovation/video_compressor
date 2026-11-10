@@ -23,13 +23,16 @@ HOST = sys.argv[1] if len(sys.argv) > 1 else "187.127.60.250"
 PORTA = int(sys.argv[2]) if len(sys.argv) > 2 else 8890
 ROTULO = sys.argv[3] if len(sys.argv) > 3 else "Webcam bancada (bordo -> VPS)"
 SEGUNDOS = int(sys.argv[4]) if len(sys.argv) > 4 else 0
+# a webcam desta bancada entrega 1280x720@30 — pedir 1080p ao dshow faz o ffmpeg falhar
+RESOLUCAO = sys.argv[5] if len(sys.argv) > 5 else "1280x720"
 
 if __name__ == "__main__":
     # a webcam so abre uma vez: se outro envio a estiver segurando, tenta de novo em vez de desistir
     r = {}
     for tentativa in range(1, 61):
         r = ao_vivo(tipo="camera", dispositivo=DISPOSITIVO_PADRAO, rotulo=ROTULO,
-                    fluxo_id="vps-webcam-bancada", fps=30, srt_host=HOST, srt_port=PORTA)
+                    fluxo_id="vps-webcam-bancada", fps=30, resolucao=RESOLUCAO,
+                    srt_host=HOST, srt_port=PORTA)
         if not r.get("erro"):
             break
         print(f"tentativa {tentativa}: {r['erro']}", flush=True)
