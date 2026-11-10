@@ -32,6 +32,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ingestao import iniciar as ing_iniciar, parar as ing_parar, listar as ing_listar  # noqa: E402
+from ingestao import desligar_camera as ing_desligar_camera, ligar_camera as ing_ligar_camera  # noqa: E402
 from ingestao import capturar as ing_capturar, listar_dispositivos as ing_dispositivos, ao_vivo as ing_ao_vivo
 from ingestao import limpar_vivos_mortos as ing_limpar_vivos
 import etapas as etapas_pipeline  # noqa: E402
@@ -554,8 +555,12 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(200, {"ok": True, "banco": str(BANCO), "python": sys.version.split()[0]})
         if rota == "/api/eu":
             if not u:
-                return self._json(200, {"autenticado": False})
-            return self._json(200, {"autenticado": True, "email": u["email"], "nome": u["nome"], "papel": u["papel"]})
+                return self._json(200, {"autenticado": False, "local": self._local()})
+            # "local" diz se quem fala com a API e' da propria maquina de captura: e' isso que
+            # libera os botoes de ligar/desligar a CAMERA na tela (a captura so existe onde a
+            # camera esta plugada). Cliente remoto nunca recebe esses botoes.
+            return self._json(200, {"autenticado": True, "email": u["email"], "nome": u["nome"],
+                                    "papel": u["papel"], "local": self._local()})
         if rota == "/api/fluxos":
             return self._json(200, fluxos())
         if rota in ("/api/ingestoes", "/api/envios"):
@@ -947,6 +952,21 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(422, r)
             auditar(u, "envio_video", f"link {endereco[:120]} -> {r['fluxo_id']}", self.client_address[0])
             return self._json(201, {"ok": True, **r}, {"Cache-Control": "no-store"})
+        if rota in ("/api/cameras/desligar", "/api/cameras/ligar"):
+            # ligar/desligar a camera pela tela: quem manda e' a operacao (o cliente so olha).
+            # desligar = para o envio e SOLTA o dispositivo; ligar = reabre com o ultimo ajuste.
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so operacao e administrador ligam e desligam a camera"})
+            d = self._corpo()
+            cam_id = str(d.get("camera_id") or d.get("id") or "").strip()
+            if not cam_id:
+                return self._json(422, {"erro": "informe a camera"})
+            desligar = rota.endswith("desligar")
+            r = ing_desligar_camera(cam_id) if desligar else ing_ligar_camera(cam_id)
+            if "erro" in r:
+                return self._json(422, r)
+            auditar(u, "camera_desligada" if desligar else "camera_ligada", cam_id, self.client_address[0])
+            return self._json(200, r, {"Cache-Control": "no-store"})
         if rota in ("/api/ingestao/parar", "/api/envios/parar"):
             if not (self._pode_operar(u) or self._local()):
                 return self._json(403, {"erro": "so operacao e administrador enviam video de teste"})

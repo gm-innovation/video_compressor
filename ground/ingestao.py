@@ -327,7 +327,10 @@ def _bombear(ident: int, proc: subprocess.Popen, log: Path):
                 motivo = _motivo_da_falha(codigo, log, dict(r) if r is not None else {})
                 # o ffmpeg as vezes sai com codigo 0 sem ter codificado NADA (camera ja em uso, por
                 # exemplo): sem isso a tela pintava um quadro preto e nenhum aviso de erro.
-                c.execute("UPDATE ingestoes SET estado=?, erro=?, atualizado_em=? WHERE id=?",
+                # O "AND estado<>'parado'" e' atomico de proposito: quem desligou a camera pela tela
+                # marcou 'parado' e esse recado NAO pode ser sobrescrito por 'erro' (corrida real —
+                # a linha virava 'erro', o remetente achava que foi queda de rede e reabria sozinho).
+                c.execute("UPDATE ingestoes SET estado=?, erro=?, atualizado_em=? WHERE id=? AND estado<>'parado'",
                           ("erro" if motivo else "fim", motivo, agora(), ident))
             if r and (r["duracao_s"] or 0) >= 15:
                 c.execute("""INSERT INTO medicoes (valor, fonte, data, hardware_versao, comando)
@@ -343,6 +346,9 @@ def parar(ident: int, remover_camera: bool = False) -> dict:
         r = c.execute("SELECT * FROM ingestoes WHERE id=?", (ident,)).fetchone()
         if not r:
             return {"erro": "ingestao nao encontrada"}
+        # marca ANTES de matar: o vigia do remetente olha o estado no banco para saber se a queda
+        # foi da rede (reabre) ou se foi a tela que desligou (nao reabre). A ordem evita corrida.
+        c.execute("UPDATE ingestoes SET estado='parado', parado_em=?, atualizado_em=? WHERE id=?", (agora(), agora(), ident))
         if r["pid"]:
             try:
                 os.kill(r["pid"], signal.SIGTERM)
@@ -351,10 +357,72 @@ def parar(ident: int, remover_camera: bool = False) -> dict:
                     subprocess.run(["taskkill", "/F", "/PID", str(r["pid"])], capture_output=True)
                 except Exception:
                     pass
-        c.execute("UPDATE ingestoes SET estado='parado', parado_em=?, atualizado_em=? WHERE id=?", (agora(), agora(), ident))
         if remover_camera and r["camera_id"]:
             c.execute("DELETE FROM cameras WHERE id=?", (r["camera_id"],))
-        return {"ok": True, "id": ident, "fluxo_id": r["fluxo_id"]}
+        # parar de verdade = soltar o dispositivo: sem isso a webcam ficava presa e o proximo
+        # envio respondia "camera em uso", obrigando a desligar/ligar na mao.
+        disp = None
+        if (r["fonte"] or "").startswith("dshow:"):
+            disp = r["fonte"].split("dshow:", 1)[1]
+        livre = liberar_camera(disp) if disp else {"liberados": 0}
+        return {"ok": True, "id": ident, "fluxo_id": r["fluxo_id"], **livre}
+
+
+def desligar_camera(camera_id: str) -> dict:
+    """Desliga a camera pela tela: para o envio vivo dessa camera e solta o dispositivo.
+
+    Ninguem precisa desconectar nada fisicamente — e' o mesmo efeito de "desligar a camera".
+    """
+    with conexao() as c:
+        cam = c.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
+        if not cam:
+            return {"erro": "camera nao encontrada"}
+        linha = c.execute("""SELECT * FROM ingestoes WHERE fluxo_id=?
+                              AND estado IN ('no_ar','no ar','iniciando') ORDER BY id DESC LIMIT 1""",
+                          (cam["fluxo_id"],)).fetchone()
+        if not linha:
+            linha = c.execute("SELECT * FROM ingestoes WHERE fluxo_id=? ORDER BY id DESC LIMIT 1",
+                              (cam["fluxo_id"],)).fetchone()
+    parados = []
+    if linha and linha["estado"] not in ("parado", "fim"):
+        parados.append(parar(linha["id"])["id"])
+    disp = None
+    if linha and (linha["fonte"] or "").startswith("dshow:"):
+        disp = linha["fonte"].split("dshow:", 1)[1]
+    livre = liberar_camera(disp)
+    return {"ok": True, "camera_id": camera_id, "fluxo_id": cam["fluxo_id"], "parados": parados,
+            "liberados": livre.get("liberados", 0), "dispositivo": livre.get("dispositivo")}
+
+
+def ligar_camera(camera_id: str) -> dict:
+    """Liga a camera pela tela, reusando o ultimo envio dela (mesmo ajuste, mesma origem).
+
+    A camera volta sozinha: antes de abrir, solta quem estiver segurando o dispositivo.
+    """
+    with conexao() as c:
+        cam = c.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
+        if not cam:
+            return {"erro": "camera nao encontrada"}
+        ult = c.execute("SELECT * FROM ingestoes WHERE fluxo_id=? ORDER BY id DESC LIMIT 1",
+                        (cam["fluxo_id"],)).fetchone()
+    if cam["ip"]:
+        return {"erro": "esta camera e por endereco (RTSP) e precisa de credencial: use Enviar video"}
+    d = dict(ult) if ult else {}
+    fonte = d.get("fonte") or ""
+    if fonte.startswith("live:sintetica") or d.get("tipo") == "sintetica":
+        return ao_vivo(tipo="sintetica", rotulo=cam["rotulo"], fluxo_id=cam["fluxo_id"],
+                       bitrate=d.get("bitrate_alvo") or "auto",
+                       srt_host=d.get("srt_host") or "187.127.60.250",
+                       srt_port=int(d.get("srt_port") or 8890),
+                       embarcacao_id=cam["embarcacao_id"])
+    if not fonte.startswith("live:camera") and not fonte.startswith("dshow:"):
+        return {"erro": "esta camera nunca foi transmitida daqui: use Enviar video para ligar o envio"}
+    disp = d.get("dispositivo") or (fonte.split("dshow:", 1)[1] if "dshow:" in fonte else DISPOSITIVO_PADRAO)
+    return ao_vivo(tipo="camera", dispositivo=disp, rotulo=cam["rotulo"], fluxo_id=cam["fluxo_id"],
+                   resolucao=d.get("resolucao") or "1280x720", fps=int(d.get("fps_alvo") or 30),
+                   bitrate=d.get("bitrate_alvo") or "3000k",
+                   srt_host=d.get("srt_host") or "187.127.60.250", srt_port=int(d.get("srt_port") or 8890),
+                   embarcacao_id=cam["embarcacao_id"])
 
 def listar(limite: int = 40) -> list[dict]:
     garantir_schema()
@@ -508,6 +576,12 @@ def ao_vivo(*, tipo: str = "camera", dispositivo: str | None = None, resolucao: 
     # a webcam do Windows (dshow) so abre UMA vez: dois envios da mesma camera brigam pelo dispositivo
     # e o segundo fica com quadro preto. Melhor recusar com recado claro do que pintar tela preta.
     if tipo == "camera":
+        # a webcam sempre volta sozinha: se algum processo anterior ficou preso segurando o
+        # dispositivo (a rede caiu e o ffmpeg nao soltou a camera), libera ANTES de abrir de novo.
+        livre = liberar_camera(dispositivo)
+        if livre.get("liberados"):
+            print(f"[envios] liberei a webcam \"{livre['dispositivo']}\": {livre['liberados']} processo(s) parado(s)",
+                  flush=True)
         ocupado = _camera_em_uso(dispositivo)
         if ocupado:
             return {"erro": (f'a webcam "{dispositivo}" ja esta em uso pelo fluxo "{ocupado["rotulo"]}" '
@@ -535,6 +609,31 @@ def ao_vivo(*, tipo: str = "camera", dispositivo: str | None = None, resolucao: 
     return iniciar(f"live:{tipo}", rotulo=nome, fluxo_id=ident,
                    bitrate=bitrate, tipo=tipo, repetir=False, dispositivo=dispositivo, resolucao=resolucao,
                    fps=fps, embarcacao_id=embarcacao_id, srt_host=srt_host, srt_port=srt_port)
+
+
+def liberar_camera(dispositivo: str | None = None, espera: float = 1.5) -> dict:
+    """Solta a webcam: mata quem estiver segurando o dispositivo (no Windows o dshow abre UMA vez).
+
+    Caso real que motivou isto: a rede caiu, o ffmpeg ficou preso com o soquete SRT morto e
+    continuou segurando a camera — o envio seguinte respondia "camera em uso" e a camera
+    so voltava desligando e ligando na mao. Aqui ela volta sozinha, sem ninguem mexer no cabo.
+    """
+    nome = (dispositivo or DISPOSITIVO_PADRAO).strip()
+    if os.name != "nt" or not nome:
+        return {"dispositivo": nome, "liberados": 0, "pids": []}
+    alvo = "*video=" + nome + "*"
+    ps = ("Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine "
+          "-and $_.CommandLine -like '" + alvo + "' } | ForEach-Object { try { Stop-Process -Id "
+          "$_.ProcessId -Force -ErrorAction Stop; $_.ProcessId } catch {} }")
+    pids: list[int] = []
+    try:
+        bruto = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, timeout=30).stdout
+        pids = [int(x) for x in (bruto or b"").decode("utf-8", "ignore").split() if x.strip().isdigit()]
+    except Exception:
+        pids = []
+    if pids:
+        time.sleep(espera)  # o Windows leva um instante para soltar o dispositivo apos o kill
+    return {"dispositivo": nome, "liberados": len(pids), "pids": pids}
 
 
 def _camera_em_uso(dispositivo: str | None, validade_s: int = 12) -> dict | None:

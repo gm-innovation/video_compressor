@@ -335,6 +335,7 @@ function telaTempoReal(t) {
     limpar(tabelaBox);
     const linhas = (m.fluxos || []).map((f) => ({
       fluxo: f.fluxo_id,
+      vivo: !!f.vivo,
       comprimindo: f.vivo ? 'sim' : (f.erro ? 'ERRO: ' + f.erro : 'sem sinal'),
       entrada: (f.entrada_mbps === null ? '—' : fmt(f.entrada_mbps, 3) + ' Mbps' +
         ((f.entrada_fonte || '').indexOf('bruto') === 0 ? ' (bruto)' : '')),
@@ -372,6 +373,16 @@ function telaTempoReal(t) {
       { rotulo: 'Perdidos', campo: 'perdidos' },
       { rotulo: 'Espectadores', campo: 'leitores' },
       { rotulo: 'No ar há', campo: 'no_ar' },
+      { rotulo: 'Câmera', valor: (l) => botao(l.vivo ? 'desligar' : 'ligar', 'mini', async () => {
+          // desligar solta o dispositivo de captura (a camera "desliga" sem mexer em cabo);
+          // ligar reabre com o ultimo ajuste dela.
+          const r = await api('/api/cameras/' + (l.vivo ? 'desligar' : 'ligar'),
+                              { method: 'POST', body: JSON.stringify({ camera_id: l.fluxo }) });
+          dizer(r.ok ? (l.vivo ? 'câmera desligada: ' : 'câmera ligada: ') + l.fluxo
+                     : 'não deu para ' + (l.vivo ? 'desligar' : 'ligar') + ': ' +
+                       ((r.corpo && r.corpo.erro) || 'sem resposta'));
+          carregar();
+        }) },
       { rotulo: 'Qualidade', valor: (l) => botao('medir agora', 'mini', async () => {
           dizer('medindo a qualidade de ' + l.fluxo + ' (8 s, precisa da fonte livre)...');
           const r = await api('/api/qualidade/medir', { method: 'POST', body: JSON.stringify({ fluxo: l.fluxo }) });

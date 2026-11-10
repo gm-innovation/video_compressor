@@ -3,6 +3,7 @@
 const S = {
   usuario: null, embarcacoes: [], cameras: [], embarcacaoId: null,
   tela: 'visualizar', layout: 3, auto: true, pagina: 1, selecionadas: new Set(), ia: false,
+  podeCamera: false,
   eventos: [], contagens: [], relatorios: null, timer: null,
   analises: { agentes: [], contagens: [], eventos: [] }, agentesPorCamera: {}
 };
@@ -32,6 +33,9 @@ async function abrir() {
   const eu = await api('/api/eu');
   if (!eu.corpo || !eu.corpo.autenticado) return;
   S.usuario = eu.corpo;
+  // ligar/desligar a CAMERA so faz sentido onde a camera esta plugada: a propria maquina de
+  // captura (local) ou a operacao. O cliente remoto nunca ve esses botoes.
+  S.podeCamera = !!(eu.corpo.local || eu.corpo.papel !== 'cliente');
   $('entrada').classList.add('oculto'); $('sistema').classList.remove('oculto');
   $('conta-email').textContent = eu.corpo.email;
   $('conta-papel').textContent = eu.corpo.papel === 'cliente' ? 'Cliente' : 'Operação LECSOR';
@@ -120,6 +124,7 @@ function desenharVisualizar() {
     const jan = document.createElement('div');
     jan.className = 'janela' + (S.selecionadas.has(c.id) ? ' selecionada' : '');
     jan.dataset.cam = c.id;
+    jan.dataset.noAr = c.no_ar ? '1' : '0';
     const v = document.createElement('video');
     v.id = 'v-' + c.id; v.muted = true; v.autoplay = true; v.playsInline = true;
     v.onclick = () => selecionar(c.id);
@@ -133,15 +138,27 @@ function desenharVisualizar() {
     rot.appendChild(ponto); rot.appendChild(nome);
     const caixas = document.createElement('div'); caixas.className = 'caixas'; caixas.id = 'caixas-' + c.id;
     jan.appendChild(v);
-    if (!c.no_ar && c.motivo) {
-      // aviso claro no lugar da tela preta: sem isso o operador nao sabe se a camera caiu ou falhou
-      const aviso = document.createElement('div');
-      aviso.className = 'aviso-cam';
-      aviso.style.cssText = 'position:absolute;left:0;right:0;top:46%;text-align:center;padding:0 12px;' +
-        'color:#ffb4b4;font-size:13px;line-height:1.35;pointer-events:none;text-shadow:0 1px 2px #000';
-      aviso.textContent = '⚠ ' + c.motivo;
-      jan.appendChild(aviso);
+    if (S.podeCamera) {
+      // botao de energia da camera: desligar solta o dispositivo de captura (a camera "desliga"),
+      // ligar reabre com o ultimo ajuste. Sem precisar desconectar nada fisicamente.
+      const ctrl = document.createElement('span');
+      ctrl.className = 'controle-cam';
+      const b = document.createElement('button');
+      b.className = 'botao-cam';
+      b.textContent = c.no_ar ? 'Desligar' : 'Ligar';
+      b.title = c.no_ar ? 'Desliga a câmera (solta o dispositivo de captura)'
+                        : 'Liga a câmera de novo com o último ajuste';
+      b.onclick = (ev) => { ev.stopPropagation(); energia(c.id, !c.no_ar); };
+      ctrl.appendChild(b);
+      jan.appendChild(ctrl);
     }
+    // aviso no lugar da tela preta: sem isso o operador nao sabe se a camera caiu, foi desligada
+    // ou falhou. Fica sempre no DOM e o pintarEstados() atualiza o texto a cada 5 s.
+    const aviso = document.createElement('div'); aviso.className = 'aviso-cam';
+    aviso.style.cssText = 'position:absolute;left:0;right:0;top:46%;text-align:center;padding:0 12px;' +
+      'color:#ffb4b4;font-size:13px;line-height:1.35;pointer-events:none;text-shadow:0 1px 2px #000';
+    jan.appendChild(aviso);
+    pintarAviso(c, jan);
     jan.appendChild(marca); jan.appendChild(caixas); jan.appendChild(rot);
     grade.appendChild(jan);
     window.Video.ligar(c.id, c.id, v);
@@ -157,12 +174,43 @@ function selecionar(id) {
   desenharVisualizar(); atualizarRodape();
 }
 
+/* Liga/desliga a CAMERA pela tela: desligar solta o dispositivo de captura (ninguem precisa
+   desconectar nada fisicamente); ligar reabre a camera com o ultimo ajuste dela. */
+async function energia(cameraId, ligar) {
+  const d = await api(ligar ? '/api/cameras/ligar' : '/api/cameras/desligar',
+                      { method: 'POST', body: JSON.stringify({ camera_id: cameraId }) });
+  if (!d.ok) { alert((d.corpo && d.corpo.erro) || 'não foi possível ligar/desligar a câmera'); return; }
+  await atualizar();
+}
+
+function pintarAviso(c, jan) {
+  const aviso = jan.querySelector('.aviso-cam');
+  if (!aviso) return;
+  if (!c.no_ar && c.motivo) { aviso.textContent = '⚠ ' + c.motivo; aviso.style.display = 'block'; }
+  else { aviso.textContent = ''; aviso.style.display = 'none'; }
+}
+
 function pintarEstados() {
   for (const c of S.cameras) {
     const jan = $('palco').querySelector(`[data-cam="${c.id}"]`);
     if (!jan) continue;
     const ponto = jan.querySelector('.rotulo-cam .ponto');
     if (ponto) ponto.className = 'ponto' + (c.no_ar ? '' : ' ruim');
+    // o botao de energia e o aviso seguem o estado FRESCO da camera: sem isso o rotulo ficava
+    // preso no estado antigo e o segundo clique repetia a acao errada.
+    const b = jan.querySelector('.botao-cam');
+    if (b) {
+      b.textContent = c.no_ar ? 'Desligar' : 'Ligar';
+      b.title = c.no_ar ? 'Desliga a câmera (solta o dispositivo de captura)'
+                        : 'Liga a câmera de novo com o último ajuste';
+      b.onclick = (ev) => { ev.stopPropagation(); energia(c.id, !c.no_ar); };
+    }
+    pintarAviso(c, jan);
+    // a camera voltou depois de desligada/caida: rearma o player, senao a janela fica preta
+    // mesmo com o fluxo no ar (o player sozinho pode demorar ou desistir depois de varios erros).
+    const v = jan.querySelector('video');
+    if (v && c.no_ar && jan.dataset.noAr === '0') window.Video.ligar(c.id, c.id, v);
+    jan.dataset.noAr = c.no_ar ? '1' : '0';
     jan.classList.toggle('selecionada', S.selecionadas.has(c.id));
   }
 }
