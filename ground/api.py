@@ -1172,7 +1172,12 @@ def principal() -> int:
     semear = "--semear-demo" in args
     porta = next((int(a) for a in args if a.isdigit()), 8765)
     inicializar(semear)
-    ing_limpar_vivos()          # envio que ficou 'no_ar' com processo morto
+    try:
+        ing_limpar_vivos()      # envio que ficou 'no_ar' com processo morto
+    except Exception as e:
+        # limpeza e higiene: se o banco estiver ocupado nesse instante, a API sobe de todo jeito.
+        # Antes isso derrubava o servico no boot e o aplicativo abria em branco, sem tela de login.
+        print(f"[api] aviso: limpeza de envios vivos falhou ({type(e).__name__}: {e}); seguindo", flush=True)
     threading.Thread(target=_fechar_minutos_em_loop, daemon=True).start()
     print(f"[ok] sistema em http://127.0.0.1:{porta}/  (bancada: /  ·  cliente: /app  ·  admin: /admin)")
     # por padrão o servidor fica SÓ no loopback da máquina; no lado terra ele precisa aceitar o

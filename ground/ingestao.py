@@ -526,8 +526,12 @@ def _processo_vivo(pid) -> bool:
     if not pid:
         return False
     try:
-        saida = subprocess.run(["tasklist", "/FI", f"PID eq {int(pid)}", "/NH"],
-                               capture_output=True, text=True, timeout=5).stdout
+        # texto=False + decodificacao tolerante: a saida do tasklist neste Windows vem na pagina
+        # OEM (cp850/cp1252) e o text=True levantava UnicodeDecodeError numa thread interna,
+        # sujando o log a cada chamada.
+        bruto = subprocess.run(["tasklist", "/FI", f"PID eq {int(pid)}", "/NH"],
+                               capture_output=True, timeout=5).stdout
+        saida = (bruto or b"").decode("utf-8", "ignore") or (bruto or b"").decode("cp850", "ignore")
         return str(int(pid)) in saida
     except Exception:
         try:
@@ -544,8 +548,12 @@ def limpar_vivos_mortos() -> int:
     """
     n = 0
     with conexao() as c:
-        for r in c.execute("""SELECT id, pid, rotulo FROM ingestoes
-                              WHERE estado IN ('no_ar','no ar','iniciando')"""):
+        # .fetchall() ANTES de escrever: ler e escrever na MESMA conexao com o cursor aberto
+        # faz o SQLite tentar subir de leitura para escrita e devolver 'database is locked'
+        # na hora, sem respeitar o busy_timeout — era isso que derrubava a API no boot.
+        linhas = c.execute("""SELECT id, pid, rotulo FROM ingestoes
+                               WHERE estado IN ('no_ar','no ar','iniciando')""").fetchall()
+        for r in linhas:
             if not _processo_vivo(r["pid"]):
                 c.execute("""UPDATE ingestoes SET estado='erro',
                              erro=COALESCE(erro,'o envio caiu quando o servico foi reiniciado'),

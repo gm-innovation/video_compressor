@@ -43,6 +43,25 @@ const servidor = require('./servidor');
 
 function urlDe(nome) { return config.base.replace(/\/$/, '') + SUPERFICIES[nome].rota; }
 
+// Tela de erro quando o lado terra nao responde: diz o endereco tentado e o motivo, em vez de
+// deixar a janela vazia (parecia "nao aparece os campos de autenticacao").
+function paginaDeErro(alvo, motivo) {
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Lado terra fora do ar</title>
+<style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+background:#0b1220;color:#e6edf7;font:15px/1.55 "Segoe UI",system-ui,sans-serif}
+.caixa{max-width:620px;padding:28px 32px;border:1px solid #24334d;border-radius:14px;background:#111b2e}
+h1{margin:0 0 10px;font-size:20px;color:#ffd166}p{margin:8px 0}b{color:#9fc4ff}
+code{background:#0a1424;border:1px solid #24334d;border-radius:6px;padding:2px 6px}</style></head>
+<body><div class="caixa">
+<h1>O lado terra nao respondeu</h1>
+<p>Endereco tentado: <code>${alvo}</code></p>
+<p>Motivo: <b>${motivo}</b></p>
+<p>O aplicativo abre a tela de autenticacao servida por esse endereco; sem ele, nao ha o que mostrar.
+Confira se o servico esta rodando nessa maquina ou no servidor do lado terra, e se o endereco em
+<code>config.json</code> (ao lado do aplicativo) esta certo. Depois use <b>Modo &rarr; Recarregar a tela</b>.</p>
+</div></body></html>`;
+}
+
 function abrir(nome) {
   if (janelas.has(nome) && !janelas.get(nome).isDestroyed()) { janelas.get(nome).focus(); return janelas.get(nome); }
   const s = SUPERFICIES[nome];
@@ -60,7 +79,19 @@ function abrir(nome) {
   // Navegacao presa a propria instalacao: link de fora abre no navegador do sistema.
   janela.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
   janela.webContents.on('will-navigate', (evento, url) => {
-    if (!url.startsWith(config.base)) { evento.preventDefault(); shell.openExternal(url); }
+    if (!url.startsWith(config.base) && !url.startsWith('data:')) { evento.preventDefault(); shell.openExternal(url); }
+  });
+  // Se o lado terra nao responde (API parada, endereco errado, sem rede), a janela NAO pode ficar
+  // em branco com so o menu: o motivo aparece na tela. Foi assim que o dono viu "nao aparece
+  // os campos de autenticacao" — a API estava fora do ar e a tela ficou vazia sem dizer nada.
+  janela.webContents.on('did-fail-load', (evento, codigo, descricao, urlTentada, ehPrincipal) => {
+    if (!ehPrincipal) return;
+    const alvo = urlTentada || urlDe(nome);
+    const motivo = codigo === -102 || codigo === -6 ? 'o servidor do lado terra nao respondeu (conexao recusada)'
+                 : codigo === -105 ? 'nao foi possivel achar esse endereco (DNS)'
+                 : codigo === -118 ? 'o servidor demorou demais para responder (tempo esgotado)'
+                 : descricao || ('erro ' + codigo);
+    janela.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(paginaDeErro(alvo, motivo)));
   });
   janela.loadURL(urlDe(nome));
   janelas.set(nome, janela);
@@ -75,6 +106,8 @@ function menu() {
   }
   modelo.push(
     { label: 'Modo', submenu: [
+      { label: 'Recarregar a tela', accelerator: 'CmdOrCtrl+R', click: () => { for (const [, j] of janelas) j.webContents.reload(); } },
+      { type: 'separator' },
       { label: 'Janela', type: 'radio', checked: !config.modoQuiosque, click: () => { config.modoQuiosque = false; gravarConfig(config); aplicar(); } },
       { label: 'Quiosque (tela cheia)', type: 'radio', checked: config.modoQuiosque, click: () => { config.modoQuiosque = true; gravarConfig(config); aplicar(); } }
     ] },
