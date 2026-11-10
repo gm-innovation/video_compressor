@@ -421,3 +421,20 @@ escutava em `127.0.0.1` (o navegador do cliente não alcançava).
   esta máquina desligar; a VPS segue no ar com a fonte sintética própria.
 - **Falta** a coluna "banda no link" na tela (medição da VPS por minuto) e o atraso ponta-a-ponta medido
   com relógio de precisão (ms), não de 1 s.
+
+## A compressão funcionou? Quanto e com que qualidade (09/11/2026, 18:2x)
+
+Pergunta do dono: *"a compressão funcionou? quanto comprimiu e qual a qualidade?"*
+
+- **No ar agora:** `vps-webcam-bancada` recebendo na VPS **1,508 Mbps** (medido por delta do
+  `inboundBytes` do mediamtx em 10 s) — não é estimativa, é o que atravessou o link.
+- **Mesmo ajuste do fluxo vivo** (`libx264`, `-b:v 1500k`, 30 fps, yuv420p) aplicado a um clipe real de
+  webcam desta bancada (`captura-webcam-do-notebook-ao-vivo-160137.mp4`, 720p30, 10 s):
+  **15,95 MB / 12.759 kbps → 1,88 MB / 1.503 kbps = 88,22% menos bytes**, com
+  **SSIM All 0,9859** (Y 0,9853 · U 0,9885 · V 0,9856) — acima do piso nominal 0,9733 e da margem 0,9713.
+- Ou seja: **sim, comprimiu, e a qualidade medida ficou acima do piso do dono.**
+- Comando do SSIM: `ffmpeg -i <comprimido> -i <original> -lavfi ssim=stats_file=- -f null -`.
+
+**Atenção ao número:** o "bruto teórico" de 331,8 Mbps é o equivalente do sensor cru (720p30 4:2:0) e não é
+o que a câmera gera — o que a webcam realmente escreve é ~12,8 Mbps. Contra ESSE valor, a compressão real
+do fluxo vivo é **≈88%** (12,8 → 1,5 Mbps), que é o número comparável ao piso de 73% fixado pelo dono.
