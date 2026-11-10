@@ -28,7 +28,8 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, str(os.path.dirname(os.path.abspath(__file__))))
 from entrada import entrada_teorica_kbps, origem_da_entrada  # noqa: E402
 
-from etapas import RAIZ, _agora as agora, conexao_banco, envio  # reaproveita a base da bancada
+from etapas import (RAIZ, PISO_QUALIDADE_ACEITO, PISO_QUALIDADE_SSIM,  # reaproveita a base da bancada
+                    _agora as agora, conexao_banco, envio)
 
 MEDIAMTX_API = os.environ.get("LECSOR_MEDIAMTX_API", "http://127.0.0.1:9997")
 PING_ALVO = os.environ.get("LECSOR_PING_ALVO", "8.8.8.8")
@@ -304,6 +305,44 @@ def registrar_latencia(fluxo_id: str, ms: float, caminho: str = "") -> None:
 _CACHE_VIVO: dict = {}
 
 
+def _qualidade_por_fluxo() -> dict:
+    """Ultima qualidade (SSIM) medida de cada fluxo, com a idade em segundos.
+
+    Qualidade precisa da fonte livre e e' guardada em `medicoes_qualidade` por quem mede
+    (`qualidade.medir`). A tela mostra o numero COM a hora: SSIM sem data nao diz se o ajuste
+    medido ainda e' o que esta no ar.
+    """
+    try:
+        import qualidade as _qualidade
+        _qualidade.garantir_tabela()
+    except Exception:
+        pass
+    try:
+        with conexao_banco() as c:
+            linhas = c.execute("""SELECT * FROM medicoes_qualidade q WHERE q.id =
+                                  (SELECT MAX(id) FROM medicoes_qualidade WHERE fluxo_id = q.fluxo_id)""").fetchall()
+    except Exception:
+        return {}
+    relogio = datetime.now(FUSO)
+    fora = {}
+    for r in linhas:
+        d = dict(r)
+        try:
+            idade = (relogio - datetime.fromisoformat(d["medido_em"])).total_seconds()
+        except Exception:
+            idade = None
+        ssim = d.get("ssim")
+        fora[d["fluxo_id"]] = {
+            "ssim": ssim, "em": d.get("medido_em"),
+            "idade_s": round(idade, 1) if idade is not None else None,
+            "ajuste": d.get("ajuste"), "resolucao": d.get("resolucao"),
+            "compressao_pct": d.get("compressao_pct"), "segundos": d.get("segundos"),
+            "piso": PISO_QUALIDADE_ACEITO, "piso_nominal": PISO_QUALIDADE_SSIM,
+            "passa": None if ssim is None else bool(ssim >= PISO_QUALIDADE_ACEITO),
+        }
+    return fora
+
+
 def tempo_real(validade_s: float = 2.0) -> dict:
     """Estado agora, por fluxo, com o que o dono pediu: enviando/parado, compressao, banda do link."""
     # cache curto: a tela se atualiza a cada 2 s e o calculo leva ~2 s (mediamtx + rollup)
@@ -323,6 +362,7 @@ def tempo_real(validade_s: float = 2.0) -> dict:
         cameras = {x["id"]: dict(x) for x in c.execute("SELECT * FROM cameras")}
         por_fluxo = {x["fluxo_id"]: dict(x) for x in c.execute("SELECT * FROM cameras")}
     relogio = datetime.now(FUSO)
+    qual = _qualidade_por_fluxo()
 
     def _idade(iso):
         try:
@@ -356,6 +396,7 @@ def tempo_real(validade_s: float = 2.0) -> dict:
             "banda_economizada_mbps": round(max(0.0, entrada - saida), 3),
             "compressao_agora_pct": round((1 - saida / entrada) * 100, 2) if (entrada and saida) else None,
             "compressao_arquivo_pct": comp.get("compressao_pct"), "ssim": comp.get("ssim"),
+            "qualidade": qual.get(d["fluxo_id"]),
             "mb_enviados": d.get("tamanho_mb"), "fps": d.get("fps"),
             "segundos_no_ar": d.get("duracao_s"),
         })
@@ -373,6 +414,11 @@ def tempo_real(validade_s: float = 2.0) -> dict:
         total["saida_mbps"] += f["saida_mbps"] or 0.0
         total["banda_economizada_mbps"] += f["banda_economizada_mbps"] or 0.0
         total["mb_enviados"] += f["mb_enviados"] or 0
+    _medidos = [f["qualidade"]["ssim"] for f in fluxos
+                if f.get("qualidade") and f["qualidade"].get("ssim") is not None and f["estado"] == "enviando"]
+    total["qualidade_min_ssim"] = round(min(_medidos), 4) if _medidos else None
+    total["qualidade_medidos"] = len(_medidos)
+    total["qualidade_min_ok"] = None if not _medidos else bool(min(_medidos) >= PISO_QUALIDADE_ACEITO)
     for k, v in list(total.items()):
         total[k] = round(v, 3) if isinstance(v, float) else v
     total["compressao_agora_pct"] = (round((1 - total["saida_mbps"] / total["entrada_mbps"]) * 100, 2)
@@ -446,6 +492,7 @@ def resumo_producao(*, dias: int = 30, embarcacao_id: str | None = None, camera_
     minutos_janela = max(1, int((agora_dt - comeco).total_seconds() // 60))
     vivo = tempo_real()
     ao_vivo = {f["fluxo_id"]: f for f in vivo["fluxos"]}
+    qual = _qualidade_por_fluxo()
     cards, por_fluxo = [], {}
     for l in linhas:
         segundos = l["segundos"] or 0
@@ -478,6 +525,7 @@ def resumo_producao(*, dias: int = 30, embarcacao_id: str | None = None, camera_
             "disponibilidade_pct": round(min(100.0, (l["minutos"] or 0) / minutos_janela * 100), 3),
             "de": l["de"], "ate": l["ate"],
             "estado": (ao_vivo.get(l["fluxo_id"]) or {}).get("estado", "parado"),
+            "qualidade": qual.get(l["fluxo_id"]),
         }
         cards.append(card); por_fluxo[l["fluxo_id"]] = card
     # quem esta enviando AGORA e ainda nao tem minuto fechado (fonte viva recem-ligada)
@@ -501,7 +549,7 @@ def resumo_producao(*, dias: int = 30, embarcacao_id: str | None = None, camera_
             "horas_streaming": round((f.get("segundos_no_ar") or 0) / 3600, 2),
             "mb_enviados": round(f.get("mb_enviados") or 0, 2), "minutos_no_ar": 0,
             "disponibilidade_pct": None, "de": None, "ate": None, "estado": "enviando",
-            "sem_historico": True,
+            "sem_historico": True, "qualidade": qual.get(f["fluxo_id"]),
         })
     if camera_id:
         alvo = camera_id.lower()
@@ -519,6 +567,10 @@ def resumo_producao(*, dias: int = 30, embarcacao_id: str | None = None, camera_
         "banda_economizada_mbps": round(sum(c["banda_economizada_mbps"] or 0 for c in cards), 3),
         "enviando": sum(1 for c in cards if c["estado"] == "enviando"),
     }
+    _q = [c["qualidade"]["ssim"] for c in cards if c.get("qualidade") and c["qualidade"].get("ssim") is not None]
+    tot["qualidade_min_ssim"] = round(min(_q), 4) if _q else None
+    tot["qualidade_medidos"] = len(_q)
+    tot["qualidade_min_ok"] = None if not _q else bool(min(_q) >= PISO_QUALIDADE_ACEITO)
     _saida = {"dias": int(dias), "desde": comeco.strftime("%Y-%m-%dT%H:%M"), "so_enviando": bool(so_enviando),
               "camera": camera_id, "janela_efetiva_dias": round(minutos_janela / 1440, 3),
               "janela_efetiva_min": minutos_janela, "primeiro_minuto": primeiro,

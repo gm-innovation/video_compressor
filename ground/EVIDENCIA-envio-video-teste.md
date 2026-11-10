@@ -453,3 +453,37 @@ Linha de comando do ffmpeg que publica nesta bancada:
 `srt://187.127.60.250:8890?mode=caller&latency=200&pkt_size=1316&streamid=publish:vps-webcam-bancada` (dshow `video=ACER HD User Facing`, `-video_size 1280x720`, libx264 `-b:v 1500k`).
 
 Contabilidade cruzada: 189.632.100 bytes recebidos na VPS (~189,6 MB) contra 184,1 MB contados pelo ffmpeg na bancada na mesma janela — diferenca compativel com o overhead de MPEG-TS/SRT.
+
+## Qualidade do video: agora medida, no cartao de Producao e no Tempo real (10/11/2026, 09:45-09:58 UTC)
+
+O dono cobrou: "nao vejo no card de producao nem em tempo real qual a qualidade do video". Antes o SSIM
+so existia para clipe comprimido (`compressoes`): fluxo vivo nao tinha numero nenhum.
+
+**Como a medida passou a ser feita** (`ground/qualidade.py`): o SSIM precisa do original e do comprimido
+lado a lado, e a webcam (dshow) so abre UMA vez — entao a medicao abre a fonte uma vez e divide os
+quadros com o filtro `split`:
+
+- ramo A: o MESMO ajuste que vai para a rede (`libx264 -b:v <ajuste>`);
+- ramo B: o original reconstruido SEM PERDA (`libx264 -qp 0`).
+
+Depois mede o SSIM entre B e A. Roda com a fonte livre (antes de publicar, dentro do `ao_vivo`, ou pelo
+botao "medir agora"); o resultado fica em `medicoes_qualidade` com hora e ajuste, e as telas mostram o
+numero com a idade ("medida 2 min atras") porque SSIM sem data nao diz se ainda vale.
+
+**Achado que muda o ajuste do fluxo vivo na bancada** (webcam ACER 1280x720@30, amostras de 8 s):
+
+| ajuste | SSIM medido | compressao vs original sem perda | piso aceito 0,9713 |
+|---|---|---|---|
+| 1500k | 0,9577 - 0,9719 | 98,0 - 98,4% | **falha** |
+| 2000k | 0,9612 | 97,8% | falha |
+| 2500k | 0,9704 | 97,0% | falha (quase) |
+| **3000k** | **0,9739** | **96,4%** | **passa** |
+
+O fluxo vivo da bancada passou a publicar em **3000k** (antes 1500k, abaixo do piso do dono). Medido na
+VPS depois da troca: recebendo **3,0-3,1 Mbps**, com SSIM **0,9739** e compressao de **96,4%** contra o
+original sem perda (99,06% contra o bruto equivalente da captura).
+
+Provas de tela (janelas reais, via CDP): no Tempo real a coluna "Qualidade do video (SSIM)" mostra
+`0,9739 (piso 0,9713) - medida 2 min atras - ajuste 3000k` e um botao "medir agora"; no cartao de
+Producao a linha "Qualidade do video (SSIM)" mostra o mesmo numero; o resumo das duas telas traz
+"qualidade minima (SSIM): 0,9739".

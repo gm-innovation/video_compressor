@@ -377,6 +377,12 @@ def metricas_ao_vivo(validade_s: float = 2.0) -> dict:
             return agora - _dt.datetime.fromisoformat(iso).timestamp()
         except Exception:
             return None
+    # qualidade so existe se alguem mediu (precisa da fonte livre): a tela mostra com a idade
+    try:
+        from producao import _qualidade_por_fluxo as _qf
+        qual = _qf()
+    except Exception:
+        qual = {}
     fluxos, total = [], {"entrada_mbps": 0.0, "saida_mbps": 0.0, "economia_mbps": 0.0,
                          "mb_enviados": 0.0, "fluxos": 0}
     for d in linhas:
@@ -395,6 +401,7 @@ def metricas_ao_vivo(validade_s: float = 2.0) -> dict:
                                                 bool(medida_kbps)),
             "compressao_pct": round((1 - saida / entrada) * 100, 2) if (entrada and saida) else None,
             "compressao_arquivo_pct": comp.get("compressao_pct"), "ssim": comp.get("ssim"),
+            "qualidade": qual.get(d["fluxo_id"]),
             "mbps_agora": round(saida, 3), "fps_agora": d.get("fps"),
             "mb_enviados": d.get("tamanho_mb"), "segundos_no_ar": d.get("duracao_s"),
             "vivo": bool(idade is not None and idade < 6), "idade_s": round(idade, 1) if idade is not None else None,
@@ -413,6 +420,11 @@ def metricas_ao_vivo(validade_s: float = 2.0) -> dict:
             total[k] = round(v, 3)
     total["compressao_pct"] = (round((1 - total["saida_mbps"] / total["entrada_mbps"]) * 100, 2)
                                if total["entrada_mbps"] else None)
+    _medidos = [f["qualidade"]["ssim"] for f in fluxos
+                if f.get("qualidade") and f["qualidade"].get("ssim") is not None and f.get("vivo")]
+    total["qualidade_min_ssim"] = round(min(_medidos), 4) if _medidos else None
+    total["qualidade_medidos"] = len(_medidos)
+    total["qualidade_min_ok"] = None if not _medidos else bool(min(_medidos) >= PISO_QUALIDADE_ACEITO)
     _saida = {"em": _agora(), "fluxos": fluxos, "total": total}
     _CACHE_VIVO["v"] = (_time.time(), _saida)
     return _saida

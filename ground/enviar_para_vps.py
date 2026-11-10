@@ -25,13 +25,16 @@ ROTULO = sys.argv[3] if len(sys.argv) > 3 else "Webcam bancada (bordo -> VPS)"
 SEGUNDOS = int(sys.argv[4]) if len(sys.argv) > 4 else 0
 # a webcam desta bancada entrega 1280x720@30 — pedir 1080p ao dshow faz o ffmpeg falhar
 RESOLUCAO = sys.argv[5] if len(sys.argv) > 5 else "1280x720"
+# 2500k/3000k e' o menor ajuste medido que passa do piso de qualidade (SSIM >= 0,9713): 1500k
+# media 0,958-0,972 na webcam desta bancada, abaixo do piso.
+BITRATE = sys.argv[6] if len(sys.argv) > 6 else "3000k"
 
 if __name__ == "__main__":
     # a webcam so abre uma vez: se outro envio a estiver segurando, tenta de novo em vez de desistir
     r = {}
     for tentativa in range(1, 61):
         r = ao_vivo(tipo="camera", dispositivo=DISPOSITIVO_PADRAO, rotulo=ROTULO,
-                    fluxo_id="vps-webcam-bancada", fps=30, resolucao=RESOLUCAO,
+                    fluxo_id="vps-webcam-bancada", fps=30, resolucao=RESOLUCAO, bitrate=BITRATE,
                     srt_host=HOST, srt_port=PORTA)
         if not r.get("erro"):
             break

@@ -328,7 +328,10 @@ function telaTempoReal(t) {
       'economia ' + fmt(tot.economia_mbps, 3) + ' Mbps · enviado ' + fmt(tot.mb_enviados, 2) + ' MB / ' +
       '| internet local: ' + (net.disponivel ? fmt(net.ms_medio, 0) + ' ms (' + net.fonte + ')' : 'sem resposta') + ' · ' +
       'link (SRT): RTT ' + fmt(lk.rtt_ms, 2) + ' ms · capacidade ' + fmt(lk.capacidade_link_mbps, 2) + ' Mbps · ' +
-      'atraso do buffer ' + fmt(lk.atraso_buffer_ms, 0) + ' ms · perda ' + fmt(lk.perda_recebida_pct, 2) + '%');
+      'atraso do buffer ' + fmt(lk.atraso_buffer_ms, 0) + ' ms · perda ' + fmt(lk.perda_recebida_pct, 2) + '% · ' +
+      'qualidade mínima (SSIM): ' + ((tot.qualidade_min_ssim === null || tot.qualidade_min_ssim === undefined)
+        ? 'não medida' : Number(tot.qualidade_min_ssim).toLocaleString('pt-BR', { minimumFractionDigits: 4, maximumFractionDigits: 4 }) +
+          (tot.qualidade_min_ok ? '' : ' ⚠ abaixo do piso')));
     limpar(tabelaBox);
     const linhas = (m.fluxos || []).map((f) => ({
       fluxo: f.fluxo_id,
@@ -337,6 +340,16 @@ function telaTempoReal(t) {
         ((f.entrada_fonte || '').indexOf('bruto') === 0 ? ' (bruto)' : '')),
       saida: (f.saida_mbps === null ? '—' : fmt(f.saida_mbps, 3) + ' Mbps'),
       compressao: (f.compressao_pct === null ? '—' : fmt(f.compressao_pct) + '%'),
+      qualidade: (() => {
+        const q = f.qualidade;
+        if (!q || q.ssim === null || q.ssim === undefined) return '— (não medida)';
+        const ssim = Number(q.ssim).toLocaleString('pt-BR', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+        const piso = Number(q.piso).toLocaleString('pt-BR', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+        return ssim + (q.passa ? ' ✔ (piso ' + piso + ')' : ' ⚠ abaixo do piso ' + piso) +
+          (q.idade_s === null || q.idade_s === undefined ? '' : ' · medida ' +
+            (q.idade_s < 90 ? Math.round(q.idade_s) + ' s atrás' : Math.round(q.idade_s / 60) + ' min atrás')) +
+          ' · ajuste ' + (q.ajuste || '—');
+      })(),
       economia: (f.economia_mbps === null ? '—' : fmt(f.economia_mbps, 3) + ' Mbps'),
       agora: (f.mbps_agora === null || f.mbps_agora === undefined ? '—' : fmt(f.mbps_agora, 3) + ' Mbps'),
       enviado: (f.mb_enviados === null || f.mb_enviados === undefined ? '—' : fmt(f.mb_enviados, 2) + ' MB'),
@@ -351,13 +364,22 @@ function telaTempoReal(t) {
       { rotulo: 'Entrada (original)', campo: 'entrada' },
       { rotulo: 'Saída (na rede)', campo: 'saida' },
       { rotulo: 'Compressão agora', campo: 'compressao' },
+      { rotulo: 'Qualidade do vídeo (SSIM)', campo: 'qualidade' },
       { rotulo: 'Banda economizada', campo: 'economia' },
       { rotulo: 'Taxa agora', campo: 'agora' },
       { rotulo: 'Total enviado', campo: 'enviado' },
       { rotulo: 'fps', campo: 'fps' },
       { rotulo: 'Perdidos', campo: 'perdidos' },
       { rotulo: 'Espectadores', campo: 'leitores' },
-      { rotulo: 'No ar há', campo: 'no_ar' }
+      { rotulo: 'No ar há', campo: 'no_ar' },
+      { rotulo: 'Qualidade', valor: (l) => botao('medir agora', 'mini', async () => {
+          dizer('medindo a qualidade de ' + l.fluxo + ' (8 s, precisa da fonte livre)...');
+          const r = await api('/api/qualidade/medir', { method: 'POST', body: JSON.stringify({ fluxo: l.fluxo }) });
+          dizer(r.ok
+            ? 'qualidade medida em ' + l.fluxo + ': SSIM ' + Number(r.corpo.ssim).toLocaleString('pt-BR', { minimumFractionDigits: 4, maximumFractionDigits: 4 }) + ' (' + r.corpo.segundos + ' s de amostra)'
+            : 'não deu para medir: ' + ((r.corpo && r.corpo.erro) || JSON.stringify(r.corpo)));
+          carregar();
+        }) }
     ], linhas, 'nenhum fluxo no ar agora: publique um vídeo em "Enviar vídeo"'));
   };
   const carregar = async () => {
@@ -554,6 +576,12 @@ function telaProducao(t) {
     el.appendChild(cam);
     const itens = [
       ['Média de compressão', c.compressao_medio_pct === null ? '—' : fmt(c.compressao_medio_pct) + '%'],
+      ['Qualidade do vídeo (SSIM)', (c.qualidade && c.qualidade.ssim !== null && c.qualidade.ssim !== undefined)
+        ? fmt(c.qualidade.ssim, 4) + (c.qualidade.passa ? '' : ' ⚠ abaixo do piso ' + fmt(c.qualidade.piso, 4)) +
+          (c.qualidade.idade_s === null || c.qualidade.idade_s === undefined ? ''
+            : ' · medida ' + (c.qualidade.idade_s < 90 ? Math.round(c.qualidade.idade_s) + ' s atrás' : Math.round(c.qualidade.idade_s / 60) + ' min atrás')) +
+          ' · ajuste ' + (c.qualidade.ajuste || '—')
+        : '— (não medida ainda)'],
       ['Banda utilizada', (c.banda_utilizada_mbps === null ? '—' : fmt(c.banda_utilizada_mbps, 3) + ' Mbps')],
       ['Banda economizada', (c.banda_economizada_mbps === null ? '—' : fmt(c.banda_economizada_mbps, 3) + ' Mbps'
         + (c.entrada_mbps ? ' (entrada ' + fmt(c.entrada_mbps, 3) + ' Mbps' +
@@ -599,7 +627,9 @@ function telaProducao(t) {
       (d.camera ? 'câmera "' + (d.cards[0] ? d.cards[0].camera : d.camera) + '" · ' : '') +
       (d.total.cards || 0) + ' câmera(s)' + (d.total.enviando ? ' (' + d.total.enviando + ' enviando)' : '') + ' · ' + fmt(d.total.horas_streaming) + ' h no ar · ' +
       'economia somada ' + fmt(d.total.banda_economizada_mbps, 3) + ' Mbps · ' +
-      'agora: ' + (tr.enviando || 0) + ' enviando de ' + (tr.fluxos || 0) + ' no ar');
+      'agora: ' + (tr.enviando || 0) + ' enviando de ' + (tr.fluxos || 0) + ' no ar · ' +
+      'qualidade mínima (SSIM): ' + ((d.total.qualidade_min_ssim === null || d.total.qualidade_min_ssim === undefined)
+        ? 'não medida' : fmt(d.total.qualidade_min_ssim, 4) + (d.total.qualidade_min_ok ? '' : ' ⚠ abaixo do piso')));
     limpar(grade);
     const lista = (d.cards || []).slice().sort((a, b) => a.embarcacao.localeCompare(b.embarcacao) || a.camera.localeCompare(b.camera));
     if (!lista.length) {

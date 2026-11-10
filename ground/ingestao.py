@@ -514,7 +514,25 @@ def ao_vivo(*, tipo: str = "camera", dispositivo: str | None = None, resolucao: 
                              f'(id {ocupado["id"]}). Pare esse envio antes de transmitir de novo.'),
                     "ocupada_por": ocupado}
     slug_vivo = re.sub(r"[^a-z0-9]+", "-", unicodedata.normalize("NFKD", nome.lower())).strip("-")[:30].strip("-")
-    return iniciar(f"live:{tipo}", rotulo=nome, fluxo_id=fluxo_id or f"vivo-{slug_vivo or tipo}",
+    ident = fluxo_id or f"vivo-{slug_vivo or tipo}"
+    # ajuste que VAI para o ar (mesma regra do iniciar); a medicao precisa ser do mesmo ajuste
+    alvo_vivo = str(bitrate or "auto")
+    if alvo_vivo in ("", "auto"):
+        alvo_vivo = ("3000k" if tipo == "camera" else alvo_automatico(None))
+    # Mede a QUALIDADE (SSIM) do MESMO ajuste antes de entrar no ar: a fonte ainda esta livre e a
+    # tela mostra o numero com a hora. Se a medicao falhar, o envio segue — qualidade e informacao,
+    # nao pode impedir a operacao.
+    try:
+        import qualidade as _qualidade  # import tardio: qualidade tambem usa a ingestao
+        m = _qualidade.medir_se_preciso(ident, validade_s=600, segundos=8, bitrate=alvo_vivo)
+        if m.get("ok") and m.get("ssim") is not None:
+            extra = " (medicao reaproveitada)" if m.get("pulado") else f" em {m.get('segundos')}s ajuste {m.get('ajuste')}"
+            print(f"[qualidade] {ident}: SSIM {m.get('ssim')}{extra}", flush=True)
+        else:
+            print(f"[qualidade] {ident}: nao medida: {m.get('erro')}", flush=True)
+    except Exception as e:
+        print(f"[qualidade] {ident}: nao medida ({type(e).__name__}: {e})", flush=True)
+    return iniciar(f"live:{tipo}", rotulo=nome, fluxo_id=ident,
                    bitrate=bitrate, tipo=tipo, repetir=False, dispositivo=dispositivo, resolucao=resolucao,
                    fps=fps, embarcacao_id=embarcacao_id, srt_host=srt_host, srt_port=srt_port)
 

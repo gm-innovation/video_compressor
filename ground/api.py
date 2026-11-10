@@ -630,6 +630,17 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(200, {"link": producao_pipeline.link_srt(),
                                     "latencia_internet": producao_pipeline.latencia_internet(),
                                     "em": producao_pipeline.agora()}, {"Cache-Control": "no-store"})
+        if rota.startswith("/api/qualidade"):
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so operacao e administrador veem a qualidade"})
+            q = parse_qs(urlparse(self.path).query)
+            fluxo = (q.get("fluxo") or [""])[0].strip()
+            import qualidade as _qualidade
+            if fluxo:
+                return self._json(200, {"qualidade": _qualidade.ultima(fluxo), "fluxo": fluxo},
+                                  {"Cache-Control": "no-store"})
+            return self._json(200, {"qualidade": producao_pipeline._qualidade_por_fluxo()},
+                              {"Cache-Control": "no-store"})
         if rota == "/api/producao":
             if not (self._pode_operar(u) or self._local()):
                 return self._json(403, {"erro": "so operacao e administrador veem a producao"})
@@ -792,6 +803,21 @@ class Handler(SimpleHTTPRequestHandler):
                     with conexao() as c:
                         c.execute("DELETE FROM sessoes WHERE token=?", (ck["sessao"].value,))
             return self._json(200, {"ok": True}, {"Set-Cookie": "sessao=; Max-Age=0; Path=/"})
+        if rota.startswith("/api/qualidade/medir"):
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so operacao e administrador medem a qualidade"})
+            d = self._corpo()
+            fluxo = str(d.get("fluxo") or d.get("fluxo_id") or "").strip()
+            if not fluxo:
+                return self._json(400, {"erro": "informe o fluxo (fluxo)"})
+            import qualidade as _qualidade
+            try:
+                segundos = float(d.get("segundos") or 8)
+            except Exception:
+                segundos = 8.0
+            r = _qualidade.medir(fluxo, segundos=segundos,
+                                 bitrate=(str(d.get("bitrate")).strip() if d.get("bitrate") else None))
+            return self._json(200 if r.get("ok") else 422, r, {"Cache-Control": "no-store"})
         if rota in ("/api/compressao/publicar", "/api/compressoes/publicar"):
             if not (self._pode_operar(u) or self._local()):
                 return self._json(403, {"erro": "so operacao e administrador publicam"})
