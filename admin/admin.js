@@ -311,17 +311,26 @@ function telaCameras(t) {
   const interno = (A.camerasInterno && A.camerasInterno.cameras) || [];
   const porId = {};
   for (const c of interno) porId[c.id] = c;
+  /* O admin vê TODAS as câmeras (inclusive as desativadas — senão não teria como religar); o
+     cliente só vê as ativas, e nesse caso cai na lista dele. A tela diz a situação de cada uma. */
+  const vivo = {};
+  for (const c of (A.cameras || [])) vivo[c.id] = c;
+  const linhas = interno.length
+    ? interno.map((c) => Object.assign({}, c, { viva: vivo[c.id] || null }))
+    : (A.cameras || []).map((c) => Object.assign({}, porId[c.id] || {}, { viva: c, id: c.id, rotulo: c.rotulo }));
+  const situacao = (l) => (!l.ativo ? 'desativada' : (l.viva && l.viva.no_ar ? 'no ar' : 'fora do ar'));
   t.appendChild(tabela([{ rotulo: 'Câmera', campo: 'rotulo' }, { rotulo: 'Fluxo', campo: 'fluxo_id' },
-    { rotulo: 'Endereço (operação)', valor: (l) => { const c = porId[l.id] || {};
-        return c.ip ? c.ip + ':' + (c.porta || '554') + (c.canal ? ' · canal ' + c.canal : '') : '—'; } },
+    { rotulo: 'Situação', valor: situacao },
+    { rotulo: 'Endereço (operação)', valor: (l) => { const c = porId[l.id] || {}; return c.ip ? c.ip + ':' + (c.porta || '554') + (c.canal ? ' · canal ' + c.canal : '') : '—'; } },
     { rotulo: 'Como o agente pega', valor: (l) => { const c = porId[l.id] || {}; return c.captura || '—'; } },
-    { rotulo: 'No ar', valor: (l) => (l.no_ar ? 'sim' : 'não') },
-    { rotulo: 'Encoder', valor: (l) => { const e = l.encoder || {}; return [e.codec, e.resolucao, e.fps ? e.fps + ' fps' : '', e.bitrate].filter(Boolean).join(' · '); } },
-    { rotulo: 'Espectadores', campo: 'leitores' },
-    { rotulo: 'Ação', valor: (l) => botao('ativar/desativar', 'mini', async () => {
+    { rotulo: 'Encoder', valor: (l) => { const e = (l.viva && l.viva.encoder) || {}; return [e.codec, e.resolucao, e.fps ? e.fps + ' fps' : '', e.bitrate].filter(Boolean).join(' · '); } },
+    { rotulo: 'Espectadores', valor: (l) => ((l.viva && l.viva.leitores) || 0) },
+    { rotulo: 'Ação', valor: (l) => botao(l.ativo ? 'desativar' : 'ativar', 'mini', async () => {
+        if (l.ativo && !confirm('Desativar "' + l.rotulo + '"? Ela sai da tela do cliente; o histórico fica guardado.')) return;
         const r = await api('/api/cameras/' + encodeURIComponent(l.id) + '/ativo', { method: 'POST', body: JSON.stringify({ ativo: !l.ativo }) });
-        if (!r.ok) alert(JSON.stringify(r.corpo)); await atualizar();
-      }) }], A.cameras, 'nenhuma câmera cadastrada'));
+        mostrarRecado(r.ok ? (l.ativo ? 'câmera desativada — o cliente não vê mais' : 'câmera ativada de novo') : 'recusado: ' + JSON.stringify(r.corpo), !r.ok);
+        if (r.ok) { A.camerasInterno = null; await atualizar(); }
+      }) }], linhas, 'nenhuma câmera cadastrada'));
 }
 
 function telaTempoReal(t) {
