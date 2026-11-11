@@ -163,7 +163,12 @@ def inicializar(semear_demo: bool = False) -> None:
         c.execute("INSERT OR IGNORE INTO clientes (id,nome) VALUES ('armador-demo','Armador Exemplo')")
         c.execute("""INSERT OR IGNORE INTO embarcacoes (id,cliente_id,nome,imo,estado)
                      VALUES ('bancada','lecsor','Bancada de testes (propria)','','em operacao')""")
+        # cameras da bancada: so numa instalacao nova. Sem essa trava, toda reinicializacao
+        # recriava a camera que o operador excluiu (era por isso que a exclusao "nao pegava").
+        cameras_novas = not c.execute("SELECT 1 FROM cameras LIMIT 1").fetchone()
         for cam in json.loads((RAIZ / "ground" / "receivers.json").read_text(encoding="utf-8")):
+            if not cameras_novas:
+                break
             c.execute("""INSERT OR IGNORE INTO cameras (id,embarcacao_id,rotulo,fluxo_id,local)
                          VALUES (?,?,?,?,?)""",
                       (cam["id"], "bancada", cam["rotulo"], cam["id"], "bancada"))
@@ -171,6 +176,8 @@ def inicializar(semear_demo: bool = False) -> None:
         c.execute("""INSERT OR IGNORE INTO embarcacoes (id,cliente_id,nome,imo,estado)
                      VALUES ('psv-exemplo','armador-demo','PSV Exemplo (demo)','9123456','em operacao')""")
         for cam in json.loads((RAIZ / "ground" / "receivers.json").read_text(encoding="utf-8")):
+            if not cameras_novas:
+                break
             c.execute("""INSERT OR IGNORE INTO cameras (id,embarcacao_id,rotulo,fluxo_id,local)
                          VALUES (?,?,?,?,?)""",
                       (cam["id"] + "-demo", "psv-exemplo", cam["rotulo"].replace("Bancada —", "PSV (demo) —"), cam["id"], "bancada"))
@@ -797,11 +804,21 @@ class Handler(SimpleHTTPRequestHandler):
         u = self._sessao()
         if rota == "/api/entrar":
             d = self._corpo()
+            email = str(d.get("email", "")).strip().lower()
+            senha = str(d.get("senha", ""))
             with conexao() as c:
-                alvo = c.execute("SELECT * FROM usuarios WHERE email=? AND ativo=1",
-                                 (str(d.get("email", "")).strip().lower(),)).fetchone()
-            if not alvo or not conferir_senha(alvo, str(d.get("senha", ""))):
-                auditar(None, "entrada_falha", str(d.get("email", ""))[:80], self.client_address[0])
+                alvo = c.execute("SELECT * FROM usuarios WHERE email=? AND ativo=1", (email,)).fetchone()
+            # O login e do Supabase Auth (os MESMOS usuarios e senha que o app ja usa).
+            # O hash local e a rede de protecao: bancada sem Supabase/rede fora continua entrando,
+            # mas senha trocada no Supabase vale aqui — recusa de la nao cai para o local.
+            import supabase_auth
+            veredito = supabase_auth.entrar(email, senha)
+            if veredito is None:
+                entrou = bool(alvo) and conferir_senha(alvo, senha)
+            else:
+                entrou = bool(veredito.get("ok")) and bool(alvo)
+            if not entrou:
+                auditar(None, "entrada_falha", email[:80], self.client_address[0])
                 return self._json(401, {"erro": "e-mail ou senha invalidos"})
             token = criar_sessao(alvo["id"], self.headers.get("User-Agent", ""))
             auditar(alvo, "entrada", alvo["email"], self.client_address[0])
