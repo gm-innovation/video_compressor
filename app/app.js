@@ -56,7 +56,10 @@ async function atualizar() {
   if (!S.embarcacaoId) return;
   const d = await api('/api/cameras?embarcacao=' + encodeURIComponent(S.embarcacaoId));
   const novas = (d.corpo && d.corpo.cameras) || [];
-  const mudouLista = novas.length !== S.cameras.length || novas.some((c, i) => !S.cameras[i] || S.cameras[i].id !== c.id);
+  /* Compara o que a tela usa de verdade (id, estado, motivo, resolução). Sem isto, um bitrate
+     novo ou uma câmera mudar de lugar na lista derrubava e remontava todas as janelas de vídeo. */
+  const chaveCam = (c) => c.id + '|' + (c.no_ar ? 1 : 0) + '|' + (c.motivo || '') + '|' + ((c.encoder || {}).resolucao || '');
+  const mudouLista = novas.map(chaveCam).sort().join('#') !== S.cameras.map(chaveCam).sort().join('#');
   S.cameras = novas;
   if (S.selecionadas.size === 0) S.cameras.forEach((c) => S.selecionadas.add(c.id));
   for (const id of Array.from(S.selecionadas)) if (!S.cameras.some((c) => c.id === id)) S.selecionadas.delete(id);
@@ -72,8 +75,23 @@ async function atualizar() {
     else { pintarEstados(); S.cameras.forEach((c) => desenharCaixas(c.id)); }
     atualizarSeloIA();
   }
-  else desenharTela();
+  else {
+    /* Nas telas de tabela a tela é atualizada no lugar (tabelaEmPalco só troca a célula que mudou),
+       então repintar a cada 5 s não apaga mais nada; a marca evita trabalho quando nada mudou. */
+    const marca = assinaturaTelas();
+    if (marca !== marcaTela) { marcaTela = marca; desenharTela(); }
+  }
   atualizarRodape();
+}
+
+/* Impressão digital do que a tela mostra. Campos que mudam sozinhos (relógio do resumo, idade da
+   detecção) ficam fora: sozinhos não justificam repintar a tela. */
+let marcaTela = '';
+function assinaturaTelas() {
+  try {
+    return JSON.stringify([S.tela, S.cameras, S.eventos, S.contagens, S.relatorios, S.analises],
+      (k, v) => ((k === 'gerado_em' || k === 'caixas_idade' || k === 'agora' || k === 'atualizado_em') ? undefined : v));
+  } catch (e) { return 'erro:' + Math.random(); }
 }
 
 async function dadosExtras() {
@@ -307,7 +325,17 @@ function montarPaginacao() {
 
 /* ---------------------------------------------------------------- outras telas */
 function tabelaEmPalco(colunas, linhas, vazio) {
-  const palco = $('palco'); limpar(palco); palco.dataset.montado = '';
+  const palco = $('palco');
+  const assinaturaCols = colunas.map((c) => c.rotulo).join('|');
+  /* Mesma tabela com a mesma quantidade de linhas: troca somente a célula que mudou de texto.
+     Sem isso, cada ciclo apagava a tabela inteira e repintava — o "recarregamento" que a tela
+     mostrava a cada poucos segundos. */
+  const atual = palco.querySelector('table');
+  if (atual && linhas.length && palco.dataset.colunas === assinaturaCols && Number(palco.dataset.linhas) === linhas.length) {
+    atualizarTabela(atual, colunas, linhas);
+    return;
+  }
+  limpar(palco); palco.dataset.montado = '';
   const t = document.createElement('table'); t.style.width = '100%'; t.style.borderCollapse = 'collapse';
   t.style.fontSize = '13px'; t.style.background = 'var(--painel)';
   const th = document.createElement('thead'); const tr = document.createElement('tr');
@@ -330,6 +358,23 @@ function tabelaEmPalco(colunas, linhas, vazio) {
     tb.appendChild(tr2);
   }
   t.appendChild(tb); palco.appendChild(t);
+  palco.dataset.colunas = assinaturaCols; palco.dataset.linhas = String(linhas.length);
+}
+
+/* Troca no lugar só as células cujo texto mudou: nada de apagar e remontar a tabela. */
+function atualizarTabela(t, colunas, linhas) {
+  const trs = t.querySelectorAll('tbody tr');
+  for (let i = 0; i < linhas.length; i++) {
+    const tds = trs[i] ? trs[i].children : [];
+    for (let j = 0; j < colunas.length; j++) {
+      const td = tds[j];
+      if (!td) continue;
+      const v = colunas[j].valor ? colunas[j].valor(linhas[i]) : linhas[i][colunas[j].campo];
+      if (v instanceof Node) continue;
+      const texto = esc(v);
+      if (td.textContent !== texto) td.textContent = texto;
+    }
+  }
 }
 
 const TELAS = {
@@ -374,18 +419,27 @@ function desenharTela() {
       'Sem dado de relatório.');
     const p = $('palco');
     const ags = S.analises.agentes || [];
-    for (const ag of ags) {
-      const h2 = document.createElement('div'); h2.className = 'agente-linha';
-      const sinal = document.createElement('span'); sinal.className = 'sinal' + (ag.estado === 'no ar' ? ' noar' : '');
-      h2.appendChild(sinal);
-      const txt = document.createElement('span');
-      txt.textContent = `Agente de análise em ${rotuloDe(ag.camera_id)}: ${ag.estado} · modelo ${ag.modelo} · ${ag.fps} quadros/s · ${ag.quadros} quadros analisados`;
-      h2.appendChild(txt); p.appendChild(h2);
-    }
-    if (contagens.length) {
-      const h = document.createElement('div'); h.className = 'vazio';
-      h.textContent = 'Contagens de pessoas: ' + contagens.slice(0, 4).map((c) => `${c.camera}: ${c.entrou} entrada(s) / ${c.saiu} saída(s) · pico ${c.pico}`).join(' · ');
-      p.appendChild(h);
+    /* Estas linhas ficam fora da tabela: só são remontadas quando o texto delas muda de verdade. */
+    const textoExtras = ags.map((ag) => `${ag.camera_id}|${ag.estado}|${ag.modelo}|${ag.fps}|${ag.quadros}`).join('§')
+      + '||' + contagens.map((x) => `${x.camera}|${x.entrou}|${x.saiu}|${x.pico}`).join('§');
+    let cx = p.querySelector('.extras-relatorio');
+    if (!cx) { cx = document.createElement('div'); cx.className = 'extras-relatorio'; p.appendChild(cx); }
+    if (cx.dataset.marca !== textoExtras) {
+      cx.dataset.marca = textoExtras;
+      limpar(cx);
+      for (const ag of ags) {
+        const h2 = document.createElement('div'); h2.className = 'agente-linha';
+        const sinal = document.createElement('span'); sinal.className = 'sinal' + (ag.estado === 'no ar' ? ' noar' : '');
+        h2.appendChild(sinal);
+        const txt = document.createElement('span');
+        txt.textContent = `Agente de análise em ${rotuloDe(ag.camera_id)}: ${ag.estado} · modelo ${ag.modelo} · ${ag.fps} quadros/s · ${ag.quadros} quadros analisados`;
+        h2.appendChild(txt); cx.appendChild(h2);
+      }
+      if (contagens.length) {
+        const h = document.createElement('div'); h.className = 'vazio';
+        h.textContent = 'Contagens de pessoas: ' + contagens.slice(0, 4).map((c) => `${c.camera}: ${c.entrou} entrada(s) / ${c.saiu} saída(s) · pico ${c.pico}`).join(' · ');
+        cx.appendChild(h);
+      }
     }
   } else if (t === 'pessoas') {
     tabelaEmPalco([{ rotulo: 'Pessoa', campo: 'nome' }, { rotulo: 'Cadastrada em', campo: 'data' }], [],
@@ -396,15 +450,22 @@ function desenharTela() {
                    { rotulo: 'Resolução', valor: (l) => (l.encoder && l.encoder.resolucao) || '—' },
                    { rotulo: 'Bitrate', valor: (l) => (l.encoder && l.encoder.bitrate) || '—' }], S.cameras, 'Nenhuma câmera liberada.');
   } else if (t === 'avisos') {
-    const p = $('palco'); limpar(p); p.dataset.montado = '';
-    const d = document.createElement('div'); d.className = 'vazio';
+    const p = $('palco');
     const salvo = localStorage.getItem('lecsor-avisos') || 'queda de câmera';
-    d.innerHTML = 'Notificações ativas: <b>' + salvo + '</b>.';
-    const b = document.createElement('button'); b.className = 'acao'; b.textContent = 'Alternar alerta de queda de câmera';
-    b.style.cssText = 'margin-top:10px;background:#1b2330;border:1px solid #243044;border-radius:9px;padding:9px 14px';
-    b.onclick = () => { const novo = salvo.includes('queda de câmera') ? 'nenhum aviso' : 'queda de câmera';
-      localStorage.setItem('lecsor-avisos', novo); desenharTela(); };
-    p.appendChild(d); p.appendChild(b);
+    /* A caixa só é remontada quando a preferência muda (antes era refeita a cada ciclo de 5 s). */
+    let cx = p.querySelector('.avisos-caixa');
+    if (!cx) { limpar(p); p.dataset.montado = ''; cx = document.createElement('div'); cx.className = 'avisos-caixa'; p.appendChild(cx); }
+    if (cx.dataset.marca !== salvo) {
+      cx.dataset.marca = salvo;
+      limpar(cx);
+      const d = document.createElement('div'); d.className = 'vazio';
+      d.innerHTML = 'Notificações ativas: <b>' + salvo + '</b>.';
+      const b = document.createElement('button'); b.className = 'acao'; b.textContent = 'Alternar alerta de queda de câmera';
+      b.style.cssText = 'margin-top:10px;background:#1b2330;border:1px solid #243044;border-radius:9px;padding:9px 14px';
+      b.onclick = () => { const novo = salvo.includes('queda de câmera') ? 'nenhum aviso' : 'queda de câmera';
+        localStorage.setItem('lecsor-avisos', novo); desenharTela(); };
+      cx.appendChild(d); cx.appendChild(b);
+    }
   }
 }
 

@@ -1,6 +1,6 @@
 /* Admin do projeto e do sistema: acompanhamento (§6) + administracao (clientes, embarcacoes,
    cameras, usuarios, analises, auditoria, saude). Le e escreve tudo pela API do produto. */
-const A = { usuario: null, resumo: null, clientes: [], usuarios: [], sistema: null, cameras: [], embarcacoes: [], tela: 'painel', timer: null };
+const A = { usuario: null, resumo: null, clientes: [], usuarios: [], sistema: null, cameras: [], embarcacoes: [], tela: 'painel', timer: null, marca: null };
 const $ = (id) => document.getElementById(id);
 const limpar = (el) => { while (el.firstChild) el.removeChild(el.firstChild); };
 const esc = (s) => String(s === null || s === undefined ? '' : s);
@@ -53,7 +53,23 @@ async function atualizar() {
   } else {
     const cl = await api('/api/clientes'); A.clientes = (cl.corpo && cl.corpo.clientes) || [];
   }
+  /* So apaga e repinta a tela quando o que ela mostra mudou de verdade. Antes isto desenhava a
+     cada 15 s por causa de campos que mudam sozinhos (gerado_em do resumo, uptime_s do sistema):
+     a tela era limpa no meio da leitura do operador. */
+  const marca = assinaturaTelas();
+  if (marca === A.marca) return;
+  A.marca = marca;
   desenhar();
+}
+
+/* Impressao digital do que as telas realmente mostram. Campos que mudam sozinhos (relogio do
+   resumo, uptime, idade das medidas) ficam de fora: sozinhos nao justificam repintar. */
+const RUIDO_TELA = { gerado_em: 1, uptime_s: 1, idade_s: 1, atualizado_em: 1, lido_em: 1, agora: 1 };
+function assinaturaTelas() {
+  try {
+    return JSON.stringify([A.resumo, A.embarcacoes, A.cameras, A.clientes, A.usuarios, A.sistema, A.camerasInterno],
+      (k, v) => (RUIDO_TELA[k] ? undefined : v));
+  } catch (e) { return 'erro:' + Math.random(); }
 }
 
 /* --------------------------------------------------------- utilidades de tela */
@@ -621,7 +637,7 @@ function telaProducao(t) {
     return el;
   };
 
-  const puxar = async () => {
+  const puxar = async (forcar) => {
     const q = '?dias=' + encodeURIComponent(selDias.value) +
       (selEmb.value ? '&embarcacao=' + encodeURIComponent(selEmb.value) : '') +
       (selCam.value ? '&camera=' + encodeURIComponent(selCam.value) : '') +
@@ -629,6 +645,12 @@ function telaProducao(t) {
     const r = await fetch('/api/producao' + q);
     if (!r.ok) { dizerResumo('sem permissão para ver a produção'); return; }
     const d = await r.json();
+    /* Nada mudou no período pedido? Não remonta os cartões nem os seletores (antes a tela de
+       produção era limpa e repintada a cada 30 s, mesmo sem novidade nenhuma). */
+    const marcaProd = JSON.stringify(d, (k, v) => ((k === 'agora' || k === 'gerado_em' || k === 'lido_em'
+      || k === 'atualizado_em' || k === 'idade_s' || k === 'em') ? undefined : v));
+    if (!forcar && marcaProd === A.prodMarca) return;
+    A.prodMarca = marcaProd;
     if (selEmb.options.length <= 1 && (d.embarcacoes || []).length) {
       for (const e of d.embarcacoes) selEmb.appendChild(Object.assign(document.createElement('option'), { value: e.id, textContent: e.nome || e.id }));
     }
@@ -689,7 +711,7 @@ function telaProducao(t) {
   selEmb.addEventListener('change', puxar);
   selCam.addEventListener('change', puxar);
   selEnv.addEventListener('change', puxar);
-  puxar();
+  puxar(true);   /* primeira pintura da tela de produção: sempre desenha */
   if (timerProducao) { clearInterval(timerProducao); timerProducao = null; }
   timerProducao = setInterval(() => { if (A.tela === 'producao') puxar(); }, 30000);
 }
