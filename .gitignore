@@ -43,3 +43,5 @@ db/*.db-shm
 .env.*
 supabase/.temp/
 *.env
+# clipes das medicoes de compressao: reproduziveis pelos scripts ground/medir-*.py, pesados demais para o repo
+ground/medicoes-hd/

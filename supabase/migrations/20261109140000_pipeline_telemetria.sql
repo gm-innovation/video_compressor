@@ -5,7 +5,7 @@
 --
 -- O que este arquivo cria:
 --   clientes / embarcacoes / cameras           -> multi-tenant (cliente vê só o dele)
---   fluxos                                     -> um fluxo publicado por câmera (cam-01, ...)
+--   (não existe tabela 'fluxos': o fluxo_id é texto livre em telemetria_minuto; a câmera vem de public.cameras)
 --   telemetria_minuto                          -> o minuto fechado (média de compressão, MB, segundos no ar)
 --   link_amostras                              -> RTT, capacidade do link, atraso do buffer SRT, perda
 --   v_producao_30d / v_disponibilidade_30d     -> os números dos cards

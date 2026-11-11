@@ -661,6 +661,13 @@ class Handler(SimpleHTTPRequestHandler):
                 so_enviando=(q.get("so_enviando") or ["0"])[0] in ("1", "sim", "true"))
             dados["tempo_real"] = producao_pipeline.tempo_real()
             return self._json(200, dados, {"Cache-Control": "no-store"})
+        if rota in ("/api/supabase", "/api/supabase/resumo"):
+            # Producao e disponibilidade lidas do Supabase pelo servidor. A chave de servico vive no
+            # ambiente do servidor; o navegador nunca fala com o Supabase.
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so operacao e administrador veem os dados do Supabase"})
+            import supabase_leitura
+            return self._json(200, supabase_leitura.resumo(), {"Cache-Control": "no-store"})
         if rota in ("/api/dispositivos", "/api/envios/dispositivos"):
             # webcam do proprio notebook: fonte de teste, sem camera de embarcacao e sem credencial
             if not (self._pode_operar(u) or self._local()):

@@ -574,6 +574,16 @@ function telaProducao(t) {
   topo.appendChild(resumo);
   const grade = document.createElement('div'); grade.className = 'grade-cartoes'; grade.id = 'prod-cartoes';
   t.appendChild(topo); t.appendChild(grade);
+
+  // Nuvem: os mesmos números vistos do lado do Supabase. O navegador não tem chave nenhuma — quem lê
+  // é o servidor em terra, pela rota /api/supabase.
+  const nuvem = document.createElement('div'); nuvem.className = 'caixa-form'; nuvem.id = 'prod-nuvem';
+  nuvem.appendChild(Object.assign(document.createElement('h2'),
+    { textContent: 'Supabase: produção e disponibilidade gravadas na nuvem' }));
+  const nuvemSub = document.createElement('div'); nuvemSub.className = 'sub'; nuvemSub.id = 'nuvem-resumo';
+  const nuvemTab = document.createElement('div'); nuvemTab.id = 'nuvem-tabela';
+  nuvem.appendChild(nuvemSub); nuvem.appendChild(nuvemTab);
+  t.appendChild(nuvem);
   const dizerResumo = (txt) => { resumo.textContent = txt; };
   const fmt = (v, casas) => (v === null || v === undefined) ? '—' : Number(v).toLocaleString('pt-BR', { maximumFractionDigits: casas === undefined ? 2 : casas });
 
@@ -647,6 +657,33 @@ function telaProducao(t) {
       grade.appendChild(Object.assign(document.createElement('div'), { className: 'nota', textContent: 'sem histórico no período: o sistema fecha o histórico minuto a minuto enquanto há envio no ar' }));
     }
     for (const c of lista) grade.appendChild(cartao(c));
+    puxarNuvem();
+  };
+
+  const puxarNuvem = async () => {
+    try {
+      const r = await fetch('/api/supabase');
+      const d = await r.json();
+      if (!r.ok) { nuvemSub.textContent = d.erro || 'sem permissão para ver os dados do Supabase'; nuvemTab.innerHTML = ''; return; }
+      if (!d.configurado) { nuvemSub.textContent = 'servidor sem Supabase configurado (' + (d.erro || 'sem URL/chave') + ')'; nuvemTab.innerHTML = ''; return; }
+      if (d.erro) { nuvemSub.textContent = 'a nuvem respondeu com erro: ' + d.erro; nuvemTab.innerHTML = ''; return; }
+      const p = d.producao || [], porFluxo = {};
+      for (const x of (d.disponibilidade || [])) porFluxo[x.fluxo_id] = x;
+      nuvemSub.textContent = p.length + ' fluxo(s) na nuvem · lido ' + (d.em || '').replace('T', ' ');
+      nuvemTab.innerHTML = '';
+      nuvemTab.appendChild(tabela(
+        ['Fluxo', 'Embarcação', 'Câmera', 'Compressão média', 'Banda utilizada', 'Enviado', 'Horas', 'Disponibilidade', 'Último minuto'],
+        p.map((x) => {
+          const dd = porFluxo[x.fluxo_id] || {};
+          return [x.fluxo_id, x.embarcacao || '—', x.camera || '—',
+            (x.compressao_medio_pct === null || x.compressao_medio_pct === undefined) ? '—' : fmt(x.compressao_medio_pct) + '%',
+            (x.banda_utilizada_mbps === null || x.banda_utilizada_mbps === undefined) ? '—' : fmt(x.banda_utilizada_mbps, 3) + ' Mbps',
+            fmt(x.mb_enviados) + ' MB', fmt(x.horas_streaming) + ' h',
+            (dd.disponibilidade_pct === null || dd.disponibilidade_pct === undefined) ? '—' : fmt(dd.disponibilidade_pct, 2) + '%',
+            (x.ultimo_minuto || '—').replace('T', ' ').replace('+00:00', ' UTC')];
+        }),
+        'nenhum minuto gravado no Supabase ainda'));
+    } catch (e) { nuvemSub.textContent = 'não consegui falar com o servidor: ' + e.message; }
   };
   selDias.addEventListener('change', puxar);
   selEmb.addEventListener('change', puxar);
