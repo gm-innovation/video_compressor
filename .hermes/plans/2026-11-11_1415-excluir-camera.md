@@ -1,6 +1,6 @@
 # Excluir câmera pela tela — e limpar as câmeras de teste que não funcionam
 
-**Status:** executado em 11/11/2026 (commit `870c56f`, `admin.js` publicado na VPS)
+**Status:** executado em 11/11/2026 (commit "Camera que nao funciona sai da tela sem perder o historico", `admin.js` publicado na VPS)
 
 **Resultado:** bancada 14 → **5 câmeras** (as 4 demo do PSV + a Webcam bancada bordo→VPS); VPS 15 → **6**
 ( as mesmas + a Fonte da VPS, agora **desativada**); histórico órfão de 41 fluxos fora nos dois bancos
