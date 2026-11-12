@@ -25,6 +25,9 @@ ver o que está em uso; para trocar, edite o arquivo:
 %APPDATA%\LECSOR Pipeline de Video\config.json
 ```
 
+O instalador 0.1.2 já vem apontado para o lado terra da LECSOR — só a configuração do PC de captura
+precisa de ajuste:
+
 ```json
 {
   "base": "http://127.0.0.1:8765",
@@ -33,7 +36,9 @@ ver o que está em uso; para trocar, edite o arquivo:
 }
 ```
 
-- `base` = **onde está a API desta máquina** (deixe `127.0.0.1:8765`: a captura acontece aqui).
+- `base` = **onde está a API desta máquina**: no PC de captura é `127.0.0.1:8765` (a captura acontece
+  aqui). Deixando o valor de fábrica (`187.127.60.250:8085`) o app abre no lado terra e **não** lista
+  as câmeras desta máquina.
 - `destinoSrt` = **para onde os vídeos comprimidos vão** (a VPS `187.127.60.250:8890`, ou
   `IP-do-outro-PC:8890` na rede). **Vazio = não sobe nada** (só esta máquina).
 - `servidorLocal.repo` = a pasta do repositório nesta máquina (o menu *Servidor local* precisa dela).

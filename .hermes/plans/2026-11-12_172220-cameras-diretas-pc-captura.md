@@ -69,6 +69,15 @@
 - Áudio das câmeras não entra (o envio é `-an`): fica fora até você pedir.
 - O `runOnReady` do mediamtx v1.21.3 será validado na Fase 1 — se o binário não suportar, o repasse vira script/serviço systemd no PC de captura (mesma entrega, outro veículo).
 
+## 5-A. Mudança de escopo pedida pelo dono (12/11/2026)
+
+Depois de instalar o `.exe` baixado da release, o app abria com `base: http://127.0.0.1:8765` (padrão
+de fábrica) e mostrava "O lado terra não respondeu" — não havia lado terra rodando na máquina dele.
+Pedido: **corrigir o arquivo e publicar**. Feito: `desktop/config.json` passa a nascer apontado para o
+lado terra da LECSOR (`base: http://187.127.60.250:8085`, `destinoSrt: 187.127.60.250:8890`) e os
+instaladores foram refeitos (**0.1.2**). No PC de captura, `base` volta para `127.0.0.1:8765` com o
+**Servidor local** no ar (documentado em `INSTALAR-PC-DE-CAPTURA.md`).
+
 ## 6. Executado (evidência de 12/11/2026)
 
 | fase | entrega | evidência verificada |

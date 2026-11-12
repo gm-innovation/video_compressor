@@ -18,11 +18,13 @@ sistema comprime na máquina e o vídeo comprimido sobe para o lado terra (`dest
 
 ## Instaladores prontos (Windows x64)
 Na página de releases: https://github.com/gm-innovation/video_compressor/releases
-- `LECSOR-Cliente-0.1.1-x64.exe` — app do cliente
-- `LECSOR-Admin-0.1.1-x64.exe` — admin/operação (traz o PC de captura: `destinoSrt` + repasse)
+- `LECSOR-Cliente-0.1.2-x64.exe` — app do cliente
+- `LECSOR-Admin-0.1.2-x64.exe` — admin/operação (já vem apontado para o lado terra da LECSOR)
 
-Padrão de fábrica: o `config.json` ao lado do app aponta para `http://127.0.0.1:8765`;
-para usar contra o lado terra da VPS, ponha `"base": "http://187.127.60.250:8085"`.
+Padrão de fábrica (0.1.2): `"base": "http://187.127.60.250:8085"` (lado terra da LECSOR) e
+`"destinoSrt": "187.127.60.250:8890"`. Num **PC de captura**, troque `base` para
+`http://127.0.0.1:8765` e suba o **Servidor local**, senão o app lista as câmeras do lado terra
+(nenhuma) em vez das ligadas na máquina.
 Os `.exe` são construídos por `desktop/construir-instaladores.sh` e **não** entram no git
 (`desktop/dist/` está no `.gitignore`): o pacote de download é a página de releases.
 

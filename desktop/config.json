@@ -1,6 +1,6 @@
 {
-  "base": "http://127.0.0.1:8765",
-  "destinoSrt": "",
+  "base": "http://187.127.60.250:8085",
+  "destinoSrt": "187.127.60.250:8890",
   "abrirAoIniciar": ["cliente", "admin", "bancada"],
   "modoQuiosque": false,
   "servidorLocal": {
