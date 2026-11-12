@@ -734,11 +734,22 @@ function telaEnvios(t) {
   const caixa = document.createElement('div'); caixa.className = 'caixa-form';
   caixa.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Vídeo de teste: comprimir, medir e publicar' }));
 
+  // Para onde vão os fluxos DESTA máquina (PC de captura -> lado terra). Endereço de serviço interno:
+  // a API só entrega para a operação, e o navegador do cliente nunca recebe este dado.
+  const linhaDestino = document.createElement('p'); linhaDestino.className = 'nota'; linhaDestino.id = 'env-destino';
+  linhaDestino.textContent = 'procurando para onde vão os vídeos desta máquina...';
+  caixa.appendChild(linhaDestino);
+  fetch('/api/envios/destino').then((r) => r.json()).then((d) => {
+    linhaDestino.textContent = d && d.repassa
+      ? `Os vídeos desta máquina sobem, já comprimidos, para ${d.destino}.`
+      : 'Nada sai desta máquina: o repasse para o lado terra não está configurado (config.json: destinoSrt).';
+  }).catch((e) => { linhaDestino.textContent = 'não consegui falar com o servidor: ' + e.message; });
+
   const linha1 = document.createElement('div'); linha1.className = 'linha-form'; caixa.appendChild(linha1);
   const rm = document.createElement('div'); rm.appendChild(Object.assign(document.createElement('label'), { textContent: 'De onde vem o vídeo' }));
   const modo = document.createElement('select'); modo.id = 'env-modo';
   for (const [v, r] of [['arquivo', 'arquivo do computador'], ['url', 'link (http ou YouTube)'],
-                        ['camera', 'webcam do notebook (ao vivo, sem câmera de embarcação)'],
+                        ['camera', 'câmera ligada nesta máquina (ao vivo)'],
                         ['sintetica', 'teste sintético (sem câmera nenhuma)']]) {
     const o = document.createElement('option'); o.value = v; o.textContent = r; modo.appendChild(o);
   }

@@ -570,6 +570,16 @@ class Handler(SimpleHTTPRequestHandler):
                                     "papel": u["papel"], "local": self._local()})
         if rota == "/api/fluxos":
             return self._json(200, fluxos())
+        if rota in ("/api/envio/destino", "/api/envios/destino"):
+            # Para onde vao os fluxos DESTA maquina (PC de captura -> lado terra). So operacao ve:
+            # e' endereco de servico interno e o navegador do cliente nunca recebe esse dado.
+            # sem a excecao de "chamada local": um CLIENTE logado nesta mesma maquina tambem nao
+            # pode receber endereco de servico interno (regra fixada pelo dono)
+            if not self._pode_operar(u):
+                return self._json(403, {"erro": "so operacao e administrador veem o destino do repasse"})
+            destino = (os.environ.get("LECSOR_DESTINO_SRT") or "").strip()
+            return self._json(200, {"destino": destino, "repassa": bool(destino)},
+                              {"Cache-Control": "no-store"})
         if rota in ("/api/ingestoes", "/api/envios"):
             if not (self._pode_operar(u) or self._local()):
                 return self._json(403, {"erro": "so operacao e administrador enviam video de teste"})

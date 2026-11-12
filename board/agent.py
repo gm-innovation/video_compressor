@@ -22,12 +22,28 @@ def hw() -> str:
     v = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True).stdout.splitlines()[0]
     return f"{gpu} | {v.split(' Copyright')[0]}"
 
+def entrada_de(c: dict) -> list[str]:
+    """Entrada do ffmpeg da camera do perfil: camera FISICA (dshow) ou fonte sintetica (lavfi).
+
+    Camera fisica = ligada direto na maquina (USB / HDMI-captura); o nome tem de ser o que aparece
+    em `GET /api/dispositivos` ou em `ffmpeg -list_devices true -f dshow -i dummy`.
+    """
+    if str(c.get("entrada") or "").lower() in ("camera", "dshow", "fisica", "usb"):
+        return ["-f", "dshow", "-rtbufsize", "256M",
+                "-framerate", str(int(c.get("fps") or 30)),
+                "-video_size", str(c.get("resolucao") or "1280x720"),
+                "-i", f"video={c.get('dispositivo') or ''}"]
+    return ["-f", "lavfi", "-i", c["fonte"]]
+
+
 def comando(c: dict) -> list[str]:
     destino = f"srt://{c['srt_host']}:{c['srt_port']}?mode=caller&latency=200&pkt_size=1316"
     if c.get("streamid"):
         destino += f"&streamid=publish:{c['streamid']}"
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-re",
-           "-f", "lavfi", "-i", c["fonte"]]
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "warning"]
+    if str(c.get("entrada") or "").lower() not in ("camera", "dshow", "fisica", "usb"):
+        cmd += ["-re"]          # fonte sintetica/arquivo: entrega no tempo real; camera ao vivo ja' vem assim
+    cmd += entrada_de(c)
     if c.get("relogio"):
         # relogio local + numero do quadro queimados na imagem: permite medir a latencia ponta a ponta
         filtro = (r"drawtext=font=Consolas:"
@@ -53,7 +69,8 @@ def marco(c: dict, pid: int, evento: str) -> None:
     (d / f"{c['id']}.json").write_text(json.dumps({
         "id": c["id"], "pid": pid, "evento": evento,
         "iniciado_em": dt.datetime.now().astimezone().isoformat(timespec="milliseconds"),
-        "fps": int(str(c["fonte"]).split("rate=")[-1].split(":")[0].split(",")[0]) if "rate=" in str(c["fonte"]) else 30,
+        "fps": int(c.get("fps") or (str(c["fonte"]).split("rate=")[-1].split(":")[0].split(",")[0]
+                                    if "rate=" in str(c.get("fonte") or "") else 30)),
         "comando": " ".join(comando(c)),
     }, ensure_ascii=False, indent=1), encoding="utf-8")
 

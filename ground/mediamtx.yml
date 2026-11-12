@@ -27,3 +27,8 @@ apiAddress: 127.0.0.1:9997
 
 paths:
   all_others:
+    # PC de captura: todo fluxo publicado aqui (camera ligada direto na maquina, ja' comprimido)
+    # e' repassado para o lado terra quando LECSOR_DESTINO_SRT estiver definido (ex.: 187.127.60.250:8890).
+    # Sem essa variavel nada sobe — e' o que impede a VPS, que roda o mesmo mediamtx, de subir para si.
+    runOnAvailable: python ground/repasse.py $MTX_PATH
+    runOnAvailableRestart: yes

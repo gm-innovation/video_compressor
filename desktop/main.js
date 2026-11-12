@@ -17,7 +17,8 @@ SUPERFICIE = process.env.LECSOR_SUPERFICIE || SUPERFICIE;
 const PADRAO = require('./config.json');
 function caminhoConfig() { return path.join(app.getPath('userData'), 'config.json'); }
 function lerConfig() {
-  const base = { base: PADRAO.base, abrirAoIniciar: PADRAO.abrirAoIniciar.slice(), modoQuiosque: !!PADRAO.modoQuiosque,
+  const base = { base: PADRAO.base, destinoSrt: PADRAO.destinoSrt || '',
+                 abrirAoIniciar: PADRAO.abrirAoIniciar.slice(), modoQuiosque: !!PADRAO.modoQuiosque,
                  servidorLocal: Object.assign({ ligado: false, repo: '', portaApi: 8765 }, PADRAO.servidorLocal || {}) };
   try {
     const doUsuario = JSON.parse(fs.readFileSync(caminhoConfig(), 'utf8'));
@@ -114,11 +115,17 @@ function menu() {
     { label: 'Servidor local', submenu: [
       { label: 'Subir servidor nesta maquina (API, mediamtx, agente)', click: () => servidor.subir(config) },
       { label: 'Parar servidor local', click: () => servidor.parar(config) },
-      { label: 'Ver estado do servidor', click: () => dialog.showMessageBox({ message: servidor.estado(), detail: servidor.detalhe() }) }
+      { label: 'Ver estado do servidor', click: () => dialog.showMessageBox({ message: servidor.estado(), detail: servidor.detalhe(config) }) },
+      { label: 'Destino do repasse (lado terra)...', click: () => dialog.showMessageBox({
+          message: 'Repasse dos fluxos desta maquina',
+          detail: (config.destinoSrt ? 'Subindo para: ' + config.destinoSrt : 'Nada e repassado: esta maquina serve so a propria tela.')
+            + '\n\nPara trocar, edite "destinoSrt" no config.json ao lado do aplicativo (ex.: 187.127.60.250:8890) e suba o servidor local de novo.' }) }
     ] },
     { label: 'Ajuda', submenu: [
       { label: 'Endereco do lado terra...', click: () => dialog.showMessageBox({
-          message: 'Lado terra em uso', detail: config.base + '\n\nPara trocar, edite config.json ao lado do aplicativo.' }) },
+          message: 'Lado terra em uso',
+          detail: config.base + '\n\nRepasse desta maquina: ' + (config.destinoSrt || '(nada — so esta maquina)')
+            + '\n\nPara trocar, edite config.json ao lado do aplicativo.' }) },
       { label: 'Sobre', click: () => dialog.showMessageBox({ message: 'LECSOR Pipeline de Video', detail: (SUPERFICIE ? 'Superficie: ' + SUPERFICIE + '. ' : 'Superficies: cliente, admin e bancada. ') + 'Interface sem acesso a credencial de camera e sem chave de API.' }) }
     ] }
   );

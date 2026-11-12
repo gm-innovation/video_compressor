@@ -1,0 +1,26 @@
+[
+  {
+    "id": "cam-01",
+    "entrada": "camera",
+    "dispositivo": "TROQUE PELO NOME DA CAMERA 1 (veja em /api/dispositivos)",
+    "resolucao": "1280x720",
+    "fps": 30,
+    "codec": "libx264",
+    "bitrate": "3000k",
+    "srt_host": "127.0.0.1",
+    "srt_port": 8890,
+    "streamid": "cam-01"
+  },
+  {
+    "id": "cam-02",
+    "entrada": "camera",
+    "dispositivo": "TROQUE PELO NOME DA CAMERA 2 (veja em /api/dispositivos)",
+    "resolucao": "1280x720",
+    "fps": 30,
+    "codec": "libx264",
+    "bitrate": "1500k",
+    "srt_host": "127.0.0.1",
+    "srt_port": 8890,
+    "streamid": "cam-02"
+  }
+]
