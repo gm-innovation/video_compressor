@@ -12,10 +12,14 @@ o caminho completo **bordo → terra → tela** rodando na bancada com vídeo pr
 - `tests/`  — testes automatizados
 - `tools/`  — binários de bancada (mediamtx v1.21.3 windows_amd64)
 
+## PC de captura (câmeras ligadas direto no computador)
+Passo a passo em `INSTALAR-PC-DE-CAPTURA.md`: as câmeras entram pela tela **Enviar vídeo**, o
+sistema comprime na máquina e o vídeo comprimido sobe para o lado terra (`destinoSrt`).
+
 ## Instaladores prontos (Windows x64)
 Na página de releases: https://github.com/gm-innovation/video_compressor/releases
-- `LECSOR-Cliente-0.1.0-x64.exe` — app do cliente
-- `LECSOR-Admin-0.1.0-x64.exe` — admin/operação
+- `LECSOR-Cliente-0.1.1-x64.exe` — app do cliente
+- `LECSOR-Admin-0.1.1-x64.exe` — admin/operação (traz o PC de captura: `destinoSrt` + repasse)
 
 Padrão de fábrica: o `config.json` ao lado do app aponta para `http://127.0.0.1:8765`;
 para usar contra o lado terra da VPS, ponha `"base": "http://187.127.60.250:8085"`.

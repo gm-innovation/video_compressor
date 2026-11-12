@@ -1,7 +1,7 @@
 {
   "name": "lecsor-pipeline-video-desktop",
   "productName": "LECSOR Pipeline de Video",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Aplicativo Windows com as tres superficies do pipeline de video bordo-terra (bancada, cliente e admin).",
   "main": "main.js",
   "private": true,
