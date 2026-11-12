@@ -74,9 +74,10 @@
 | fase | entrega | evidência verificada |
 |---|---|---|
 | 1 P0 | `ground/repasse.py` + `runOnAvailable` no `ground/mediamtx.yml` (chave nova do mediamtx v1.21.3; `runOnReady` está descontinuado) | `tests/test-repasse-mediamtx.py` OK (2 instâncias isoladas; sem destino nada sobe; com destino chega sem reencodar: H264 640x360). Ponta a ponta real bancada→VPS: o fluxo `teste-repasse-vps` apareceu **na VPS** `ready`, H264 1280x720, com `-c copy` |
-| 2 P0 | `destinoSrt` no `desktop/config.json`, `amb()`/`pythonDe()` no `desktop/servidor.js`, `INSTALAR-PC-DE-CAPTURA.md` | `node -e` sobre `servidor.js`: sem destino a variável é **removida** do ambiente dos filhos; com destino vira `LECSOR_DESTINO_SRT=187.127.60.250:8890`; `pythonDe` acha o `.venv` do repo |
+| 2 P0 | `destinoSrt` no `desktop/config.json`, `amb()`/`pythonDe()` no `desktop/servidor.js`, `INSTALAR-PC-DE-CAPTURA.md`, **instaladores republicados na release** (0.1.0 não conhecia o `destinoSrt`: o PC de captura instalado por ele não repassaria nada) | `node -e` sobre `servidor.js`: sem destino a variável é **removida** do ambiente dos filhos; com destino vira `LECSOR_DESTINO_SRT=187.127.60.250:8890`; `pythonDe` acha o `.venv` do repo |
 | 3 P1 | `board/agent.py` com `"entrada": "camera"` (dshow) + `board/perfis/duas-cameras.json` | `tests/test-agente-dshow.py` OK — inclusive **com a webcam real** (`ACER HD User Facing`) publicando no mediamtx |
 | 4 P1 | `/api/envios/destino` (só operação; **sem** a exceção de chamada local, para o cliente logado na mesma máquina também não receber endereço interno) + linha do destino na tela *Enviar vídeo* | API: admin 200, operação 200, cliente **403**, sem login **403**; harness jsdom `harness-destino.mjs` OK nos dois casos, `harness-cameras.mjs` sem regressão |
+| 2 P0 (extra) | instaladores **0.1.1** publicados na release do repositório | `bash desktop/construir-instaladores.sh` OK; release `v0.1.1` com `LECSOR-Cliente-0.1.1-x64.exe` (81.699.581 B) e `LECSOR-Admin-0.1.1-x64.exe` (81.699.542 B) confirmados por leitura da API do GitHub; pacote conferido por dentro: `app.asar` contém `destinoSrt` (7 ocorrências) e `LECSOR_DESTINO_SRT` (2) |
 | 5 P2 | medição com as duas câmeras reais | **pendente**: depende das câmeras no PC de captura |
 
 ## 7. Ordem de execução
