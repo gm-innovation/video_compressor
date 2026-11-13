@@ -136,6 +136,74 @@ def main() -> int:
         con.close()
         exigir(n == 1 and n2 == 1, "anunciar de novo NAO duplica (antes %d, depois %d)" % (n, n2))
         exigir(bool(rot) and rot[0] == "rotulo novo", "anunciar de novo ATUALIZA o rotulo: %r" % (rot[0] if rot else None))
+
+        # ----------------------------------------------------------------------------------------
+        # Parte 2 — o CADASTRO feito no PC de captura tem que aparecer no cliente SEM esperar fluxo.
+        # Defeito do dono: "cadastrei cam-01 e cam-02 no app de captura e o app do cliente nao mostra
+        # nada" — a linha existia so' no banco do bordo.
+        # ----------------------------------------------------------------------------------------
+        porta_bordo = porta_livre()
+        env_bordo = dict(env)
+        env_bordo["LECSOR_BANCO"] = str(tmp / "bordo.db")
+        env_bordo["LECSOR_LADO_TERRA_API"] = base          # o "lado terra" aqui e' a API de teste
+        env_bordo["LECSOR_EMBARCACAO"] = "bancada"
+        log_bordo = (tmp / "bordo.log").open("wb")
+        bordo_proc = subprocess.Popen(
+            [sys.executable, str(RAIZ / "ground" / "api.py"), str(porta_bordo), "--semear-demo"],
+            cwd=str(RAIZ), env=env_bordo, stdout=log_bordo, stderr=subprocess.STDOUT)
+        base_bordo = f"http://127.0.0.1:{porta_bordo}"
+        try:
+            for _ in range(60):
+                time.sleep(0.5)
+                try:
+                    with urllib.request.urlopen(base_bordo + "/api/saude", timeout=2):
+                        break
+                except Exception:
+                    continue
+            else:
+                exigir(False, "a API do PC de captura nao subiu; log em %s" % (tmp / "bordo.log"))
+                raise SystemExit(1)
+
+            captura = Sessao(base_bordo)
+            s, j = captura.pedir("/api/entrar", {"email": "admin@lecsor.test", "senha": SENHA})
+            exigir(s == 200 and j.get("ok"), "admin do PC de captura autenticou (http %s)" % s)
+            s, j = captura.pedir("/api/cameras", {"id": "cam-01", "fluxo_id": "cam-01",
+                                                  "rotulo": "CAM 01", "ip": "192.168.0.50",
+                                                  "porta": "554", "embarcacao_id": "bancada"})
+            exigir(s == 201 and (j.get("lado_terra") or {}).get("ok"),
+                   "cadastrar cam-01 no PC de captura publica no lado terra (http %s, lado_terra=%s)"
+                   % (s, (j.get("lado_terra") or {}).get("motivo") or (j.get("lado_terra") or {}).get("ok")))
+
+            s, j = cliente.pedir("/api/cameras")
+            cam01 = next((c for c in j.get("cameras", []) if c["id"] == "cam-01"), None)
+            exigir(bool(cam01), "o CLIENTE ve a camera cam-01 cadastrada no bordo (viu %s)"
+                   % sorted(c["id"] for c in j.get("cameras", [])))
+            exigir(bool(cam01) and cam01.get("embarcacao_id") == "bancada",
+                   "cam-01 ficou na embarcacao do bordo: %r" % (cam01 or {}).get("embarcacao_id"))
+            exigir(not (cam01 or {}).get("ip") and not (cam01 or {}).get("porta"),
+                   "o cadastro publico NAO leva endereco da camera (ip=%r porta=%r)"
+                   % ((cam01 or {}).get("ip"), (cam01 or {}).get("porta")))
+
+            # cam-02 registrada ANTES desta correcao: existe so' no banco do bordo; o botao/rota de
+            # publicar tem que leva-la ao lado terra sem recadastrar.
+            con = sqlite3.connect(tmp / "bordo.db")
+            con.execute("INSERT OR REPLACE INTO cameras (id,embarcacao_id,rotulo,fluxo_id,local,ativo)"
+                        " VALUES ('cam-02','bancada','CAM 02','cam-02','',1)")
+            con.commit()
+            con.close()
+            s, j = captura.pedir("/api/cameras/publicar", {})
+            exigir(s == 200 and "cam-02" in (j.get("publicadas") or []),
+                   "publicar o cadastro existente alcanca cam-02 (http %s, %s)" % (s, j))
+            s, j = cliente.pedir("/api/cameras")
+            exigir(any(c["id"] == "cam-02" for c in j.get("cameras", [])),
+                   "o CLIENTE passa a ver a cam-02 registrada antes da correcao")
+        finally:
+            bordo_proc.terminate()
+            try:
+                bordo_proc.wait(timeout=10)
+            except Exception:
+                bordo_proc.kill()
+            log_bordo.close()
     finally:
         proc.terminate()
         try:

@@ -16,13 +16,19 @@ CREATE TABLE IF NOT EXISTS embarcacoes (
 );
 
 -- camera do produto: aponta para o fluxo que o lado terra publica. NAO guarda segredo de camera.
+-- O endereco (ip/porta/protocolo/canal) fica aqui so' para a OPERACAO consultar em
+-- `/api/cameras/detalhe`; `GET /api/cameras` (tela do cliente) nunca devolve esses campos.
 CREATE TABLE IF NOT EXISTS cameras (
   id            TEXT PRIMARY KEY,
   embarcacao_id TEXT NOT NULL REFERENCES embarcacoes(id),
   rotulo        TEXT NOT NULL,
   fluxo_id      TEXT NOT NULL,
   local         TEXT DEFAULT '',
-  ativo         INTEGER NOT NULL DEFAULT 1
+  ativo         INTEGER NOT NULL DEFAULT 1,
+  ip            TEXT DEFAULT '',
+  porta         TEXT DEFAULT '',
+  protocolo     TEXT DEFAULT 'rtsp',
+  canal         TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS usuarios (

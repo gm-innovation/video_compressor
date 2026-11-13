@@ -342,6 +342,15 @@ function telaCameras(t) {
       await atualizar();
       mostrarRecado(r.ok ? 'câmera cadastrada: ' + r.corpo.id : 'recusado: ' + JSON.stringify(r.corpo), !r.ok);
     }));
+    /* O cadastro desta máquina sobe sozinho no lado terra (ao cadastrar e ao subir o servidor local).
+       Este botão existe para o caso da câmera que já estava cadastrada antes disso: sem ele a linha
+       fica só no banco local e o app do cliente não mostra nada ("cadastrei cam-01 e não aparece"). */
+    caixa.appendChild(botao('Publicar câmeras no lado terra', 'mini', async () => {
+      const r = await api('/api/cameras/publicar', { method: 'POST', body: JSON.stringify({}) });
+      const p = r.corpo || {};
+      mostrarRecado(r.ok ? 'publicado no lado terra: ' + ((p.publicadas || []).join(', ') || 'nenhuma câmera')
+        : 'não publiquei: ' + JSON.stringify(p.falharam || p), !r.ok);
+    }));
     t.appendChild(caixa);
   }
   const interno = (A.camerasInterno && A.camerasInterno.cameras) || [];

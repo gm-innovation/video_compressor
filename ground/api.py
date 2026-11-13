@@ -129,6 +129,16 @@ def inicializar(semear_demo: bool = False) -> None:
             p for p in (RAIZ / "db").glob("schema*.sql") if p.name != "schema.sql")
         for esquema in esquemas:
             c.executescript(esquema.read_text(encoding="utf-8"))
+        # Instalacao limpa/antiga fica com `cameras` SEM as colunas de endereco (o schema criava so'
+        # id/embarcacao/rotulo/fluxo/local/ativo) e o CADASTRO DE CAMERA quebrava com "table cameras
+        # has no column named ip" — exatamente na maquina das cameras, que e' onde o operador cadastra.
+        # A coluna que faltar e' criada aqui; o endereco continua saindo so' para operacao
+        # (`/api/cameras/detalhe`) e nunca para a tela do cliente.
+        colunas = {r["name"] for r in c.execute("PRAGMA table_info(cameras)")}
+        for nome, tipo in (("ip", "TEXT DEFAULT ''"), ("porta", "TEXT DEFAULT ''"),
+                           ("protocolo", "TEXT DEFAULT 'rtsp'"), ("canal", "TEXT DEFAULT ''")):
+            if nome not in colunas:
+                c.execute(f"ALTER TABLE cameras ADD COLUMN {nome} {tipo}")
         for f in json.loads((RAIZ / "db" / "fases-seed.json").read_text(encoding="utf-8")):
             c.execute("""INSERT INTO fases (id,numero,nome,prioridade,status,criterio_aceite,evidencia)
                          VALUES (:id,:numero,:nome,:prioridade,:status,:criterio_aceite,:evidencia)
@@ -1270,18 +1280,57 @@ class Handler(SimpleHTTPRequestHandler):
                           (d["id"], d["embarcacao_id"], d["rotulo"], d["fluxo_id"], d.get("local", ""),
                            ip, porta, str(d.get("protocolo") or "rtsp"), str(d.get("canal") or "")))
             auditar(u, "criar_camera", (d["id"] + " " + ip + ":" + porta).strip(": "), self.client_address[0])
-            return self._json(201, {"id": d["id"], "ip": ip, "porta": porta})
+            # Publica o CADASTRO no lado terra na hora: a tela do cliente vive no lado terra, e ate'
+            # aqui a camera so' chegava la' quando o fluxo subia ("cadastrei cam-01 aqui e o cliente
+            # nao mostra nada"). Vai so' id/rotulo/fluxo/ativo — sem endereco nem credencial.
+            lado = {"ok": False, "motivo": "nao tentei"}
+            try:
+                import repasse
+                lado = repasse.publicar_cadastro({"id": d["id"], "fluxo_id": d["fluxo_id"],
+                                                  "rotulo": d["rotulo"], "embarcacao_id": d["embarcacao_id"],
+                                                  "ativo": 1})
+            except Exception as e:
+                lado = {"ok": False, "motivo": f"{type(e).__name__}: {e}"}
+            return self._json(201, {"id": d["id"], "ip": ip, "porta": porta,
+                                    "lado_terra": lado})
+        if rota == "/api/cameras/publicar":
+            # Forca a publicacao do cadastro das cameras DESTA maquina no lado terra. E' o que a tela
+            # usa quando a camera ja' existia aqui antes (registrada quando a publicacao automatica
+            # ainda nao existia) e o cliente nao mostra nada.
+            if not (u and u["papel"] in PAPEL_ADMIN) and not self._local():
+                return self._json(401, {"erro": "entre no sistema"})
+            import repasse
+            with conexao() as c:
+                cams = [dict(x) for x in c.execute("SELECT * FROM cameras ORDER BY id")]
+            enviadas, falhas = [], []
+            for cam in cams:
+                r = repasse.publicar_cadastro(cam)
+                (enviadas if r.get("ok") else falhas).append(cam["id"])
+            auditar(u, "publicar_cadastro_cameras", f"{len(enviadas)} ok / {len(falhas)} falha",
+                    self.client_address[0])
+            return self._json(200, {"ok": not falhas, "publicadas": enviadas, "falharam": falhas})
         if rota.startswith("/api/cameras/") and rota.endswith("/ativo"):
             if not (u and u["papel"] in PAPEL_ADMIN):
                 return self._json(401, {"erro": "entre no sistema"})
             cid = rota[len("/api/cameras/"):-len("/ativo")]
             novo = 1 if self._corpo().get("ativo", True) else 0
             with conexao() as c:
-                if not c.execute("SELECT 1 FROM cameras WHERE id=?", (cid,)).fetchone():
+                cam = c.execute("SELECT * FROM cameras WHERE id=?", (cid,)).fetchone()
+                if not cam:
                     return self._json(404, {"erro": "camera inexistente"})
                 c.execute("UPDATE cameras SET ativo=? WHERE id=?", (novo, cid))
             auditar(u, "ativar_camera" if novo else "desativar_camera", cid, self.client_address[0])
-            return self._json(200, {"id": cid, "ativo": bool(novo)})
+            # Desativar/reativar aqui tambem vale no lado terra: senao o cliente continua vendo a
+            # camera que o operador acabou de desligar nesta maquina.
+            lado = {"ok": False, "motivo": "nao tentei"}
+            try:
+                import repasse
+                lado = repasse.publicar_cadastro({"id": cam["id"], "fluxo_id": cam["fluxo_id"],
+                                                  "rotulo": cam["rotulo"],
+                                                  "embarcacao_id": cam["embarcacao_id"], "ativo": novo})
+            except Exception as e:
+                lado = {"ok": False, "motivo": f"{type(e).__name__}: {e}"}
+            return self._json(200, {"id": cid, "ativo": bool(novo), "lado_terra": lado})
         if rota == "/api/decisoes":
             if not (u and u["papel"] in PAPEL_ADMIN):
                 return self._json(401, {"erro": "so operador/admin registra decisao"})
@@ -1382,7 +1431,12 @@ class Handler(SimpleHTTPRequestHandler):
         fluxo = re.sub(r"[^a-zA-Z0-9_\-]", "-", str(d.get("fluxo_id") or "").strip())
         if not fluxo:
             return self._json(422, {"erro": "informe o fluxo_id"})
+        # `id` proprio da camera no bordo: o lado terra passa a ter a MESMA linha que a maquina das
+        # cameras (era o "cadastrei cam-01 e cam-02 aqui e o cliente nao ve nada"). Sem id, o fluxo
+        # e' o id.
+        cid = re.sub(r"[^a-zA-Z0-9_\-]", "-", str(d.get("id") or "").strip()) or fluxo
         rotulo = (str(d.get("rotulo") or fluxo).strip() or fluxo)[:120]
+        ativo = 0 if str(d.get("ativo", 1)).strip().lower() in ("0", "false", "nao", "não") else 1
         emb = str(d.get("embarcacao_id") or os.environ.get("LECSOR_EMBARCACAO_BORDO") or "").strip()
         with conexao() as c:
             if not emb:
@@ -1395,12 +1449,14 @@ class Handler(SimpleHTTPRequestHandler):
             elif not c.execute("SELECT 1 FROM embarcacoes WHERE id=?", (emb,)).fetchone():
                 return self._json(422, {"erro": "embarcacao_id inexistente"})
             c.execute("""INSERT INTO cameras (id,embarcacao_id,rotulo,fluxo_id,local,ativo)
-                         VALUES (?,?,?,?,?,1)
+                         VALUES (?,?,?,?,?,?)
                          ON CONFLICT(id) DO UPDATE SET rotulo=excluded.rotulo,
-                             embarcacao_id=excluded.embarcacao_id, ativo=1, local='bordo'""",
-                      (fluxo, emb, rotulo, fluxo, "bordo"))
-        auditar(None, "anuncio_bordo", f"{fluxo} -> {emb}", self.client_address[0])
-        return self._json(201, {"ok": True, "id": fluxo, "embarcacao_id": emb, "rotulo": rotulo})
+                             embarcacao_id=excluded.embarcacao_id, fluxo_id=excluded.fluxo_id,
+                             ativo=excluded.ativo, local='bordo'""",
+                      (cid, emb, rotulo, fluxo, "bordo", ativo))
+        auditar(None, "anuncio_bordo", f"{cid} ({fluxo}) -> {emb}", self.client_address[0])
+        return self._json(201, {"ok": True, "id": cid, "fluxo_id": fluxo,
+                                "embarcacao_id": emb, "rotulo": rotulo, "ativo": bool(ativo)})
 
     def _whep(self, camera_id: str, usuario) -> None:
         # Sem sessao so a propria maquina do servidor ve o fluxo (painel de bancada); de fora, 401.
@@ -1495,6 +1551,34 @@ def _fechar_minutos_em_loop() -> None:
         time.sleep(60)
 
 
+def _publicar_cadastro_no_boot() -> None:
+    """Publica no lado terra o cadastro das cameras desta maquina quando o servidor sobe.
+
+    Uma camera registrada nesta maquina so' era vista pelo cliente depois que o fluxo subia; camera
+    cadastrada e parada ficava invisivel. Aqui o cadastro vai na subida (recupera tambem o caso das
+    cameras registradas antes desta correcao). Best-effort: sem lado terra configurado, nao faz nada.
+    """
+    if not (os.environ.get("LECSOR_TOKEN_INGESTAO") or "").strip():
+        return
+    import repasse
+    for tentativa in range(1, 6):
+        try:
+            with conexao() as c:
+                cams = [dict(x) for x in c.execute("SELECT * FROM cameras ORDER BY id")]
+        except Exception as e:
+            print(f"[api] aviso: leitura das cameras para publicar falhou ({type(e).__name__}: {e})", flush=True)
+            return
+        if not cams:
+            return
+        ok = sum(1 for cam in cams if repasse.publicar_cadastro(cam).get("ok"))
+        if ok == len(cams):
+            print(f"[api] cadastro de {ok} camera(s) publicado no lado terra", flush=True)
+            return
+        print(f"[api] cadastro: {ok}/{len(cams)} publicado(s) no lado terra; tentativa {tentativa}/5",
+              flush=True)
+        time.sleep(30)
+
+
 def principal() -> int:
     args = [a for a in sys.argv[1:]]
     semear = "--semear-demo" in args
@@ -1507,6 +1591,9 @@ def principal() -> int:
         # Antes isso derrubava o servico no boot e o aplicativo abria em branco, sem tela de login.
         print(f"[api] aviso: limpeza de envios vivos falhou ({type(e).__name__}: {e}); seguindo", flush=True)
     threading.Thread(target=_fechar_minutos_em_loop, daemon=True).start()
+    # Publica o cadastro das cameras desta maquina no lado terra (best-effort, em segundo plano: nao
+    # pode atrasar o boot da API).
+    threading.Thread(target=_publicar_cadastro_no_boot, daemon=True).start()
     print(f"[ok] sistema em http://127.0.0.1:{porta}/  (bancada: /  ·  cliente: /app  ·  admin: /admin)")
     # por padrão o servidor fica SÓ no loopback da máquina; no lado terra ele precisa aceitar o
     # acesso do navegador do cliente, então o endereço vem do ambiente (LECSOR_BIND)

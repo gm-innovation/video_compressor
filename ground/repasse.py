@@ -112,6 +112,42 @@ def anunciar(fluxo: str, destino: str, rotulo: str | None = None) -> dict:
         return {"ok": False, "erro": str(e)}
 
 
+def publicar_cadastro(camera: dict, destino: str | None = None) -> dict:
+    """Publica o CADASTRO de uma camera desta maquina no lado terra, sem esperar o fluxo subir.
+
+    Era o furo do "cadastrei cam-01 e cam-02 no PC de captura e o app do cliente nao mostra nada": a
+    linha da camera existia so' no banco daqui, e o lado terra (que serve a tela do cliente) so' ganhava
+    a camera quando o fluxo entrava no ar. Aqui vai o cadastro inteiro — id, rotulo, fluxo e se esta'
+    ativa — nunca endereco, porta, protocolo ou credencial (nada disso sai desta maquina).
+    """
+    if not isinstance(camera, dict) or not str(camera.get("fluxo_id") or "").strip():
+        return {"ok": False, "motivo": "camera sem fluxo_id"}
+    fluxo = str(camera["fluxo_id"]).strip()
+    base = _api_lado_terra(destino or (os.environ.get("LECSOR_DESTINO_SRT") or ""))
+    token = (os.environ.get("LECSOR_TOKEN_INGESTAO") or "").strip()
+    if not base or not token:
+        _log(fluxo, "sem lado terra/token de ingestao — cadastro desta camera nao foi publicado")
+        return {"ok": False, "motivo": "sem lado terra ou sem LECSOR_TOKEN_INGESTAO"}
+    corpo = {"id": camera.get("id") or fluxo, "fluxo_id": fluxo,
+             "rotulo": camera.get("rotulo") or fluxo,
+             "ativo": 0 if str(camera.get("ativo", 1)).strip() in ("0", "False", "false") else 1}
+    emb = str(camera.get("embarcacao_id") or os.environ.get("LECSOR_EMBARCACAO") or "").strip()
+    if emb:
+        corpo["embarcacao_id"] = emb
+    req = urllib.request.Request(f"{base}/api/cameras/anuncio", data=json.dumps(corpo).encode("utf-8"),
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": f"Bearer {token}"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            j = json.loads(r.read() or b"{}")
+        _log(fluxo, f"cadastro publicado no lado terra: {j.get('id')} em {j.get('embarcacao_id')}"
+                    + ("" if j.get("ativo") else " (desativada)"))
+        return {"ok": bool(j.get("ok")), "resposta": j}
+    except Exception as e:
+        _log(fluxo, f"nao consegui publicar o cadastro no lado terra ({type(e).__name__}: {e})")
+        return {"ok": False, "erro": str(e)}
+
+
 def repassar(fluxo: str, destino: str, origem: str) -> int:
     if not destino:
         _log(fluxo, "sem destino (LECSOR_DESTINO_SRT) — nada a repassar")

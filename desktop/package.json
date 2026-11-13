@@ -1,7 +1,7 @@
 {
   "name": "lecsor-pipeline-video-desktop",
   "productName": "LECSOR Pipeline de Video",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Aplicativo Windows do pipeline de video bordo-terra: instalador PLUG & PLAY (leva o servidor, o ffmpeg, o mediamtx e o Python dentro do pacote).",
   "main": "main.js",
   "private": true,
