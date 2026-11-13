@@ -136,7 +136,8 @@ def inicializar(semear_demo: bool = False) -> None:
         # (`/api/cameras/detalhe`) e nunca para a tela do cliente.
         colunas = {r["name"] for r in c.execute("PRAGMA table_info(cameras)")}
         for nome, tipo in (("ip", "TEXT DEFAULT ''"), ("porta", "TEXT DEFAULT ''"),
-                           ("protocolo", "TEXT DEFAULT 'rtsp'"), ("canal", "TEXT DEFAULT ''")):
+                           ("protocolo", "TEXT DEFAULT 'rtsp'"), ("canal", "TEXT DEFAULT ''"),
+                           ("alvo", "TEXT DEFAULT ''")):
             if nome not in colunas:
                 c.execute(f"ALTER TABLE cameras ADD COLUMN {nome} {tipo}")
         for f in json.loads((RAIZ / "db" / "fases-seed.json").read_text(encoding="utf-8")):
@@ -699,7 +700,54 @@ class Handler(SimpleHTTPRequestHandler):
             if fluxo:
                 return self._json(200, {"qualidade": _qualidade.ultima(fluxo), "fluxo": fluxo},
                                   {"Cache-Control": "no-store"})
-            return self._json(200, {"qualidade": producao_pipeline._qualidade_por_fluxo()},
+            # A MEDICAO de qualidade por camera. O numero e' medido no PC de captura (unica maquina
+            # que tem a fonte crua para comparar) e chega aqui pelo anuncio autenticado: aqui vai o
+            # ULTIMO SSIM de cada fluxo com a IDADE (qualidade sem "medida quando" nao vale) e o
+            # proximo alvo a tentar quando o numero fica abaixo do piso.
+            with conexao() as c:
+                c.execute("""CREATE TABLE IF NOT EXISTS medicoes_qualidade (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                fluxo_id TEXT NOT NULL, ssim REAL, ajuste TEXT, res_coluna TEXT,
+                                resolucao TEXT, fps REAL, segundos REAL, mb_alvo REAL, mb_original REAL,
+                                compressao_pct REAL, fonte TEXT, medido_em TEXT NOT NULL)""")
+                linhas = [dict(x) for x in c.execute(
+                    """SELECT m.* FROM medicoes_qualidade m
+                       JOIN (SELECT fluxo_id, MAX(id) AS ultimo FROM medicoes_qualidade GROUP BY fluxo_id) u
+                         ON u.ultimo = m.id ORDER BY m.fluxo_id""")]
+                alvos = {x["fluxo_id"]: x["alvo"] for x in c.execute("SELECT fluxo_id, alvo FROM cameras")}
+                envios = {x["fluxo_id"]: x["bitrate_alvo"] for x in
+                          c.execute("""SELECT fluxo_id, bitrate_alvo FROM ingestoes i
+                                       WHERE id = (SELECT MAX(id) FROM ingestoes WHERE fluxo_id=i.fluxo_id)""")}
+            agora_iso = dt.datetime.now().astimezone()
+            itens = []
+            for l in linhas:
+                try:
+                    idade = int((agora_iso - dt.datetime.fromisoformat(str(l["medido_em"]))).total_seconds())
+                except Exception:
+                    idade = None
+                passa = l["ssim"] is not None and float(l["ssim"]) >= etapas_pipeline.PISO_QUALIDADE_ACEITO
+                atual = str(alvos.get(l["fluxo_id"]) or envios.get(l["fluxo_id"]) or "")
+                sugerido = ""
+                if not passa and atual:
+                    try:
+                        kbps = int(re.sub(r"[^0-9]", "", atual) or 0)
+                        if kbps:
+                            # 1,5x arredondado PARA CIMA na centena (1500k -> 2300k): subir menos que
+                            # isso quase nunca muda o numero na tela e o dono fica sem referencia
+                            alvo_num = min(int(kbps * 1.5), 8000)
+                            sugerido = f"{(alvo_num + 99) // 100 * 100}k"
+                    except ValueError:
+                        sugerido = ""
+                itens.append({"fluxo_id": l["fluxo_id"], "ssim": l["ssim"], "ajuste": l["ajuste"],
+                              "resolucao": l["resolucao"], "fps": l["fps"], "medido_em": l["medido_em"],
+                              "idade_s": idade, "passa": bool(passa), "alvo_atual": atual,
+                              "alvo_sugerido": sugerido,
+                              "explica": ("medido na maquina de captura (a que tem a fonte crua) e "
+                                          "publicado aqui pelo anuncio autenticado do bordo")})
+            return self._json(200, {"qualidade": producao_pipeline._qualidade_por_fluxo(), "fluxos": itens,
+                                    "piso_qualidade": etapas_pipeline.PISO_QUALIDADE_SSIM,
+                                    "piso_aceito": etapas_pipeline.PISO_QUALIDADE_ACEITO,
+                                    "atualizado_em": agora_iso.isoformat(timespec="seconds")},
                               {"Cache-Control": "no-store"})
         if rota == "/api/producao":
             if not (self._pode_operar(u) or self._local()):
@@ -742,7 +790,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(403, {"erro": "so a operacao ve o endereco da camera"})
             with conexao() as c:
                 linhas = [dict(x) for x in c.execute(
-                    "SELECT id,rotulo,fluxo_id,embarcacao_id,local,ativo,ip,porta,protocolo,canal "
+                    "SELECT id,rotulo,fluxo_id,embarcacao_id,local,ativo,ip,porta,protocolo,canal,alvo "
                     "FROM cameras ORDER BY id")]
             for l in linhas:
                 if l.get("ip"):
@@ -967,6 +1015,30 @@ class Handler(SimpleHTTPRequestHandler):
                 segundos = 8.0
             r = _qualidade.medir(fluxo, segundos=segundos,
                                  bitrate=(str(d.get("bitrate")).strip() if d.get("bitrate") else None))
+            return self._json(200 if r.get("ok") else 422, r, {"Cache-Control": "no-store"})
+        if rota == "/api/qualidade/comparar":
+            # A mesma cena em varios alvos, com SSIM e nitidez de cada um: e' o numero que responde
+            # "esta perdendo qualidade?". Exige a fonte LIVRE (a medicao precisa dela), por isso
+            # recusa com recado claro enquanto o envio estiver no ar.
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so operacao e administrador comparam a qualidade"})
+            d = self._corpo()
+            fluxo = str(d.get("fluxo") or d.get("fluxo_id") or "").strip()
+            if not fluxo:
+                return self._json(422, {"erro": "informe o fluxo (fluxo)"})
+            alvos = d.get("alvos") or ["1500k", "2500k", "4000k"]
+            if isinstance(alvos, str):
+                alvos = [x.strip() for x in alvos.split(",") if x.strip()]
+            alvos = [str(x) for x in alvos if re.match(r"^\s*[0-9]{2,6}k?\s*$", str(x))]
+            if not alvos:
+                return self._json(422, {"erro": "informe os alvos (ex.: 1500k,2500k,4000k)"})
+            try:
+                segundos = float(d.get("segundos") or 6)
+            except Exception:
+                segundos = 6.0
+            import qualidade as _qualidade
+            r = _qualidade.comparar_alvos(fluxo, alvos=alvos, segundos=segundos)
+            auditar(u, "comparar_alvos", f"{fluxo} {alvos}", self.client_address[0])
             return self._json(200 if r.get("ok") else 422, r, {"Cache-Control": "no-store"})
         if rota in ("/api/compressao/publicar", "/api/compressoes/publicar"):
             if not (self._pode_operar(u) or self._local()):
@@ -1249,6 +1321,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(201, {"id": d["id"]})
         if rota == "/api/cameras/anuncio":
             return self._anuncio_bordo()
+        if rota == "/api/qualidade/anuncio":
+            return self._anuncio_qualidade()
         if rota == "/api/cameras":
             if not (u and u["papel"] in PAPEL_ADMIN):
                 return self._json(401, {"erro": "entre no sistema"})
@@ -1275,10 +1349,11 @@ class Handler(SimpleHTTPRequestHandler):
                 elif not c.execute("SELECT 1 FROM embarcacoes WHERE id=?", (d["embarcacao_id"],)).fetchone():
                     return self._json(422, {"erro": "embarcacao_id inexistente"})
                 c.execute("""INSERT OR REPLACE INTO cameras
-                             (id,embarcacao_id,rotulo,fluxo_id,local,ativo,ip,porta,protocolo,canal)
-                             VALUES (?,?,?,?,?,1,?,?,?,?)""",
+                             (id,embarcacao_id,rotulo,fluxo_id,local,ativo,ip,porta,protocolo,canal,alvo)
+                             VALUES (?,?,?,?,?,1,?,?,?,?,?)""",
                           (d["id"], d["embarcacao_id"], d["rotulo"], d["fluxo_id"], d.get("local", ""),
-                           ip, porta, str(d.get("protocolo") or "rtsp"), str(d.get("canal") or "")))
+                           ip, porta, str(d.get("protocolo") or "rtsp"), str(d.get("canal") or ""),
+                           str(d.get("alvo") or "")))
             auditar(u, "criar_camera", (d["id"] + " " + ip + ":" + porta).strip(": "), self.client_address[0])
             # Publica o CADASTRO no lado terra na hora: a tela do cliente vive no lado terra, e ate'
             # aqui a camera so' chegava la' quando o fluxo subia ("cadastrei cam-01 aqui e o cliente
@@ -1309,6 +1384,25 @@ class Handler(SimpleHTTPRequestHandler):
             auditar(u, "publicar_cadastro_cameras", f"{len(enviadas)} ok / {len(falhas)} falha",
                     self.client_address[0])
             return self._json(200, {"ok": not falhas, "publicadas": enviadas, "falharam": falhas})
+        if rota.startswith("/api/cameras/") and rota.endswith("/alvo"):
+            # Alvo de bitrate POR CAMERA: e' o ajuste que o dono escolhe olhando a imagem (ou o que a
+            # sugestao da tela propõe quando o SSIM fica abaixo do piso). Sem isso as duas cameras
+            # usavam o mesmo alvo e a mais detalhada era a que "perdia qualidade".
+            if not (u and u["papel"] in PAPEL_ADMIN) and not self._local():
+                return self._json(403, {"erro": "so a operacao define o alvo da camera"})
+            cid = rota[len("/api/cameras/"):-len("/alvo")]
+            alvo = str(self._corpo().get("alvo") or "").strip()
+            if alvo and not re.match(r"^[0-9]{2,6}k?$", alvo):
+                return self._json(422, {"erro": "alvo invalido: use um numero de kbps (ex.: 2000k)"})
+            if alvo and not alvo.endswith("k"):
+                alvo += "k"
+            with conexao() as c:
+                cam = c.execute("SELECT * FROM cameras WHERE id=?", (cid,)).fetchone()
+                if not cam:
+                    return self._json(404, {"erro": "camera inexistente"})
+                c.execute("UPDATE cameras SET alvo=? WHERE id=?", (alvo, cid))
+            auditar(u, "definir_alvo_camera", f"{cid} alvo={alvo or 'padrao'}", self.client_address[0])
+            return self._json(200, {"id": cid, "alvo": alvo})
         if rota.startswith("/api/cameras/") and rota.endswith("/ativo"):
             if not (u and u["papel"] in PAPEL_ADMIN):
                 return self._json(401, {"erro": "entre no sistema"})
@@ -1457,6 +1551,56 @@ class Handler(SimpleHTTPRequestHandler):
         auditar(None, "anuncio_bordo", f"{cid} ({fluxo}) -> {emb}", self.client_address[0])
         return self._json(201, {"ok": True, "id": cid, "fluxo_id": fluxo,
                                 "embarcacao_id": emb, "rotulo": rotulo, "ativo": bool(ativo)})
+
+    def _anuncio_qualidade(self) -> None:
+        """O PC de captura manda o SSIM que ele mediu na fonte (o lado terra nao consegue medir).
+
+        O SSIM precisa do original e do comprimido lado a lado; o original so' existe na maquina que
+        tem a camera. Era o "nao tenho medicao de SSIM": o numero era medido no bordo e nunca saia de
+        la'. Aqui ele entra em `medicoes_qualidade` do lado terra. Autorizacao pelo token de ingestao.
+        """
+        esperado = (os.environ.get("LECSOR_TOKEN_INGESTAO") or "").strip()
+        recebido = (self.headers.get("Authorization") or "").strip()
+        if recebido.lower().startswith("bearer "):
+            recebido = recebido[7:].strip()
+        if not esperado or not hmac.compare_digest(recebido, esperado):
+            return self._json(401, {"erro": "token de ingestao invalido"})
+        d = self._corpo()
+        fluxo = re.sub(r"[^a-zA-Z0-9_\-]", "-", str(d.get("fluxo_id") or "").strip())
+        if not fluxo:
+            return self._json(422, {"erro": "informe o fluxo_id"})
+        try:
+            ssim = float(d.get("ssim"))
+        except (TypeError, ValueError):
+            return self._json(422, {"erro": "informe o ssim medido (numero entre 0 e 1)"})
+        if not 0.0 < ssim <= 1.0:
+            return self._json(422, {"erro": "ssim fora da faixa (0 a 1)"})
+
+        def num(chave):
+            try:
+                bruto = d.get(chave)
+                return float(bruto) if bruto not in (None, "") else None
+            except (TypeError, ValueError):
+                return None
+
+        # tabela da qualidade: existe no bordo e no lado terra; se o lado terra estiver numa base nova,
+        # e' criada aqui (mesmas colunas que `ground/qualidade.py`).
+        with conexao() as c:
+            c.execute("""CREATE TABLE IF NOT EXISTS medicoes_qualidade (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            fluxo_id TEXT NOT NULL, ssim REAL, ajuste TEXT, res_coluna TEXT,
+                            resolucao TEXT, fps REAL, segundos REAL, mb_alvo REAL, mb_original REAL,
+                            compressao_pct REAL, fonte TEXT, medido_em TEXT NOT NULL)""")
+            c.execute("CREATE INDEX IF NOT EXISTS ix_qualidade_fluxo ON medicoes_qualidade (fluxo_id, id)")
+            c.execute("""INSERT INTO medicoes_qualidade (fluxo_id, ssim, ajuste, res_coluna, resolucao,
+                         fps, segundos, mb_alvo, mb_original, compressao_pct, fonte, medido_em)
+                         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                      (fluxo, ssim, str(d.get("ajuste") or ""), str(d.get("res_coluna") or ""),
+                       str(d.get("resolucao") or ""), num("fps"), num("segundos"), num("mb_alvo"),
+                       num("mb_original"), num("compressao_pct"), str(d.get("fonte") or ""),
+                       str(d.get("medido_em") or dt.datetime.now().astimezone().isoformat(timespec="seconds"))))
+        auditar(None, "anuncio_qualidade", f"{fluxo} ssim={round(ssim, 4)}", self.client_address[0])
+        return self._json(201, {"ok": True, "fluxo_id": fluxo, "ssim": ssim})
 
     def _whep(self, camera_id: str, usuario) -> None:
         # Sem sessao so a propria maquina do servidor ve o fluxo (painel de bancada); de fora, 401.

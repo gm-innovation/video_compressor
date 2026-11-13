@@ -133,6 +133,27 @@ def sonda(fonte: str) -> dict:
             "fps": fps, "bitrate_kbps": kbps, "codec_entrada": st.get("codec_name", ""),
             "duracao_s": round(float(fm.get("duration") or 0), 2) if fm.get("duration") else None}
 
+# Ajuste do encoder que VAI PARA A REDE. Fica num lugar so' porque a MEDICAO de qualidade tem que
+# medir exatamente este ajuste — antes a medicao usava um comando proprio que nao batia com o do ar.
+# `ultrafast` desliga o CABAC e o x264 cai para o perfil **Baseline** (medido no fluxo dos dois
+# envios do PC de captura): no mesmo bitrate isso entrega menos qualidade. `veryfast` mantem o CABAC
+# (perfil High) com latencia igual, porque `zerolatency` ja zera os quadros B.
+PRESET_ENCODE = os.environ.get("LECSOR_PRESET", "veryfast").strip() or "veryfast"
+
+
+def ajuste_encode(bitrate: str, fps: int, codec: str = "libx264") -> list[str]:
+    """Argumentos de encode do fluxo que vai para a rede (e da medicao de qualidade)."""
+    if codec in ("libx264", "h264", "x264"):
+        return ["-c:v", codec, "-preset", PRESET_ENCODE, "-tune", "zerolatency",
+                "-profile:v", "high", "-bf", "0",
+                "-b:v", bitrate, "-maxrate", bitrate, "-bufsize", "1M",
+                "-r", str(fps), "-g", str(fps), "-pix_fmt", "yuv420p"]
+    # outro codec: mantem o ajuste antigo, sem preset/profile do x264
+    return ["-c:v", codec, "-preset", "ultrafast", "-tune", "zerolatency",
+            "-b:v", bitrate, "-maxrate", bitrate, "-bufsize", "1M",
+            "-r", str(fps), "-g", str(fps), "-pix_fmt", "yuv420p"]
+
+
 def _comando(fonte: str, fluxo_id: str, bitrate: str, codec: str, repetir: bool, tipo: str,
              srt_host: str, srt_port: int, audio: bool = False, fonte2: str | None = None,
              fps: int = 30, arquivo_saida: str | None = None, copiar: bool = False,
@@ -154,9 +175,7 @@ def _comando(fonte: str, fluxo_id: str, bitrate: str, codec: str, repetir: bool,
         # arquivo JA comprimido que vai direto para o ar: sem re-codificar (nao gastar banda a toa)
         cmd += ["-c:v", "copy"]
     else:
-        cmd += ["-c:v", codec, "-preset", "ultrafast", "-tune", "zerolatency",
-                "-b:v", bitrate, "-maxrate", bitrate, "-bufsize", "1M",
-                "-r", str(fps), "-g", str(fps), "-pix_fmt", "yuv420p"]   # 30 fps: menos de 30 fica ruim, 60 gasta banda
+        cmd += ajuste_encode(bitrate, fps, codec)   # 30 fps: menos de 30 fica ruim, 60 gasta banda
     # Audio do clipe de teste pesa mais que o video comprimido (MP2 padrao ~224 kbps): por padrao
     # vai sem audio, para o numero medido ser o do video; quem quiser mantem a 48 kbps mono.
     if copiar:
@@ -263,6 +282,13 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
                          VALUES (?,?,?,?,?,1)
                          ON CONFLICT(id) DO UPDATE SET rotulo=excluded.rotulo, ativo=1, local='envio'""",
                       (camera_id, embarcacao_id, rotulo or slug, fluxo_id, "envio"))
+            # o alvo escolhido no envio fica GRAVADO na camera: e' assim que duas cameras com cenas
+            # diferentes passam a ter alvos diferentes (e a tela consegue comparar os dois numeros)
+            if tipo in ("camera", "sintetica"):
+                try:
+                    c.execute("UPDATE cameras SET alvo=? WHERE id=?", (str(bitrate), camera_id))
+                except sqlite3.OperationalError:
+                    pass
     threading.Thread(target=_bombear, args=(ident, proc, log), daemon=True).start()
     # O envio ao vivo tambem precisa EXISTIR para o cliente. Era o furo do "o fluxo chega no lado
     # terra e o app do cliente nao mostra a camera": quem sobe o fluxo por esta tela (envio ao vivo)
@@ -442,10 +468,12 @@ def ligar_camera(camera_id: str) -> dict:
     if cam["ip"]:
         return {"erro": "esta camera e por endereco (RTSP) e precisa de credencial: use Enviar video"}
     d = dict(ult) if ult else {}
+    # alvo POR CAMERA tem prioridade sobre o ultimo envio: e' o ajuste que o dono fixou nesta camera
+    alvo_cam = (cam["alvo"] if "alvo" in cam.keys() else "") or ""
     fonte = d.get("fonte") or ""
     if fonte.startswith("live:sintetica") or d.get("tipo") == "sintetica":
         return ao_vivo(tipo="sintetica", rotulo=cam["rotulo"], fluxo_id=cam["fluxo_id"],
-                       bitrate=d.get("bitrate_alvo") or "auto",
+                       bitrate=alvo_cam or d.get("bitrate_alvo") or "auto",
                        srt_host=d.get("srt_host") or "187.127.60.250",
                        srt_port=int(d.get("srt_port") or 8890),
                        embarcacao_id=cam["embarcacao_id"])
@@ -454,7 +482,7 @@ def ligar_camera(camera_id: str) -> dict:
     disp = d.get("dispositivo") or (fonte.split("dshow:", 1)[1] if "dshow:" in fonte else DISPOSITIVO_PADRAO)
     return ao_vivo(tipo="camera", dispositivo=disp, rotulo=cam["rotulo"], fluxo_id=cam["fluxo_id"],
                    resolucao=d.get("resolucao") or "1280x720", fps=int(d.get("fps_alvo") or 30),
-                   bitrate=d.get("bitrate_alvo") or "3000k",
+                   bitrate=alvo_cam or d.get("bitrate_alvo") or "1500k",
                    srt_host=d.get("srt_host") or "187.127.60.250", srt_port=int(d.get("srt_port") or 8890),
                    embarcacao_id=cam["embarcacao_id"])
 
@@ -642,6 +670,36 @@ def capturar(*, tipo: str = "camera", dispositivo: str | None = None, resolucao:
             "mb": round(destino.stat().st_size / 1e6, 2), "bitrate_kbps": s.get("bitrate_kbps")}
 
 
+def alvo_da_camera(fluxo_id: str | None) -> str | None:
+    """Alvo de bitrate gravado PARA ESTA camera (coluna `alvo` de `cameras`), se houver.
+
+    O alvo deixou de ser um numero unico para toda a tela: duas cameras com cenas diferentes (uma
+    com movimento e detalhe, outra parada) nao precisam do mesmo bitrate, e era essa igualdade que
+    aparecia como "a cam-02 perde qualidade" sem ninguem conseguir ver o numero.
+    """
+    if not str(fluxo_id or "").strip():
+        return None
+    try:
+        with conexao() as c:
+            r = c.execute("SELECT alvo FROM cameras WHERE fluxo_id=? OR id=? ORDER BY id LIMIT 1",
+                          (fluxo_id, fluxo_id)).fetchone()
+        return (str(r["alvo"]).strip() or None) if r else None
+    except Exception:
+        return None
+
+
+def gravar_alvo_da_camera(camera_id: str | None, alvo: str | None) -> bool:
+    """Guarda o alvo usado no envio na linha da camera (o ajuste escolhido nao se perde)."""
+    if not str(camera_id or "").strip() or not str(alvo or "").strip():
+        return False
+    try:
+        with conexao() as c:
+            c.execute("UPDATE cameras SET alvo=? WHERE id=? OR fluxo_id=?", (str(alvo).strip(), camera_id, camera_id))
+        return True
+    except Exception:
+        return False
+
+
 def ao_vivo(*, tipo: str = "camera", dispositivo: str | None = None, resolucao: str = "1920x1080",
             fps: int = 30, rotulo: str | None = None, fluxo_id: str | None = None, bitrate: str = "auto",
             embarcacao_id: str = "bancada", srt_host: str = "127.0.0.1", srt_port: int = 8890) -> dict:
@@ -676,16 +734,28 @@ def ao_vivo(*, tipo: str = "camera", dispositivo: str | None = None, resolucao: 
                     "ocupada_por": ocupado}
     slug_vivo = re.sub(r"[^a-z0-9]+", "-", unicodedata.normalize("NFKD", nome.lower())).strip("-")[:30].strip("-")
     ident = fluxo_id or f"vivo-{slug_vivo or tipo}"
-    # ajuste que VAI para o ar (mesma regra do iniciar); a medicao precisa ser do mesmo ajuste
-    alvo_vivo = str(bitrate or "auto")
+    # Alvo do envio: POR CAMERA quando ha alvo gravado nesta camera (a cam-02, de cena mais
+    # detalhada, nao tem por que usar o mesmo alvo da cam-01); sem alvo gravado, cai no padrao de
+    # sempre — 1500k camera / 2500k sintetica, que e' o que ja' estava no ar. O MESMO numero vai
+    # para a medicao E para o ffmpeg: antes a medicao media 3000k e o fluxo subia em 1500k, ou seja
+    # o SSIM mostrado era de um ajuste que nao era o que ia para a rede.
+    alvo_vivo = str(bitrate or "auto").strip()
     if alvo_vivo in ("", "auto"):
-        alvo_vivo = ("3000k" if tipo == "camera" else alvo_automatico(None))
+        alvo_vivo = alvo_da_camera(ident) or ("1500k" if tipo == "camera" else "2500k")
     # Mede a QUALIDADE (SSIM) do MESMO ajuste antes de entrar no ar: a fonte ainda esta livre e a
     # tela mostra o numero com a hora. Se a medicao falhar, o envio segue — qualidade e informacao,
     # nao pode impedir a operacao.
     try:
         import qualidade as _qualidade  # import tardio: qualidade tambem usa a ingestao
-        m = _qualidade.medir_se_preciso(ident, validade_s=600, segundos=8, bitrate=alvo_vivo)
+        # a fonte VAI junto: a medicao roda ANTES de o ffmpeg subir (a camera precisa estar livre), e
+        # nesse instante o fluxo ainda nao existe em `ingestoes` — sem isto a medicao do envio ao vivo
+        # respondia "fluxo nao encontrado" e o SSIM nunca aparecia para quem envia pela tela.
+        dados_medicao = {"tipo": tipo, "resolucao": resolucao, "fps": fps, "bitrate_alvo": alvo_vivo,
+                         "fonte": (f"dshow:{dispositivo}" if tipo == "camera"
+                                   else f"lavfi:testsrc2:{resolucao}"),
+                         "srt_host": srt_host, "srt_port": srt_port}
+        m = _qualidade.medir_se_preciso(ident, validade_s=600, segundos=8, bitrate=alvo_vivo,
+                                        dados=dados_medicao)
         if m.get("ok") and m.get("ssim") is not None:
             extra = " (medicao reaproveitada)" if m.get("pulado") else f" em {m.get('segundos')}s ajuste {m.get('ajuste')}"
             print(f"[qualidade] {ident}: SSIM {m.get('ssim')}{extra}", flush=True)
@@ -694,7 +764,7 @@ def ao_vivo(*, tipo: str = "camera", dispositivo: str | None = None, resolucao: 
     except Exception as e:
         print(f"[qualidade] {ident}: nao medida ({type(e).__name__}: {e})", flush=True)
     return iniciar(f"live:{tipo}", rotulo=nome, fluxo_id=ident,
-                   bitrate=bitrate, tipo=tipo, repetir=False, dispositivo=dispositivo, resolucao=resolucao,
+                   bitrate=alvo_vivo, tipo=tipo, repetir=False, dispositivo=dispositivo, resolucao=resolucao,
                    fps=fps, embarcacao_id=embarcacao_id, srt_host=srt_host, srt_port=srt_port)
 
 

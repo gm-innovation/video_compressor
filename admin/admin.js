@@ -73,6 +73,16 @@ function digitandoNaTela() {
 async function atualizar() {
   statusAtualizar('atualizando\u2026');
   try { const rc = await fetch('/api/cameras/detalhe'); if (rc.ok) A.camerasInterno = await rc.json(); } catch (e) {}
+  /* SSIM por fluxo: o número é medido no PC de captura (a máquina que tem a fonte crua) e chega
+     aqui pelo anúncio autenticado do bordo. Sem esta leitura a tela ficava sem medicao nenhuma —
+     era o "ainda não tenho medição de SSIM" do dono. */
+  try {
+    const rq = await fetch('/api/qualidade');
+    const jq = rq.ok ? await rq.json() : {};
+    const mapa = {};
+    for (const f of (jq.fluxos || [])) mapa[f.fluxo_id] = Object.assign({ piso_aceito: jq.piso_aceito }, f);
+    A.qualidadeFluxos = mapa;
+  } catch (e) { A.qualidadeFluxos = A.qualidadeFluxos || {}; }
   const rs = await api('/api/resumo'); if (rs.ok) A.resumo = rs.corpo;
   const em = await api('/api/embarcacoes'); A.embarcacoes = (em.corpo && em.corpo.embarcacoes) || [];
   const cm = await api('/api/cameras'); A.cameras = (cm.corpo && cm.corpo.cameras) || [];
@@ -322,6 +332,8 @@ function telaEmbarcacoes(t) {
 }
 
 function telaCameras(t) {
+  const fmt = (v, casas) => (v === null || v === undefined) ? '—'
+    : Number(v).toLocaleString('pt-BR', { maximumFractionDigits: casas === undefined ? 2 : casas });
   if (A.usuario.papel === 'admin' || A.usuario.papel === 'operador') {
     const caixa = document.createElement('div'); caixa.className = 'caixa-form';
     caixa.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Câmera: onde ela está e por onde entra' }));
@@ -364,11 +376,48 @@ function telaCameras(t) {
     ? interno.map((c) => Object.assign({}, c, { viva: vivo[c.id] || null }))
     : (A.cameras || []).map((c) => Object.assign({}, porId[c.id] || {}, { viva: c, id: c.id, rotulo: c.rotulo }));
   const situacao = (l) => (!l.ativo ? 'desativada' : (l.viva && l.viva.no_ar ? 'no ar' : 'fora do ar'));
+  /* A medição de qualidade do fluxo ao vivo é feita na máquina que TEM a fonte crua (o PC de
+     captura) e chega aqui pelo anúncio autenticado do bordo: a tela mostra o último número com a
+     idade, porque SSIM sem "medida quando" não diz se o ajuste medido ainda é o que está no ar. */
+  const qualDe = (l) => (A.qualidadeFluxos || {})[l.fluxo_id || l.id] || null;
+  const textoQualidade = (l) => {
+    const q = qualDe(l);
+    if (!q) return '— (não medida ainda)';
+    const idade = (q.idade_s === null || q.idade_s === undefined) ? ''
+      : ' · medida ' + (Math.abs(q.idade_s) < 90 ? Math.round(Math.abs(q.idade_s)) + ' s atrás'
+        : Math.round(Math.abs(q.idade_s) / 60) + ' min atrás');
+    return fmt(q.ssim, 4) + (q.passa ? '' : ' ⚠ abaixo do piso ' + fmt(q.piso_aceito, 4))
+      + ' · ajuste ' + (q.ajuste || '—') + idade
+      + (q.passa === false && q.alvo_sugerido ? ' · sugerido: ' + q.alvo_sugerido : '');
+  };
   t.appendChild(tabela([{ rotulo: 'Câmera', campo: 'rotulo' }, { rotulo: 'Fluxo', campo: 'fluxo_id' },
     { rotulo: 'Situação', valor: situacao },
     { rotulo: 'Endereço (operação)', valor: (l) => { const c = porId[l.id] || {}; return c.ip ? c.ip + ':' + (c.porta || '554') + (c.canal ? ' · canal ' + c.canal : '') : '—'; } },
     { rotulo: 'Como o agente pega', valor: (l) => { const c = porId[l.id] || {}; return c.captura || '—'; } },
     { rotulo: 'Encoder', valor: (l) => { const e = (l.viva && l.viva.encoder) || {}; return [e.codec, e.resolucao, e.fps ? e.fps + ' fps' : '', e.bitrate].filter(Boolean).join(' · '); } },
+    { rotulo: 'Qualidade (SSIM)', valor: textoQualidade },
+    { rotulo: 'Alvo (só desta câmera)', valor: (l) => {
+        const c = porId[l.id] || {};
+        const caixa = document.createElement('div');
+        caixa.style.display = 'flex'; caixa.style.gap = '.4rem'; caixa.style.alignItems = 'center';
+        const txt = document.createElement('span');
+        txt.textContent = c.alvo || 'padrão da tela';
+        caixa.appendChild(txt);
+        const sug = qualDe(l);
+        caixa.appendChild(botao('definir', 'mini', async () => {
+          const sugerido = (sug && sug.passa === false && sug.alvo_sugerido) ? sug.alvo_sugerido : '';
+          const novo = prompt('Alvo de bitrate só desta câmera (ex.: 2500k). Vazio volta ao padrão da tela.'
+            + (sugerido ? ' A qualidade está abaixo do piso: o próximo passo sugerido é ' + sugerido + '.' : ''),
+            sugerido || c.alvo || '');
+          if (novo === null) return;
+          const r = await api('/api/cameras/' + encodeURIComponent(l.id) + '/alvo',
+            { method: 'POST', body: JSON.stringify({ alvo: novo.trim() }) });
+          mostrarRecado(r.ok ? ('alvo de ' + l.rotulo + ': ' + (r.corpo.alvo || 'padrão da tela')
+            + ' — vale no próximo envio desta câmera') : 'recusado: ' + JSON.stringify(r.corpo), !r.ok);
+          if (r.ok) { A.camerasInterno = null; await atualizar(); }
+        }));
+        return caixa;
+      } },
     { rotulo: 'Espectadores', valor: (l) => ((l.viva && l.viva.leitores) || 0) },
     { rotulo: 'Ação', valor: (l) => botao(l.ativo ? 'desativar' : 'ativar', 'mini', async () => {
         if (l.ativo && !confirm('Desativar "' + l.rotulo + '"? Ela sai da tela do cliente; o histórico fica guardado.')) return;
@@ -376,6 +425,38 @@ function telaCameras(t) {
         mostrarRecado(r.ok ? (l.ativo ? 'câmera desativada — o cliente não vê mais' : 'câmera ativada de novo') : 'recusado: ' + JSON.stringify(r.corpo), !r.ok);
         if (r.ok) { A.camerasInterno = null; await atualizar(); }
       }) }], linhas, 'nenhuma câmera cadastrada'));
+  /* Comparar a MESMA cena em vários alvos: é assim que "está perdendo qualidade" vira número. A
+     fonte precisa estar livre (a medição abre a câmera), então o envio tem que estar parado. */
+  const caixaComp = document.createElement('div'); caixaComp.className = 'caixa-form';
+  caixaComp.appendChild(Object.assign(document.createElement('h2'),
+    { textContent: 'Comparar a mesma cena em 3 alvos (SSIM e nitidez)' }));
+  const fluxosComp = document.createElement('select'); fluxosComp.id = 'comp-fluxo';
+  for (const l of linhas) {
+    fluxosComp.appendChild(Object.assign(document.createElement('option'),
+      { value: l.fluxo_id || l.id, textContent: l.rotulo + ' (' + (l.fluxo_id || l.id) + ')' }));
+  }
+  const linhaComp = document.createElement('div'); linhaComp.className = 'linha-form';
+  linhaComp.appendChild(fluxosComp);
+  caixaComp.appendChild(linhaComp);
+  const saidaComp = document.createElement('div'); saidaComp.className = 'sub'; saidaComp.id = 'comp-saida';
+  caixaComp.appendChild(saidaComp);
+  caixaComp.appendChild(botao('Comparar 1.500k / 2.500k / 4.000k', 'marca', async () => {
+    saidaComp.textContent = 'gravando a mesma cena nos 3 alvos (a fonte precisa estar livre)...';
+    const r = await api('/api/qualidade/comparar', { method: 'POST', body: JSON.stringify(
+      { fluxo: fluxosComp.value, alvos: ['1500k', '2500k', '4000k'], segundos: 6 }) });
+    const d = r.corpo || {};
+    if (!r.ok) { saidaComp.textContent = 'não deu: ' + (d.erro || JSON.stringify(d)); return; }
+    saidaComp.textContent = 'mesma cena, mesma fonte — clipes em ' + d.pasta + ' (CSV: ' + d.csv + ')';
+    const tb = tabela([{ rotulo: 'Alvo', campo: 'alvo' },
+      { rotulo: 'SSIM (vs. original sem perda)', valor: (x) => fmt(x.ssim, 4) },
+      { rotulo: 'Nitidez (blur — menor é mais nítido)', valor: (x) => fmt(x.nitidez_blur, 4) },
+      { rotulo: 'Tamanho', valor: (x) => fmt(x.mb) + ' MB' }], d.alvos || [], 'sem medição');
+    caixaComp.appendChild(tb);
+  }));
+  caixaComp.appendChild(Object.assign(document.createElement('div'), { className: 'sub',
+    textContent: 'O alvo escolhido aqui é o que a coluna "Alvo" grava na câmera: o número sozinho ' +
+      'não decide por você — abra os clipes, veja a imagem e diga qual ainda serve.' }));
+  t.appendChild(caixaComp);
 }
 
 function telaTempoReal(t) {

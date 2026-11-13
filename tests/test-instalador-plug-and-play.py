@@ -425,6 +425,28 @@ checar(r20.returncode == 0, "test-envio-ao-vivo-publica.py passou" if r20.return
 
 
 print()
+print("== 21. o SSIM medido no PC de captura CHEGA ao lado terra (com idade e alvo sugerido) ==")
+r21 = subprocess.run([sys.executable, str(RAIZ / "tests" / "test-qualidade-chega-ao-lado-terra.py")],
+                     capture_output=True, text=True, encoding="utf-8", errors="replace")
+checar(r21.returncode == 0, "test-qualidade-chega-ao-lado-terra.py passou" if r21.returncode == 0
+       else f"test-qualidade-chega-ao-lado-terra.py FALHOU: {(r21.stdout or '')[-400:]}")
+
+print()
+print("== 22. perfil High no ar, medicao com o MESMO ajuste e alvo POR CAMERA ==")
+r22 = subprocess.run([sys.executable, str(RAIZ / "tests" / "test-alvo-e-perfil-por-camera.py")],
+                     capture_output=True, text=True, encoding="utf-8", errors="replace")
+checar(r22.returncode == 0, "test-alvo-e-perfil-por-camera.py passou" if r22.returncode == 0
+       else f"test-alvo-e-perfil-por-camera.py FALHOU: {(r22.stdout or '')[-400:]}")
+
+print()
+print("== 23. a MESMA cena em 3 alvos, com SSIM, nitidez e clipes para o dono ==")
+r23 = subprocess.run([sys.executable, str(RAIZ / "tests" / "test-comparacao-3-alvos.py")],
+                     capture_output=True, text=True, encoding="utf-8", errors="replace")
+checar(r23.returncode == 0, "test-comparacao-3-alvos.py passou" if r23.returncode == 0
+       else f"test-comparacao-3-alvos.py FALHOU: {(r23.stdout or '')[-400:]}")
+
+
+print()
 if falhas:
     print(f"FALHOU — {len(falhas)} verificação(ões):")
     for f in falhas:

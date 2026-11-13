@@ -148,6 +148,41 @@ def publicar_cadastro(camera: dict, destino: str | None = None) -> dict:
         return {"ok": False, "erro": str(e)}
 
 
+def publicar_qualidade(medicao: dict, destino: str | None = None) -> dict:
+    """Publica no lado terra o SSIM medido AQUI (na maquina que tem a fonte crua).
+
+    O SSIM exige o original e o comprimido lado a lado, e o original so' existe na maquina de
+    captura: por isso o lado terra nunca consegue calcular esse numero sozinho — ele precisa RECEBER.
+    Era o "nao tenho medicao de SSIM": a medicao rodava no bordo e ficava so' no banco local. Aqui
+    vao os numeros da medicao (nunca endereco, porta, protocolo ou credencial de camera).
+    """
+    if not isinstance(medicao, dict) or not str(medicao.get("fluxo_id") or "").strip():
+        return {"ok": False, "motivo": "medicao sem fluxo_id"}
+    fluxo = str(medicao["fluxo_id"]).strip()
+    if medicao.get("ssim") is None:
+        return {"ok": False, "motivo": "medicao sem SSIM"}
+    base = _api_lado_terra(destino or (os.environ.get("LECSOR_DESTINO_SRT") or ""))
+    token = (os.environ.get("LECSOR_TOKEN_INGESTAO") or "").strip()
+    if not base or not token:
+        _log(fluxo, "sem lado terra/token de ingestao — medicao de qualidade nao foi publicada")
+        return {"ok": False, "motivo": "sem lado terra ou sem LECSOR_TOKEN_INGESTAO"}
+    campos = ("fluxo_id", "ssim", "ajuste", "resolucao", "fps", "segundos", "mb_alvo", "mb_original",
+              "compressao_pct", "fonte", "medido_em")
+    corpo = {k: medicao.get(k) for k in campos if medicao.get(k) is not None}
+    req = urllib.request.Request(f"{base}/api/qualidade/anuncio", data=json.dumps(corpo).encode("utf-8"),
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": f"Bearer {token}"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            j = json.loads(r.read() or b"{}")
+        _log(fluxo, f"medicao de qualidade publicada no lado terra: SSIM {corpo.get('ssim')}"
+                    f" (ajuste {corpo.get('ajuste') or '?'})")
+        return {"ok": bool(j.get("ok")), "resposta": j}
+    except Exception as e:
+        _log(fluxo, f"nao consegui publicar a medicao de qualidade ({type(e).__name__}: {e})")
+        return {"ok": False, "erro": str(e)}
+
+
 def repassar(fluxo: str, destino: str, origem: str) -> int:
     if not destino:
         _log(fluxo, "sem destino (LECSOR_DESTINO_SRT) — nada a repassar")

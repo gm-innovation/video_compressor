@@ -28,7 +28,10 @@ CREATE TABLE IF NOT EXISTS cameras (
   ip            TEXT DEFAULT '',
   porta         TEXT DEFAULT '',
   protocolo     TEXT DEFAULT 'rtsp',
-  canal         TEXT DEFAULT ''
+  canal         TEXT DEFAULT '',
+  -- alvo de bitrate DESTA camera: duas cenas diferentes nao precisam do mesmo alvo (e' o que
+  -- aparecia como "a cam-02 perde qualidade" sem numero nenhum para comparar).
+  alvo          TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS usuarios (
