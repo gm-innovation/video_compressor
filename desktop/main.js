@@ -28,30 +28,18 @@ function lerConfig() {
   // O banco local fica na pasta do usuario: sobrevive a atualizacao do aplicativo (dentro da pasta de
   // instalacao ele seria apagado/reiniciado a cada versao nova).
   process.env.LECSOR_BANCO = process.env.LECSOR_BANCO || path.join(app.getPath('userData'), 'pipeline.db');
-  const papel = PAPEIS[PAPEL] || {};
-  const base = Object.assign(
-    { base: PADRAO.base, destinoSrt: PADRAO.destinoSrt || '', abrirAoIniciar: PADRAO.abrirAoIniciar.slice(),
-      modoQuiosque: !!PADRAO.modoQuiosque, abrirComWindows: false },
-    { base: papel.base || PADRAO.base, destinoSrt: papel.destinoSrt || '', abrirComWindows: !!papel.abrirComWindows },
-    { servidorLocal: Object.assign({ ligado: false, repo: '', portaApi: 8765 }, PADRAO.servidorLocal || {}, papel.servidorLocal || {}) });
   let doUsuario = null;
   try { doUsuario = JSON.parse(fs.readFileSync(caminhoConfig(), 'utf8')); } catch (e) { doUsuario = null; }
-  // Config de OUTRO papel (ou das versões antigas, que não gravavam `papel`): endereço e servidor
-  // local não valem para esta instalação — voltam para os de fábrica deste papel. Foi isso que fez
-  // uma instalação nova de PC de captura abrir apontada para o lado terra.
-  // `ajuste_manual` = o operador mudou o papel/endereco pela tela: a escolha dele manda, e o
-  // papel do instalador deixa de resetar base/servidor local no proximo boot.
-  const herdado = !!doUsuario && doUsuario.papel !== PAPEL && !doUsuario.ajuste_manual;
-  if (herdado) {
-    delete doUsuario.base; delete doUsuario.destinoSrt; delete doUsuario.servidorLocal;
-  }
-  const c = doUsuario
-    ? Object.assign(base, doUsuario, { servidorLocal: Object.assign(base.servidorLocal, doUsuario.servidorLocal || {}) })
-    : base;
+  // A resolução (fábrica do papel + o que o usuário gravou) mora em `configuracao.js`, testável sem
+  // Electron. Ver lá os itens 2 e 3: o guard de papel e a incoerência loopback x servidor local.
+  const { resolver } = require('./configuracao');
+  const resolvido = resolver(PADRAO, PAPEIS, PAPEL, doUsuario);
+  const c = resolvido.config;
   c.papel = PAPEL;
   if (!c.servidorLocal.repo) c.servidorLocal.repo = servidor.repoDe(c);   // embutido no app, quando houver
-  // Primeira execução (ou config de outro papel): grava o resolvido, para o estado dizer o que está em uso.
-  if (!doUsuario || herdado) { try { gravarConfig(c); } catch (e) {} }
+  // Primeira execução, config de outro papel ou endereço incoerente corrigido: grava o resolvido,
+  // para o estado dizer o que está em uso e o arquivo parar de carregar o valor velho.
+  if (!doUsuario || resolvido.herdado || resolvido.corrigido) { try { gravarConfig(c); } catch (e) {} }
   return c;
 }
 function gravarConfig(c) {

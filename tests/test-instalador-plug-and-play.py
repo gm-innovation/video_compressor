@@ -150,10 +150,15 @@ finally:
 
 print("7) o menu mostra o erro e o app nasce configurado")
 main = (RAIZ / "desktop" / "main.js").read_text(encoding="utf-8")
+cfg = (RAIZ / "desktop" / "configuracao.js").read_text(encoding="utf-8")
 checar("showErrorBox" in main and "Servidor local NAO subiu" in main, "falha do servidor aparece na tela")
 checar("PAPEIS" in main and "papel" in main, "main.js lê o papel do pacote")
 checar("gravarConfig(c)" in main, "primeira execução grava o config resolvido")
-checar("herdado" in main and "doUsuario.papel !== PAPEL" in main,
+# A resolução do config mudou para `configuracao.js` (testável sem Electron) — o guard de papel vive
+# lá agora; o main.js só consome. `test-config-endereco.py` prova o comportamento de ponta a ponta.
+checar("resolver" in main and "configuracao" in main,
+       "o app resolve o config pelo modulo `configuracao.js` (guard de papel fora do main.js)")
+checar("herdado" in cfg and "doUsuario.papel !== PAPEL" in cfg,
        "config herdado de outro papel (ou das versões antigas) não vence o papel do build")
 checar('--config.extraMetadata.productName' in (RAIZ / "desktop" / "construir-instaladores.sh").read_text(encoding="utf-8"),
        "cada instalador tem productName próprio no pacote (userData separado)")
@@ -261,7 +266,7 @@ checar("pedirTexto" in main and "LECSOR_RESPOSTA:" in main,
        "o menu pede o valor em janela propria (nao manda mais editar config.json)")
 checar("Usar como PC de captura" in main and "Usar como lado terra" in main,
        "presets: uma maquina vira captura ou lado terra sem reinstalar")
-checar("ajuste_manual" in main and "!doUsuario.ajuste_manual" in main,
+checar("ajuste_manual" in cfg and "!doUsuario.ajuste_manual" in cfg,
        "escolha do operador na tela vence o papel do instalador no proximo boot")
 checar("Destino do repasse (lado terra)" in main and "config.destinoSrt = valor" in main,
        "destino do repasse e' editavel pela tela e grava no config")
@@ -401,6 +406,13 @@ r18 = subprocess.run([sys.executable, str(RAIZ / "tests" / "test-fluxo-no-lado-t
                      capture_output=True, text=True, encoding="utf-8", errors="replace")
 checar(r18.returncode == 0, "test-fluxo-no-lado-terra.py passou" if r18.returncode == 0
        else f"test-fluxo-no-lado-terra.py FALHOU: {(r18.stdout or '')[-400:]}")
+
+print()
+print("== 19. o endereco do app vem do papel do instalador (config velho de %APPDATA% nao manda) ==")
+r19 = subprocess.run([sys.executable, str(RAIZ / "tests" / "test-config-endereco.py")],
+                     capture_output=True, text=True, encoding="utf-8", errors="replace")
+checar(r19.returncode == 0, "test-config-endereco.py passou" if r19.returncode == 0
+       else f"test-config-endereco.py FALHOU: {(r19.stdout or '')[-400:]}")
 
 print()
 if falhas:
