@@ -690,6 +690,9 @@ class Handler(SimpleHTTPRequestHandler):
             if not (self._pode_operar(u) or self._local()):
                 return self._json(403, {"erro": "so operacao e administrador veem os dispositivos de captura"})
             d = ing_dispositivos()
+            # de onde veio o pedido: com a lista vazia, a tela precisa saber se esta' falando com o
+            # lado terra (outra maquina) ou com a propria maquina, onde as cameras estao ligadas
+            d["pedido_de"] = "esta_maquina" if self._local() else "outra_maquina"
             d["sintetica"] = {"tipo": "sintetica", "descricao": "teste sintetico (testsrc2), sem camera",
                               "resolucoes": ["1920x1080", "1280x720"]}
             return self._json(200, d, {"Cache-Control": "no-store"})

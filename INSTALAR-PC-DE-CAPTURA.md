@@ -9,9 +9,10 @@ todos os passos são comandos ou menus copiáveis.
 
 | item | de onde vem | por quê |
 |---|---|---|
-| aplicativo **LECSOR Admin** (ou Cliente) | página de releases do repositório (`LECSOR-Admin-0.1.1-x64.exe`) | é a tela onde você insere as câmeras |
+| aplicativo **LECSOR Admin** (ou Cliente) | página de releases do repositório (`LECSOR-Admin-0.1.3-x64.exe`) | é a tela onde você insere as câmeras |
 | o **repositório** (pasta `lecsor-pipeline-video`) | `git clone` ou o pacote de código | tem o `ground/`, o `tools/mediamtx/mediamtx.exe` e os scripts |
 | **Python 3.11+** | python.org — marque **"Add python.exe to PATH"** | roda a API e o repasse |
+| **ffmpeg** | ffmpeg.org (build *essentials*, descompactar) — a pasta `bin` tem de estar no **PATH** | sem ele **nenhuma câmera é listada** e a captura não roda |
 | as **câmeras** | USB na máquina | aparecem sozinhas na lista de dispositivos |
 
 O `mediamtx.exe` **não** se instala: ele viaja dentro do repositório (`tools/mediamtx/`).
@@ -25,7 +26,7 @@ ver o que está em uso; para trocar, edite o arquivo:
 %APPDATA%\LECSOR Pipeline de Video\config.json
 ```
 
-O instalador 0.1.2 já vem apontado para o lado terra da LECSOR — só a configuração do PC de captura
+O instalador 0.1.3 já vem apontado para o lado terra da LECSOR — só a configuração do PC de captura
 precisa de ajuste:
 
 ```json

@@ -761,7 +761,9 @@ function telaEnvios(t) {
   const rv = document.createElement('div');
   rv.appendChild(Object.assign(document.createElement('label'), { textContent: 'Webcam / dispositivo' }));
   const dispositivo = document.createElement('select'); dispositivo.id = 'env-dispositivo';
-  rv.appendChild(dispositivo); linha1.appendChild(rv);
+  const avisoDisp = document.createElement('div'); avisoDisp.id = 'env-dispositivo-aviso';
+  avisoDisp.className = 'nota'; avisoDisp.style.display = 'none';
+  rv.appendChild(dispositivo); rv.appendChild(avisoDisp); linha1.appendChild(rv);
   const rs = document.createElement('div');
   rs.appendChild(Object.assign(document.createElement('label'), { textContent: 'Segundos a capturar' }));
   const segundos = document.createElement('input'); segundos.type = 'number'; segundos.min = '3'; segundos.max = '120';
@@ -829,18 +831,33 @@ function telaEnvios(t) {
     audio.value = guardado.audio || '0'; repetir.value = guardado.repetir || '1';
     if (guardado.segundos) segundos.value = guardado.segundos;
   }
+  let semCamera = false;                 // nenhuma camera nesta maquina (nunca finge uma)
   const preencherDispositivos = async () => {
     if (dispositivo.dataset.pronto) return;
     const r = await fetch('/api/dispositivos');
     if (!r.ok) return;
     const d = await r.json();
+    const cams = d.video || [];
     dispositivo.innerHTML = '';
-    for (const v of (d.video || [])) {
+    semCamera = !cams.length;
+    if (semCamera) {
+      const o = document.createElement('option');
+      o.value = ''; o.textContent = '— nenhuma câmera nesta máquina —'; o.disabled = true;
+      dispositivo.appendChild(o);
+      avisoDisp.style.display = '';
+      avisoDisp.textContent = (d.pedido_de === 'outra_maquina')
+        ? 'esta lista vem de "' + (d.maquina || 'outra máquina') + '" (lado terra): câmera ligada NESTA máquina só ' +
+          'aparece com o Servidor local no ar e base http://127.0.0.1:8765. ' + (d.motivo || '')
+        : (d.motivo || d.erro || 'nenhuma câmera encontrada nesta máquina');
+      btnComprimir.disabled = (modo.value === 'camera');
+      dispositivo.dataset.pronto = '1';
+      return;
+    }
+    avisoDisp.style.display = 'none';
+    for (const v of cams) {
       const o = document.createElement('option'); o.value = v; o.textContent = v; dispositivo.appendChild(o);
     }
-    if (!(d.video || []).length && d.padrao) {
-      const o = document.createElement('option'); o.value = d.padrao; o.textContent = d.padrao; dispositivo.appendChild(o);
-    }
+    btnComprimir.disabled = false;
     dispositivo.dataset.pronto = '1';
   };
   const trocarModo = () => {
@@ -853,6 +870,7 @@ function telaEnvios(t) {
     rs.style.display = 'none';            // fonte viva: envio CONTÍNUO, sem tempo determinado
     // streaming não tem "comprimir e medir" nem "publicar depois": é ao vivo, direto
     btnComprimir.textContent = ehViva ? 'Transmitir ao vivo (contínuo)' : '1) Comprimir e medir';
+    btnComprimir.disabled = (modo.value === 'camera' && semCamera);
     btnPublicar.style.display = ehViva ? 'none' : '';
     if (modo.value === 'camera') preencherDispositivos();
   };

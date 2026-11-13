@@ -1,6 +1,6 @@
 // Servidor local dentro do aplicativo: quando a maquina for o lado terra (ou o PC de captura), o
 // proprio app sobe API + mediamtx (+ agente de analise). Fora dos arquivos do app nao roda nada.
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -51,6 +51,17 @@ function subir(config) {
   } catch (e) { return { erro: e.message }; }
   return { ok: true, subiu: filhos.length };
 }
+// A lista de cameras e a captura dependem do ffmpeg no PATH. Sem ele o app abre, mas nao existe
+// dispositivo nenhum para escolher — o estado precisa dizer isso, e nao mostrar lista vazia sem causa.
+function ffmpegInfo() {
+  const r = spawnSync('ffmpeg', ['-hide_banner', '-version'], { encoding: 'utf8', timeout: 15000 });
+  if (r.error || r.status !== 0) {
+    return 'ffmpeg: NAO ENCONTRADO no PATH — sem ele a lista de cameras fica vazia e a captura nao roda';
+  }
+  const linha = String(r.stdout || '').split('\n')[0].trim();
+  return `ffmpeg: ok (${linha})`;
+}
+
 function parar() { for (const { p } of filhos) { try { p.kill(); } catch (e) {} } filhos = []; }
 function estado() {
   return filhos.length ? `servidor local no ar (${filhos.length} processos)` : 'servidor local parado';
@@ -58,6 +69,7 @@ function estado() {
 function detalhe(config) {
   const destino = String(((config || {}).destinoSrt) || '').trim();
   const linhas = filhos.map((f) => `${f.nome}: pid ${f.p.pid}`);
+  linhas.push(ffmpegInfo());
   linhas.push(`repasse para o lado terra: ${destino || '(nada — so esta maquina)'}`);
   return linhas.join('\n') || 'nada rodando pelo aplicativo';
 }

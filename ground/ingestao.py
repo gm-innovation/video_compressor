@@ -7,7 +7,7 @@ Serve para o dono testar compressao e streaming antes das imagens reais das emba
 Nenhuma credencial de camera entra aqui: a fonte e arquivo local ou link publico.
 """
 from __future__ import annotations
-import argparse, datetime as dt, json, os, re, shutil, signal, sqlite3, subprocess, sys, threading, time, unicodedata
+import argparse, datetime as dt, json, os, re, shutil, signal, socket, sqlite3, subprocess, sys, threading, time, unicodedata
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -204,6 +204,9 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
         fonte = direto              # endereco do CDN (so vai para o log)
         if titulo and (not rotulo or rotulo == "vídeo por link"):
             rotulo = titulo
+    if tipo == "camera" and not (dispositivo or DISPOSITIVO_PADRAO):
+        # sem dispositivo nao existe captura: recusar na borda e' melhor que subir um dshow vazio
+        return {"erro": "escolha a camera na lista (nenhum dispositivo de captura foi informado)"}
     if tipo in ("camera", "sintetica"):
         # fonte viva: nao ha arquivo para sondar. A resolucao vem do pedido e o alvo e' fixo
         # (o numero medido passa a ser o do envio CONTINUO, lido do -progress do ffmpeg).
@@ -497,16 +500,27 @@ if __name__ == "__main__":
 # (testsrc2). Servem para testar compressao e streaming na bancada sem depender
 # de camera de embarcacao e sem credencial nenhuma.
 # ---------------------------------------------------------------------------
-DISPOSITIVO_PADRAO = "ACER HD User Facing"
+DISPOSITIVO_PADRAO = os.environ.get("LECSOR_DISPOSITIVO", "").strip()
 
 
 def listar_dispositivos() -> dict:
-    """Webcams e microfones que o ffmpeg enxerga (dshow do Windows)."""
+    """Webcams e microfones que o ffmpeg enxerga (dshow do Windows).
+
+    NUNCA inventa dispositivo: sem camera a lista volta vazia, com o motivo. O nome padrao so' vem
+    de LECSOR_DISPOSITIVO (variavel de ambiente) — antes era um nome fixo no codigo (a webcam da
+    bancada) e aparecia em QUALQUER maquina sem camera, como se a camera existisse.
+    """
+    d = {"video": [], "audio": [], "padrao": "", "maquina": socket.gethostname()}
     try:
         r = subprocess.run(["ffmpeg", "-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"],
                            capture_output=True, text=True, timeout=60, errors="replace")
+    except FileNotFoundError:
+        d.update(erro="ffmpeg nao encontrado nesta maquina (PATH)",
+                 motivo="instale o ffmpeg e deixe `ffmpeg` no PATH: sem ele nada e' listado nem capturado")
+        return d
     except Exception as e:
-        return {"video": [], "audio": [], "erro": str(e)}
+        d.update(erro=str(e), motivo="nao foi possivel consultar as cameras desta maquina")
+        return d
     video, audio = [], []
     for linha in (r.stderr or "").splitlines():
         if "Alternative name" in linha:
@@ -514,7 +528,11 @@ def listar_dispositivos() -> dict:
         m = re.search(r'"([^"]+)"\s*\((video|audio)\)', linha)
         if m:
             (video if m.group(2) == "video" else audio).append(m.group(1))
-    return {"video": video, "audio": audio, "padrao": (video[0] if video else DISPOSITIVO_PADRAO)}
+    d.update(video=video, audio=audio, padrao=(video[0] if video else DISPOSITIVO_PADRAO))
+    if not video:
+        d["motivo"] = ("o ffmpeg nao encontrou camera nesta maquina: confira o driver, a porta USB "
+                       "e se o dispositivo aparece no Gerenciador de Dispositivos")
+    return d
 
 
 def _args_fonte_viva(tipo: str, dispositivo: str | None, resolucao: str, fps: int) -> list[str]:
