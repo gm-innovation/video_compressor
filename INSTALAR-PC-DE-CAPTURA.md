@@ -79,7 +79,9 @@ No app apontado para o lado terra (`base` = `http://187.127.60.250:8085`), a câ
 
 | sintoma | onde olhar |
 |---|---|
-| nenhuma câmera na lista | o servidor local não está no ar, ou você está no app apontado para outro lado terra |
+| nenhuma câmera na lista | o servidor local não está no ar, `base` ainda é o lado terra, **ou o `ffmpeg` não está no PATH** (o menu *Ver estado do servidor* diz: `ffmpeg: NAO ENCONTRADO`) |
+| a tela avisa "esta lista vem de ..." | você está no app apontado para o lado terra: troque `base` para `http://127.0.0.1:8765` e suba o **Servidor local** |
+| a lista volta vazia com motivo sobre driver/USB | o Windows não está vendo a câmera: confira o Gerenciador de Dispositivos e a porta USB |
 | o fluxo aparece na máquina mas não no lado terra | `destinoSrt` vazio/errado, ou sem saída de rede: veja `ground/envios/log/repasse-<fluxo>.log` |
 | API não sobe | `desktop-logs/api-erro.log` (normalmente Python fora do PATH) |
 | mediamtx não sobe | `desktop-logs/mediamtx-erro.log` (porta 8890/8554 ocupada) |
