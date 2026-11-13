@@ -1,74 +1,154 @@
-// Servidor local dentro do aplicativo: quando a maquina for o lado terra (ou o PC de captura), o
-// proprio app sobe API + mediamtx (+ agente de analise). Fora dos arquivos do app nao roda nada.
+// Servidor local dentro do aplicativo: o próprio app sobe API + mediamtx (+ agente de análise) a
+// partir do código QUE VAI NO PACOTE (`resources/servidor`). Fora dos arquivos do app não roda nada.
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
 let filhos = [];
+let querendo = false;      // true enquanto o servidor DEVE estar no ar (liga o reinício automático)
+let configAtual = null;
 
-// O mesmo interpretador que roda a API e' o que o mediamtx usa para repassar o fluxo
-// (`runOnAvailable: python ground/repasse.py`): sem isso o repasse nao acha o python no PATH do app.
-function pythonDe(repo) {
-  const venv = path.join(repo, '.venv', 'Scripts', 'python.exe');
-  return fs.existsSync(venv) ? venv : 'python';
+function raizRecursos() { return process.resourcesPath || path.join(__dirname, '..'); }
+
+// O código do servidor embutido no instalador (extraResources -> resources/servidor).
+function servidorEmbutido() {
+  const pasta = path.join(raizRecursos(), 'servidor');
+  return fs.existsSync(path.join(pasta, 'ground', 'api.py')) ? pasta : '';
 }
 
-// O ffmpeg embutido no instalador (resources/ffmpeg/ffmpeg.exe). E' ele que faz a maquina listar e
-// capturar camera SEM depender de instalacao manual: sem ffmpeg a lista de dispositivos fica vazia.
+// O repositório em uso: o do config.json (bancada/engenharia) ou o embutido no pacote (cliente).
+function repoDe(config) {
+  const pedido = String(((config || {}).servidorLocal || {}).repo || '').trim() || String(process.env.LECSOR_REPO || '').trim();
+  if (pedido && fs.existsSync(path.join(pedido, 'ground', 'api.py'))) return pedido;
+  return servidorEmbutido();
+}
+
+// O mesmo interpretador roda a API e o repasse do mediamtx (`runOnAvailable: python ground/repasse.py`).
+function pythonDe(repo) {
+  const candidatos = [
+    process.env.LECSOR_PYTHON,
+    repo ? path.join(repo, '.venv', 'Scripts', 'python.exe') : '',
+    path.join(raizRecursos(), 'servidor', 'python', 'python.exe'),   // embutido no instalador
+    path.join(__dirname, '..', 'tools', 'python', 'python.exe')      // bancada
+  ];
+  for (const c of candidatos) if (c && fs.existsSync(c)) return c;
+  return 'python';
+}
+
+// O ffmpeg embutido no instalador (resources/ffmpeg/ffmpeg.exe). É ele que faz a máquina listar e
+// capturar câmera SEM depender de instalação manual.
 function ffmpegDe() {
-  const raiz = process.resourcesPath || path.join(__dirname, '..');
-  const exe = path.join(raiz, 'ffmpeg', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+  const exe = path.join(raizRecursos(), 'ffmpeg', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
   return fs.existsSync(exe) ? exe : '';
 }
 
-// Ambiente dos processos filhos. O destino do repasse (PC de captura -> lado terra) entra aqui:
-// vazio = nada e' repassado (o PC de captura serve so' a propria tela); preenchido, o mediamtx local
-// sobe o fluxo JA COMPRIMIDO para esse host:porta.
-function amb(env, config) {
-  const destino = String(((config || {}).destinoSrt) || '').trim();
+// Ambiente dos processos filhos: destino do repasse, ffmpeg e python embutidos (o mediamtx chama
+// `python ground/repasse.py`, então a pasta do python precisa estar no PATH dele também).
+function amb(env, config, python) {
   const saida = Object.assign({}, env || {});
+  const destino = String(((config || {}).destinoSrt) || '').trim();
   if (destino) saida.LECSOR_DESTINO_SRT = destino;
   else delete saida.LECSOR_DESTINO_SRT;
+  const sep = process.platform === 'win32' ? ';' : ':';
   const ff = ffmpegDe();
   if (ff) {
-    saida.LECSOR_FFMPEG = ff;                                  // caminho explicito para o Python
+    saida.LECSOR_FFMPEG = ff;
     saida.LECSOR_FFPROBE = path.join(path.dirname(ff), 'ffprobe' + path.extname(ff));
-    // e a pasta no PATH: qualquer chamada que escape do caminho explicito continua funcionando
-    const sep = process.platform === 'win32' ? ';' : ':';
     saida.PATH = path.dirname(ff) + sep + (saida.PATH || '');
+  }
+  if (python && python !== 'python') {
+    saida.LECSOR_PYTHON = python;
+    saida.PATH = path.dirname(python) + sep + (saida.PATH || '');
   }
   return saida;
 }
 
+// A analise local (detector ONNX) precisa de numpy/onnxruntime, que o Python embutido NAO traz.
+// Sem eles o agente morre no import — melhor nao subir e dizer, do que reiniciar em loop.
+function temAnalise(python) {
+  const r = spawnSync(python, ['-c', 'import numpy, onnxruntime'], { encoding: 'utf8', timeout: 60000 });
+  return !r.error && r.status === 0;
+}
+
+function faltando(repo, python) {
+  const precisos = [
+    ['ground/api.py', path.join(repo, 'ground', 'api.py')],
+    ['ground/mediamtx.yml', path.join(repo, 'ground', 'mediamtx.yml')],
+    ['ground/repasse.py', path.join(repo, 'ground', 'repasse.py')],
+    ['tools/mediamtx/mediamtx.exe', path.join(repo, 'tools', 'mediamtx', 'mediamtx.exe')]
+  ];
+  const falta = precisos.filter(([, p]) => !fs.existsSync(p)).map(([n]) => n);
+  if (python === 'python') falta.push('python (nem embutido no app, nem no PATH)');
+  return falta;
+}
+
+let analiseAtual = '';
+
 function subir(config) {
-  const repo = (config.servidorLocal && config.servidorLocal.repo) || process.env.LECSOR_REPO || '';
-  if (!repo || !fs.existsSync(repo)) {
-    return { erro: 'informe a pasta do repositorio (config.json: servidorLocal.repo)' };
+  configAtual = config || configAtual || {};
+  const repo = repoDe(configAtual);
+  if (!repo) {
+    return { erro: 'não achei o código do servidor: nem a pasta embutida no aplicativo (resources/servidor) nem a pasta indicada em servidorLocal.repo' };
   }
+  const python = pythonDe(repo);
+  const falta = faltando(repo, python);
+  if (falta.length) return { erro: 'faltando no servidor: ' + falta.join(', ') };
   parar();
   const logs = path.join(repo, 'desktop-logs');
   fs.mkdirSync(logs, { recursive: true });
-  const env = amb(process.env, config);
-  const python = pythonDe(repo);
+  const env = amb(process.env, configAtual, python);
+  analiseAtual = '';
   const item = (nome, comando, args, cwd) => {
     const p = spawn(comando, args, { cwd, env, shell: false });
     p.stdout.pipe(fs.createWriteStream(path.join(logs, nome + '.log'), { flags: 'a' }));
     p.stderr.pipe(fs.createWriteStream(path.join(logs, nome + '-erro.log'), { flags: 'a' }));
-    filhos.push({ nome, p });
+    const registro = { nome, comando, args, cwd, p, tentativas: 0 };
+    filhos.push(registro);
+    // Reinício automático: o servidor do PC de captura não pode morrer sozinho no meio do turno.
+    // Com limite: processo que morre sempre (dependência ausente, porta tomada) para de ser
+    // ressuscitado e fica registrado no log, em vez de girar para sempre.
+    p.on('exit', (codigo) => {
+      if (!querendo || !filhos.includes(registro)) return;
+      if (registro.tentativas >= 3) {
+        fs.appendFileSync(path.join(logs, nome + '-erro.log'),
+          `[app] ${nome} desligado depois de 3 tentativas (codigo ${codigo})\n`);
+        return;
+      }
+      registro.tentativas += 1;
+      fs.appendFileSync(path.join(logs, nome + '-erro.log'),
+        `[app] ${nome} saiu (codigo ${codigo}) — subindo de novo (${registro.tentativas}/3)\n`);
+      setTimeout(() => {
+        if (!querendo || !filhos.includes(registro)) return;
+        const novo = spawn(comando, args, { cwd, env, shell: false });
+        novo.stdout.pipe(fs.createWriteStream(path.join(logs, nome + '.log'), { flags: 'a' }));
+        novo.stderr.pipe(fs.createWriteStream(path.join(logs, nome + '-erro.log'), { flags: 'a' }));
+        registro.p = novo;
+      }, 3000);
+    });
   };
+  let analise = '';
   try {
-    item('mediamtx', path.join(repo, 'tools', 'mediamtx', 'mediamtx.exe'), [path.join(repo, 'ground', 'mediamtx.yml')], repo);
-    item('api', python, [path.join(repo, 'ground', 'api.py'), String((config.servidorLocal || {}).portaApi || 8765)], repo);
+    item('mediamtx', path.join(repo, 'tools', 'mediamtx', process.platform === 'win32' ? 'mediamtx.exe' : 'mediamtx'),
+         [path.join(repo, 'ground', 'mediamtx.yml')], repo);
+    item('api', python, [path.join(repo, 'ground', 'api.py'), String((configAtual.servidorLocal || {}).portaApi || 8765)], repo);
+    // A captura e o repasse NAO dependem da analise local: ela so entra se o Python tiver as
+    // dependencias (numpy/onnxruntime). Fica escrito no log o que foi decidido e por que.
     const agente = path.join(repo, 'analytics', 'agente.py');
-    if (fs.existsSync(agente)) {
-      item('agente-analise', python,
-           ['-u', agente, '--perfil', path.join(repo, 'analytics', 'perfis', 'cam-03.json')], repo);
+    if (!fs.existsSync(agente)) {
+      analise = 'analise local: não vem neste pacote';
+    } else if (temAnalise(python)) {
+      item('agente-analise', python, ['-u', agente, '--perfil', path.join(repo, 'analytics', 'perfis', 'cam-03.json')], repo);
+      analise = 'analise local: no ar';
+    } else {
+      analise = 'analise local: desligada (o Python em uso não tem numpy/onnxruntime) — captura e repasse seguem normais';
     }
-  } catch (e) { return { erro: e.message }; }
-  return { ok: true, subiu: filhos.length };
+    if (analise) fs.appendFileSync(path.join(logs, 'agente-analise.log'), `[app] ${analise}\n`);
+  } catch (e) { querendo = false; return { erro: e.message }; }
+  querendo = true;
+  analiseAtual = analise ? 'servidor: ' + analise : '';
+  return { ok: true, subiu: filhos.length, repo, python, analise };
 }
-// A lista de cameras e a captura dependem do ffmpeg no PATH. Sem ele o app abre, mas nao existe
-// dispositivo nenhum para escolher — o estado precisa dizer isso, e nao mostrar lista vazia sem causa.
+
 function ffmpegInfo() {
   const embutido = ffmpegDe();
   const comando = embutido || 'ffmpeg';
@@ -81,15 +161,30 @@ function ffmpegInfo() {
   return `ffmpeg: ${embutido ? 'embutido no app' : 'do PATH da maquina'} — ${comando} (${linha})`;
 }
 
-function parar() { for (const { p } of filhos) { try { p.kill(); } catch (e) {} } filhos = []; }
+function parar() {
+  querendo = false;
+  analiseAtual = '';
+  for (const { p } of filhos) { try { p.kill(); } catch (e) {} }
+  filhos = [];
+}
 function estado() {
   return filhos.length ? `servidor local no ar (${filhos.length} processos)` : 'servidor local parado';
 }
 function detalhe(config) {
-  const destino = String(((config || {}).destinoSrt) || '').trim();
-  const linhas = filhos.map((f) => `${f.nome}: pid ${f.p.pid}`);
+  const c = config || configAtual || {};
+  const destino = String(c.destinoSrt || '').trim();
+  const repo = repoDe(c);
+  const python = repo ? pythonDe(repo) : '(sem repo)';
+  const linhas = [
+    `esta maquina: ${require('os').hostname()}`,
+    `endereco em uso (base): ${c.base || '(nao definido)'}`,
+    `servidor: ${repo ? repo + (repo === servidorEmbutido() ? ' (embutido no aplicativo)' : ' (do config.json)') : 'NAO ENCONTRADO'}`,
+    `python: ${python}`
+  ];
+  for (const f of filhos) linhas.push(`${f.nome}: pid ${f.p.pid}`);
   linhas.push(ffmpegInfo());
   linhas.push(`repasse para o lado terra: ${destino || '(nada — so esta maquina)'}`);
-  return linhas.join('\n') || 'nada rodando pelo aplicativo';
+  return linhas.join('\n');
 }
-module.exports = { subir, parar, estado, detalhe, amb, pythonDe, ffmpegDe };
+
+module.exports = { subir, parar, estado, detalhe, amb, pythonDe, ffmpegDe, repoDe, servidorEmbutido, raizRecursos };

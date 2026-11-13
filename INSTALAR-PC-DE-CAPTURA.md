@@ -1,70 +1,70 @@
-# Instalar o PC de captura (câmeras ligadas direto na máquina)
+# Instalar o PC de captura (câmeras ligadas direto na máquina) — 0.2.0, plug & play
 
-Vale para o **outro computador** — aquele onde as câmeras estão plugadas (USB/HDMI-captura). Ele
-captura e **comprime local**, e o vídeo comprimido sobe para o **lado terra** (a VPS da LECSOR ou
-outro computador da rede), que descomprime e mostra. Nada aqui é digitado à mão no repositório:
-todos os passos são comandos ou menus copiáveis.
+O PC de captura é a máquina onde as câmeras estão plugadas (USB/HDMI-captura). Ele **captura e
+comprime local** e o vídeo comprimido sobe para o **lado terra** (a VPS da LECSOR ou outro computador
+da rede), que descomprime e mostra.
 
-## 1. O que precisa estar na máquina
+A partir da **0.2.0** o instalador do PC de captura é **plug & play**: ele leva dentro do pacote o
+servidor (API + `ground/`), o **ffmpeg**, o **mediamtx** e o **Python portátil**, e **já nasce
+configurado** para esta máquina. Não se instala Python, não se copia repositório e não se edita JSON.
 
-| item | de onde vem | por quê |
-|---|---|---|
-| aplicativo **LECSOR Admin** (ou Cliente) | página de releases do repositório (`LECSOR-Admin-0.1.3-x64.exe`) | é a tela onde você insere as câmeras |
-| o **repositório** (pasta `lecsor-pipeline-video`) | `git clone` ou o pacote de código | tem o `ground/`, o `tools/mediamtx/mediamtx.exe` e os scripts |
-| **Python 3.11+** | python.org — marque **"Add python.exe to PATH"** | roda a API e o repasse |
-| **ffmpeg** | **já vem dentro do instalador 0.1.4+** (`resources\ffmpeg\ffmpeg.exe`, encontrado pelo app sozinho) | é ele que **lista as câmeras** e captura; se faltar, a lista fica vazia. Em versão antiga do app, instale o build *essentials* e deixe a pasta `bin` no PATH |
-| as **câmeras** | USB na máquina | aparecem sozinhas na lista de dispositivos |
+## 1. O que precisa na máquina
 
-O `mediamtx.exe` **não** se instala: ele viaja dentro do repositório (`tools/mediamtx/`).
+| item | de onde vem |
+|---|---|
+| instalador **`LECSOR-Captura-0.2.0-x64.exe`** | página de *Releases* do repositório |
+| as **câmeras** | USB, ligadas direto na máquina |
 
-## 2. Configurar (uma vez)
+Nada mais: Python, ffmpeg, mediamtx e o código do servidor viajam no instalador
+(`resources\servidor\`, `resources\ffmpeg\`).
 
-No app instalado existe um `config.json`. Abra pelo menu **Ajuda → Endereço do lado terra...** para
-ver o que está em uso; para trocar, edite o arquivo:
+## 2. Instalar (sem configuração)
+
+1. Rode o `LECSOR-Captura-0.2.0-x64.exe` (usuário comum basta; a instalação é por usuário).
+2. Abra o app. Ele já vem com:
+   - `base = http://127.0.0.1:8765` → a tela desta máquina (é aqui que estão as câmeras);
+   - servidor local **ligado**, subindo sozinho a cada abertura;
+   - repasse para o lado terra (`destinoSrt = 187.127.60.250:8890`);
+   - *abrir junto com o Windows* marcado.
+3. Confira no menu **Servidor local → Ver estado do servidor**. O esperado:
 
 ```
-%APPDATA%\LECSOR Pipeline de Video\config.json
+servidor local no ar (2 processos)
+esta maquina: <nome-do-pc>
+endereco em uso (base): http://127.0.0.1:8765
+servidor: C:\...\resources\servidor (embutido no aplicativo)
+python: C:\...\resources\servidor\python\python.exe
+mediamtx: pid 12345
+api: pid 12346
+servidor: analise local: desligada (o Python em uso não tem numpy/onnxruntime) — captura e repasse seguem normais
+ffmpeg: embutido no app — C:\...\resources\ffmpeg\ffmpeg.exe (ffmpeg version ...)
+repasse para o lado terra: 187.127.60.250:8890
 ```
 
-O instalador 0.1.3 já vem apontado para o lado terra da LECSOR — só a configuração do PC de captura
-precisa de ajuste:
+São **dois** processos de propósito: `mediamtx` (recebe o SRT local e publica) e a `api` da máquina. A
+**análise local** (detector de objetos) é opcional — ela só sobe se o Python em uso tiver
+`numpy`/`onnxruntime`, que o Python portátil do pacote **não tem**; sem ela a captura e o repasse
+funcionam iguais, e o motivo fica registrado em `desktop-logs\agente-analise.log`. O banco local fica
+em `%APPDATA%\LECSOR Captura\pipeline.db` (sobrevive a atualizar o aplicativo).
 
-```json
-{
-  "base": "http://127.0.0.1:8765",
-  "destinoSrt": "187.127.60.250:8890",
-  "servidorLocal": { "ligado": false, "repo": "C:/caminho/do/lecsor-pipeline-video", "portaApi": 8765 }
-}
-```
+Se algo faltar, o próprio app **avisa em uma caixa de erro** (em versão anterior a falha era
+silenciosa e o servidor ficava "parado" sem explicação).
 
-- `base` = **onde está a API desta máquina**: no PC de captura é `127.0.0.1:8765` (a captura acontece
-  aqui). Deixando o valor de fábrica (`187.127.60.250:8085`) o app abre no lado terra e **não** lista
-  as câmeras desta máquina.
-- `destinoSrt` = **para onde os vídeos comprimidos vão** (a VPS `187.127.60.250:8890`, ou
-  `IP-do-outro-PC:8890` na rede). **Vazio = não sobe nada** (só esta máquina).
-- `servidorLocal.repo` = a pasta do repositório nesta máquina (o menu *Servidor local* precisa dela).
-
-## 3. Subir o servidor local
-
-Menu **Servidor local → Subir servidor nesta máquina (API, mediamtx, agente)**. Ele sobe três coisas
-na pasta do repositório: `mediamtx`, a API na porta 8765 e (se existir) o agente de análise.
-
-Confira:
+Linha de comando, se quiser conferir por fora:
 
 ```bash
 curl -s http://127.0.0.1:8765/api/dispositivos      # lista as câmeras DESTA máquina
 curl -s http://127.0.0.1:9997/v3/paths/list         # lista os fluxos publicados aqui
 ```
 
-## 4. Inserir as câmeras (por câmera)
+## 3. Inserir as câmeras (por câmera)
 
 No app: **Enviar vídeo** → *De onde vem o vídeo* = **"webcam do notebook (ao vivo)"** → em
 **Webcam / dispositivo** escolha a câmera → dê um rótulo (ex.: `Câmera 1 proa`) → **transmitir**.
-
 Repita para a segunda câmera (ela ganha a própria janela). O envio é contínuo: só para quando você
 clicar em **parar**.
 
-## 5. Conferir do outro lado (lado terra)
+## 4. Conferir do outro lado (lado terra)
 
 No computador/VPS que descomprime:
 
@@ -72,22 +72,30 @@ No computador/VPS que descomprime:
 curl -s http://127.0.0.1:9997/v3/paths/list   # os fluxos desta máquina devem aparecer aqui
 ```
 
-No app apontado para o lado terra (`base` = `http://187.127.60.250:8085`), a câmera aparece
-**no ar** e a tela do cliente mostra a janela.
+No app do lado terra (instalador **`LECSOR-Terra-0.2.0-x64.exe`**, `base` = `http://187.127.60.250:8085`),
+a câmera aparece **no ar** e a tela do cliente mostra a janela.
 
-## 6. Se algo não subir
+## 5. Se algo não subir
 
 | sintoma | onde olhar |
 |---|---|
-| nenhuma câmera na lista | o servidor local não está no ar, `base` ainda é o lado terra, **ou o app não achou o ffmpeg** — a própria tela diz "o app não achou o ffmpeg (nem embutido, nem no PATH)" e o menu *Ver estado do servidor* mostra `ffmpeg: embutido no app — <caminho> (versão)` |
-| a tela avisa "esta lista vem de ..." | você está no app apontado para o lado terra: troque `base` para `http://127.0.0.1:8765` e suba o **Servidor local** |
-| a lista volta vazia com motivo sobre driver/USB | o Windows não está vendo a câmera: confira o Gerenciador de Dispositivos e a porta USB |
-| o fluxo aparece na máquina mas não no lado terra | `destinoSrt` vazio/errado, ou sem saída de rede: veja `ground/envios/log/repasse-<fluxo>.log` |
-| API não sobe | `desktop-logs/api-erro.log` (normalmente Python fora do PATH) |
-| mediamtx não sobe | `desktop-logs/mediamtx-erro.log` (porta 8890/8554 ocupada) |
+| caixa "Servidor local NAO subiu" | a mensagem diz o que falta (ex.: `faltando no servidor: tools/mediamtx/mediamtx.exe`) — normalmente instalador incompleto: reinstale o `LECSOR-Captura` |
+| nenhuma câmera na lista | veja a lista de dispositivos: `curl -s http://127.0.0.1:8765/api/dispositivos`; se `video` vier vazio com motivo de driver/USB, é o Windows que não está vendo a câmera (Gerenciador de Dispositivos / porta USB) |
+| a lista vem do outro lado | o `base` do app foi trocado: menu **Ajuda → Endereço do lado terra...**; o PC de captura tem de apontar para `http://127.0.0.1:8765` |
+| o fluxo aparece aqui mas não no lado terra | `destinoSrt` vazio/errado ou sem saída de rede: veja `ground\envios\log\repasse-<fluxo>.log` |
+| API não sobe | `desktop-logs\api-erro.log` (dentro de `resources\servidor\`) |
+| aparece `analise local: desligada` | é o esperado no pacote: sem `numpy`/`onnxruntime` no Python portátil o detector não roda; captura e repasse não dependem dele |
+| mediamtx não sobe | `desktop-logs\mediamtx-erro.log` (porta 8890/8554 ocupada) |
 
-Os logs ficam na pasta do repositório: `desktop-logs/` (o que o app subiu) e `ground/envios/log/`
-(os envios e o repasse).
+Os logs ficam em `resources\servidor\desktop-logs\` (o que o app subiu) e
+`resources\servidor\ground\envios\log\` (os envios e o repasse). Processo que morre três vezes
+seguidas **para** de ser reiniciado e fica registrado no log (não gira para sempre).
+
+## 6. Bancada / engenharia (só quem mexe no código)
+
+No clone do repositório o app usa o papel `bancada` e respeita o `servidorLocal.repo` do
+`%APPDATA%\LECSOR Pipeline de Video\config.json` quando a pasta existe — o servidor embutido no
+instalador continua valendo como padrão. Nada disso é necessário na máquina do cliente.
 
 ## 7. Regra que não muda
 

@@ -16,19 +16,31 @@ o caminho completo **bordo → terra → tela** rodando na bancada com vídeo pr
 Passo a passo em `INSTALAR-PC-DE-CAPTURA.md`: as câmeras entram pela tela **Enviar vídeo**, o
 sistema comprime na máquina e o vídeo comprimido sobe para o lado terra (`destinoSrt`).
 
-## Instaladores prontos (Windows x64)
+## Instaladores prontos (Windows x64) — PLUG & PLAY desde a 0.2.0
 Na página de releases: https://github.com/gm-innovation/video_compressor/releases
-- `LECSOR-Cliente-0.1.4-x64.exe` — app do cliente
-- `LECSOR-Admin-0.1.4-x64.exe` — admin/operação (já vem apontado para o lado terra da LECSOR)
+- `LECSOR-Captura-0.2.0-x64.exe` — **PC de captura**: nasce apontado para `127.0.0.1:8765`, com o
+  servidor local ligado (sobe sozinho no boot) e repasse para o lado terra já configurado
+- `LECSOR-Terra-0.2.0-x64.exe` — **lado terra**: apontado para o servidor (VPS ou local do cliente)
+- `LECSOR-Cliente-0.2.0-x64.exe` / `LECSOR-Admin-0.2.0-x64.exe` — telas do cliente e admin/operação
 
-A partir da **0.1.4** os instaladores levam o **ffmpeg embutido** (`resources\ffmpeg\ffmpeg.exe` e
-`ffprobe.exe`): a máquina lista e captura câmera sem instalar nada. Quem builda usa
-`desktop/baixar-ffmpeg.sh` (baixa a build *essentials* e confere o SHA-256 publicado).
+A partir da **0.2.0** cada instalador leva **o pacote inteiro** dentro de `resources\`:
+`ffmpeg/` (ffmpeg+ffprobe), `servidor/ground`, `servidor/admin`, `servidor/app`, `servidor/db`,
+`servidor/board`, `servidor/analytics`, `servidor/tools/mediamtx/mediamtx.exe` e **Python portátil**
+(`servidor/python/python.exe`). O servidor local sobe **dois** processos (`mediamtx` + `api`); a
+análise local só entra se o Python tiver `numpy`/`onnxruntime` (o portátil não tem) e o app registra
+no log a decisão. O banco local fica em `%APPDATA%\<nome>\pipeline.db` e o caminho é resolvido num
+lugar só (`ground/ferramentas.py:caminho_banco()`, via `LECSOR_BANCO`); instalação limpa aplica todos
+os `db/schema*.sql` (inclusive `schema-ingestao.sql`). Na máquina do cliente **não** se instala Python, não se copia
+repositório e não se edita JSON: o papel de build (`desktop/papeis.json`) traz o `base`,
+`destinoSrt` e `servidorLocal` de fábrica. Se o servidor local não subir, o app **diz o que falta**
+em caixa de erro (antes a falha era silenciosa).
 
-Padrão de fábrica (0.1.2 em diante): `"base": "http://187.127.60.250:8085"` (lado terra da LECSOR) e
-`"destinoSrt": "187.127.60.250:8890"`. Num **PC de captura**, troque `base` para
-`http://127.0.0.1:8765` e suba o **Servidor local**, senão o app lista as câmeras do lado terra
-(nenhuma) em vez das ligadas na máquina.
+Quem builda roda `desktop/baixar-ffmpeg.sh` (download pelo Python, com SHA-256 conferido) e
+`desktop/baixar-servidor.sh` (Python embeddable + mediamtx), que baixam para `tools/` — fora do git.
+
+Cada instalador tem `productName` próprio (logo, `%APPDATA%\<nome do app>\config.json` próprio), e o
+`papel` gravado no build vence um `config.json` herdado de outro papel ou das versões antigas.
+
 Os `.exe` são construídos por `desktop/construir-instaladores.sh` e **não** entram no git
 (`desktop/dist/` está no `.gitignore`): o pacote de download é a página de releases.
 

@@ -22,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from entrada import entrada_teorica_kbps as _entrada_teorica_kbps, origem_da_entrada as _origem_da_entrada  # noqa: E402
-from ferramentas import caminho_ffmpeg  # noqa: E402  (o ffmpeg embutido no app vem por LECSOR_FFMPEG)
+from ferramentas import caminho_banco, caminho_ffmpeg  # noqa: E402  (embutidos no app)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 RAIZ = Path(__file__).resolve().parent.parent
@@ -247,7 +247,9 @@ def medir_ssim(original: str, comprimido: str, duracao_s: float | None, fps: int
 
 def conexao_banco():
     import sqlite3
-    c = sqlite3.connect(RAIZ / "db" / "pipeline.db", timeout=30)
+    import sys as _sys
+    api = _sys.modules.get("ground.api") or _sys.modules.get("api")
+    c = sqlite3.connect(getattr(api, "BANCO", None) or caminho_banco(), timeout=30)
     c.row_factory = sqlite3.Row
     c.execute("PRAGMA busy_timeout=30000")
     return c

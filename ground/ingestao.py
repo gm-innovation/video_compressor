@@ -12,11 +12,11 @@ from pathlib import Path
 
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ferramentas import caminho_ffmpeg, caminho_ffprobe  # noqa: E402  (binarios embutidos no app)
+from ferramentas import caminho_banco, caminho_ffmpeg, caminho_ffprobe  # noqa: E402  (embutidos no app)
 
 
 RAIZ = Path(__file__).resolve().parent.parent
-BANCO = RAIZ / "db" / "pipeline.db"
+BANCO = caminho_banco()
 ENVIOS = RAIZ / "ground" / "envios"
 LOG_DIR = RAIZ / "ground" / "envios" / "log"
 

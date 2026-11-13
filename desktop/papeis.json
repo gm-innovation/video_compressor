@@ -1,0 +1,32 @@
+{
+  "captura": {
+    "rotulo": "PC de captura (câmeras ligadas nesta máquina)",
+    "base": "http://127.0.0.1:8765",
+    "destinoSrt": "187.127.60.250:8890",
+    "servidorLocal": {
+      "ligado": true,
+      "portaApi": 8765
+    },
+    "abrirComWindows": true
+  },
+  "terra": {
+    "rotulo": "Lado terra (servidor que recebe e mostra)",
+    "base": "http://187.127.60.250:8085",
+    "destinoSrt": "",
+    "servidorLocal": {
+      "ligado": false,
+      "portaApi": 8765
+    },
+    "abrirComWindows": false
+  },
+  "bancada": {
+    "rotulo": "Bancada / engenharia (as três telas, apontando para o lado terra)",
+    "base": "http://187.127.60.250:8085",
+    "destinoSrt": "",
+    "servidorLocal": {
+      "ligado": false,
+      "portaApi": 8765
+    },
+    "abrirComWindows": false
+  }
+}

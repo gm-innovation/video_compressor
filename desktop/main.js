@@ -14,16 +14,42 @@ let SUPERFICIE = '';
 try { SUPERFICIE = require('./package.json').superficie || ''; } catch (e) {}
 SUPERFICIE = process.env.LECSOR_SUPERFICIE || SUPERFICIE;
 
+// Papel desta instalação (gravado no pacote pelo electron-builder: captura | terra | bancada).
+// Dele saem os valores de fábrica — o PC de captura nasce apontado para si mesmo e com o servidor
+// ligado; o lado terra nasce apontado para o servidor. Ninguém edita JSON para instalar.
+let PAPEL = 'bancada';
+try { PAPEL = process.env.LECSOR_PAPEL || require('./package.json').papel || 'bancada'; } catch (e) {}
+const PAPEIS = require('./papeis.json');
 const PADRAO = require('./config.json');
+const servidor = require('./servidor');
 function caminhoConfig() { return path.join(app.getPath('userData'), 'config.json'); }
 function lerConfig() {
-  const base = { base: PADRAO.base, destinoSrt: PADRAO.destinoSrt || '',
-                 abrirAoIniciar: PADRAO.abrirAoIniciar.slice(), modoQuiosque: !!PADRAO.modoQuiosque,
-                 servidorLocal: Object.assign({ ligado: false, repo: '', portaApi: 8765 }, PADRAO.servidorLocal || {}) };
-  try {
-    const doUsuario = JSON.parse(fs.readFileSync(caminhoConfig(), 'utf8'));
-    return Object.assign(base, doUsuario, { servidorLocal: Object.assign(base.servidorLocal, doUsuario.servidorLocal || {}) });
-  } catch (e) { return base; }
+  // O banco local fica na pasta do usuario: sobrevive a atualizacao do aplicativo (dentro da pasta de
+  // instalacao ele seria apagado/reiniciado a cada versao nova).
+  process.env.LECSOR_BANCO = process.env.LECSOR_BANCO || path.join(app.getPath('userData'), 'pipeline.db');
+  const papel = PAPEIS[PAPEL] || {};
+  const base = Object.assign(
+    { base: PADRAO.base, destinoSrt: PADRAO.destinoSrt || '', abrirAoIniciar: PADRAO.abrirAoIniciar.slice(),
+      modoQuiosque: !!PADRAO.modoQuiosque, abrirComWindows: false },
+    { base: papel.base || PADRAO.base, destinoSrt: papel.destinoSrt || '', abrirComWindows: !!papel.abrirComWindows },
+    { servidorLocal: Object.assign({ ligado: false, repo: '', portaApi: 8765 }, PADRAO.servidorLocal || {}, papel.servidorLocal || {}) });
+  let doUsuario = null;
+  try { doUsuario = JSON.parse(fs.readFileSync(caminhoConfig(), 'utf8')); } catch (e) { doUsuario = null; }
+  // Config de OUTRO papel (ou das versões antigas, que não gravavam `papel`): endereço e servidor
+  // local não valem para esta instalação — voltam para os de fábrica deste papel. Foi isso que fez
+  // uma instalação nova de PC de captura abrir apontada para o lado terra.
+  const herdado = !!doUsuario && doUsuario.papel !== PAPEL;
+  if (herdado) {
+    delete doUsuario.base; delete doUsuario.destinoSrt; delete doUsuario.servidorLocal;
+  }
+  const c = doUsuario
+    ? Object.assign(base, doUsuario, { servidorLocal: Object.assign(base.servidorLocal, doUsuario.servidorLocal || {}) })
+    : base;
+  c.papel = PAPEL;
+  if (!c.servidorLocal.repo) c.servidorLocal.repo = servidor.repoDe(c);   // embutido no app, quando houver
+  // Primeira execução (ou config de outro papel): grava o resolvido, para o estado dizer o que está em uso.
+  if (!doUsuario || herdado) { try { gravarConfig(c); } catch (e) {} }
+  return c;
 }
 function gravarConfig(c) {
   const alvo = caminhoConfig();
@@ -40,7 +66,6 @@ const SUPERFICIES = {
   bancada: { titulo: 'LECSOR — Bancada', rota: '/', particao: 'persist:bancada', permitirSessao: true }
 };
 const janelas = new Map();
-const servidor = require('./servidor');
 
 function urlDe(nome) { return config.base.replace(/\/$/, '') + SUPERFICIES[nome].rota; }
 
@@ -113,8 +138,21 @@ function menu() {
       { label: 'Quiosque (tela cheia)', type: 'radio', checked: config.modoQuiosque, click: () => { config.modoQuiosque = true; gravarConfig(config); aplicar(); } }
     ] },
     { label: 'Servidor local', submenu: [
-      { label: 'Subir servidor nesta maquina (API, mediamtx, agente)', click: () => servidor.subir(config) },
-      { label: 'Parar servidor local', click: () => servidor.parar(config) },
+      { label: 'Subir servidor nesta maquina (API, mediamtx, agente)', click: () => {
+          const r = servidor.subir(config);
+          if (r.erro) dialog.showErrorBox('Servidor local NAO subiu', r.erro);
+          else dialog.showMessageBox({ message: servidor.estado(), detail: servidor.detalhe(config) });
+        } },
+      { label: 'Parar servidor local', click: () => {
+          servidor.parar(config);
+          dialog.showMessageBox({ message: servidor.estado(), detail: servidor.detalhe(config) });
+        } },
+      { type: 'separator' },
+      { label: 'Abrir junto com o Windows', type: 'checkbox', checked: !!config.abrirComWindows,
+        click: (item) => {
+          config.abrirComWindows = !!item.checked; gravarConfig(config);
+          try { app.setLoginItemSettings({ openAtLogin: !!item.checked }); } catch (e) {}
+        } },
       { label: 'Ver estado do servidor', click: () => dialog.showMessageBox({ message: servidor.estado(), detail: servidor.detalhe(config) }) },
       { label: 'Destino do repasse (lado terra)...', click: () => dialog.showMessageBox({
           message: 'Repasse dos fluxos desta maquina',
@@ -138,7 +176,12 @@ function aplicar() { for (const [, j] of janelas) j.setFullScreen(config.modoQui
 app.whenReady().then(async () => {
   menu();
   for (const nome of config.abrirAoIniciar) abrir(nome);
-  if (config.servidorLocal && config.servidorLocal.ligado) servidor.subir(config);
+  try { app.setLoginItemSettings({ openAtLogin: !!config.abrirComWindows }); } catch (e) {}
+  if (config.servidorLocal && config.servidorLocal.ligado) {
+    const r = servidor.subir(config);
+    // Falha do servidor local não pode ser silenciosa: sem ele o PC de captura não lista câmera nenhuma.
+    setTimeout(() => { if (r.erro) dialog.showErrorBox('Servidor local NAO subiu', r.erro); }, 1500);
+  }
   if (VERIFICAR) {
     // Prova de vida para o teste: cada janela respondeu? Nada de credencial no processo?
     setTimeout(async () => {

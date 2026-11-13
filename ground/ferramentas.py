@@ -19,6 +19,7 @@ from pathlib import Path
 
 VAR_FFMPEG = "LECSOR_FFMPEG"
 VAR_FFPROBE = "LECSOR_FFPROBE"
+VAR_BANCO = "LECSOR_BANCO"
 
 
 def _da_variavel(variavel: str) -> str:
@@ -34,6 +35,15 @@ def caminho_ffmpeg() -> str:
 def caminho_ffprobe() -> str:
     """O ffprobe a executar (embutido > PATH > nome puro)."""
     return _da_variavel(VAR_FFPROBE) or shutil.which("ffprobe") or "ffprobe"
+
+
+def caminho_banco() -> Path:
+    """O banco do acompanhamento. Fonte unica: o app aponta `LECSOR_BANCO` para a pasta do usuario
+    (o banco sobrevive a atualizacao/reinstalacao); sem a variavel, e' o `db/` ao lado do codigo."""
+    valor = os.environ.get(VAR_BANCO, "").strip()
+    if valor:
+        return Path(valor)
+    return Path(__file__).resolve().parent.parent / "db" / "pipeline.db"
 
 
 def onde_vem(qual: str = "ffmpeg") -> dict:

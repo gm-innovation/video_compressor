@@ -1,8 +1,8 @@
 {
   "name": "lecsor-pipeline-video-desktop",
   "productName": "LECSOR Pipeline de Video",
-  "version": "0.1.4",
-  "description": "Aplicativo Windows com as tres superficies do pipeline de video bordo-terra (bancada, cliente e admin).",
+  "version": "0.2.0",
+  "description": "Aplicativo Windows do pipeline de video bordo-terra: instalador PLUG & PLAY (leva o servidor, o ffmpeg, o mediamtx e o Python dentro do pacote).",
   "main": "main.js",
   "private": true,
   "scripts": {
@@ -19,12 +19,87 @@
   "build": {
     "appId": "br.com.lecsor.pipelinevideo",
     "productName": "LECSOR Pipeline de Video",
-    "files": ["main.js", "preload.js", "servidor.js", "config.json", "janelas/**"],
-    "extraResources": [
-      { "from": "../tools/ffmpeg/ffmpeg.exe", "to": "ffmpeg/ffmpeg.exe" },
-      { "from": "../tools/ffmpeg/ffprobe.exe", "to": "ffmpeg/ffprobe.exe" }
+    "files": [
+      "main.js",
+      "preload.js",
+      "servidor.js",
+      "config.json",
+      "papeis.json",
+      "janelas/**"
     ],
-    "win": { "target": ["nsis"], "artifactName": "LECSOR-Pipeline-Video-${version}-${arch}.${ext}" },
+    "extraResources": [
+      {
+        "from": "../tools/ffmpeg/ffmpeg.exe",
+        "to": "ffmpeg/ffmpeg.exe"
+      },
+      {
+        "from": "../tools/ffmpeg/ffprobe.exe",
+        "to": "ffmpeg/ffprobe.exe"
+      },
+      {
+        "from": "../tools/mediamtx",
+        "to": "servidor/tools/mediamtx"
+      },
+      {
+        "from": "../tools/python",
+        "to": "servidor/python"
+      },
+      {
+        "from": "../ground",
+        "to": "servidor/ground",
+        "filter": [
+          "*.py",
+          "*.json",
+          "*.yml",
+          "*.sql"
+        ]
+      },
+      {
+        "from": "../admin",
+        "to": "servidor/admin"
+      },
+      {
+        "from": "../app",
+        "to": "servidor/app"
+      },
+      {
+        "from": "../portal",
+        "to": "servidor/portal"
+      },
+      {
+        "from": "../board",
+        "to": "servidor/board",
+        "filter": [
+          "**/*.py",
+          "**/*.json"
+        ]
+      },
+      {
+        "from": "../db",
+        "to": "servidor/db",
+        "filter": [
+          "schema*.sql",
+          "fases-seed.json"
+        ]
+      },
+      {
+        "from": "../analytics",
+        "to": "servidor/analytics",
+        "filter": [
+          "__init__.py",
+          "agente.py",
+          "detector.py",
+          "rastreador.py",
+          "perfis/**"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "LECSOR-Pipeline-Video-${version}-${arch}.${ext}"
+    },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,

@@ -35,14 +35,14 @@ from ingestao import iniciar as ing_iniciar, parar as ing_parar, listar as ing_l
 from ingestao import desligar_camera as ing_desligar_camera, ligar_camera as ing_ligar_camera  # noqa: E402
 from ingestao import capturar as ing_capturar, listar_dispositivos as ing_dispositivos, ao_vivo as ing_ao_vivo
 from ingestao import limpar_vivos_mortos as ing_limpar_vivos
-from ferramentas import resumo as resumo_ferramentas  # noqa: E402
+from ferramentas import caminho_banco, resumo as resumo_ferramentas  # noqa: E402
 import etapas as etapas_pipeline  # noqa: E402
 import producao as producao_pipeline  # noqa: E402
 from urllib.parse import parse_qs, unquote, urlparse
 
 RAIZ = Path(__file__).resolve().parent.parent
 COMPRIMIDOS = RAIZ / "ground" / "envios" / "comprimido"
-BANCO = RAIZ / "db" / "pipeline.db"
+BANCO = caminho_banco()
 CAMPOS_OBRIGATORIOS = ("valor", "fonte", "data", "hardware_versao", "comando")
 PORTA_WEBRTC, PORTA_HLS, PORTA_API_MEDIAMTX = 8889, 8888, 9997
 _CACHE_METRICAS: dict = {}
@@ -112,9 +112,13 @@ def pode_ver_camera(usuario, camera: sqlite3.Row | None) -> bool:
 def inicializar(semear_demo: bool = False) -> None:
     BANCO.parent.mkdir(parents=True, exist_ok=True)
     with conexao() as c:
-        c.executescript((RAIZ / "db" / "schema.sql").read_text(encoding="utf-8"))
-        c.executescript((RAIZ / "db" / "schema-fase4.sql").read_text(encoding="utf-8"))
-        c.executescript((RAIZ / "db" / "schema-fase5.sql").read_text(encoding="utf-8"))
+        # schema.sql primeiro; os das fases em seguida. Todos os `db/schema*.sql` entram — instalar
+        # num banco vazio tem que dar o MESMO banco que a bancada (faltava o schema-ingestao.sql:
+        # em instalacao limpa a tabela `ingestoes` nao existia).
+        esquemas = [RAIZ / "db" / "schema.sql"] + sorted(
+            p for p in (RAIZ / "db").glob("schema*.sql") if p.name != "schema.sql")
+        for esquema in esquemas:
+            c.executescript(esquema.read_text(encoding="utf-8"))
         for f in json.loads((RAIZ / "db" / "fases-seed.json").read_text(encoding="utf-8")):
             c.execute("""INSERT INTO fases (id,numero,nome,prioridade,status,criterio_aceite,evidencia)
                          VALUES (:id,:numero,:nome,:prioridade,:status,:criterio_aceite,:evidencia)

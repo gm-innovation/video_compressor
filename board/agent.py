@@ -10,9 +10,10 @@ import datetime as dt, json, os, socket, sqlite3, subprocess, sys, time
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
-BANCO = RAIZ / "db" / "pipeline.db"
 sys.path.insert(0, str(RAIZ / "ground"))
-from ferramentas import caminho_ffmpeg  # noqa: E402  (ffmpeg embutido no app: LECSOR_FFMPEG)
+from ferramentas import caminho_banco, caminho_ffmpeg  # noqa: E402  (embutidos no app)
+
+BANCO = caminho_banco()
 
 def hw() -> str:
     gpu = "sem nvidia-smi"
