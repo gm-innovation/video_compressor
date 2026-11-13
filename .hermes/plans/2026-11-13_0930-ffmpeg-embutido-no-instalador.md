@@ -100,3 +100,24 @@ fora do Git (baixado e conferido por SHA-256 no build).
 - Embutir o binário resolve a máquina que **não tem** ffmpeg; se a câmera não aparecer **nem** pelo
   ffmpeg embutido, aí é driver/DirectShow da câmera, não o app — o `.exe` embutido permite provar isso
   na própria máquina do cliente (o estado mostra a versão e o caminho usados).
+
+
+## Fechamento da rodada (13/11/2026, depois do build): o download do binário
+
+O build 0.1.4 saiu com os binários do essentials, mas a rodada de verificação mostrou que **o download
+automático não era confiável** e o script foi refeito:
+
+| o que foi medido | resultado |
+|---|---|
+| `curl` 8.18 (MSYS) baixando o zip de ~114/194 MB | `curl: (23) client returned ERROR on write` **sem criar o arquivo**, em qualquer fonte, com ou sem `-C -`, com `--retry-all-errors --retry 8`, na pasta do repo e no `/tmp` |
+| o MESMO arquivo pelo `urllib` do Python | 194.055.132 B inteiros, SHA-256 `096d0596…6a91c` = o pinado |
+| `unzip` no pacote | falhava porque o script fazia `rm -rf "$DEST"` com o zip **dentro** de `tools/ffmpeg` (o arquivo era apagado no meio do caminho) |
+| fonte alternativa | BtbN/FFmpeg-Builds, tag fixa `autobuild-2026-11-13-12-43`, asset `ffmpeg-n8.1.3-35-gf1acb0a266-win64-gpl-8.1.zip` (binários de 165.442.048 / 165.236.224 B) |
+| fonte 1 com o override apontando para host inexistente | caiu para a fonte 2, hash conferido, binários extraídos, `ffmpeg version n8.1.3-35-gf1acb0a266-20261113` |
+| fonte 1 normal (gyan.dev) pelo Python | 105.423.872 / 105.221.120 B, `ffmpeg version 9.0.2-essentials_build` — **os mesmos binários do 0.1.4 publicado** |
+| suíte + `tests/test-ffmpeg-embutido.py` | OK (o teste ganhou a seção 5: 2 hash pinados, Python antes do curl, `cygpath`, zip fora de `tools/ffmpeg`, reserva entre fontes) |
+
+Script final: `desktop/baixar-ffmpeg.sh` — duas fontes com SHA-256 pinado, download e extração pelo
+Python (`cygpath -m` para o caminho nativo), curl+unzip só como reserva, 4 tentativas por fonte e
+reserva para a fonte seguinte; pasta de trabalho em `tools/.baixando/` (fora do Git). **Nada do 0.1.4
+publicado mudou**: os binários embutidos no instalador são exatamente os do essentials.
