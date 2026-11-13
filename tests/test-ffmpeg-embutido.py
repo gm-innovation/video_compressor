@@ -97,6 +97,18 @@ checar("baixar-ffmpeg.sh" in construir, "o build chama o download do binário")
 checar("ERRO" in construir, "sem binário o build PARA (não gera instalador sem ffmpeg)")
 checar("tools/ffmpeg/" in (RAIZ / ".gitignore").read_text(encoding="utf-8"), "tools/ffmpeg/ está fora do Git")
 
+print("5) o download do binário é robusto (curl desta máquina falha no arquivo grande)")
+import re as _re
+baixador = (RAIZ / "desktop" / "baixar-ffmpeg.sh").read_text(encoding="utf-8")
+pinos = _re.findall(r"\|[0-9a-f]{64}\|", baixador)
+checar(len(pinos) >= 2, f"cada fonte tem SHA-256 pinado ({len(pinos)} pinos)")
+checar("baixar_com_python" in baixador, "o download tenta o Python antes do curl (curl 8.18/MSYS morre com erro 23)")
+checar("cygpath" in baixador, "caminho MSYS convertido antes de entregar ao Python nativo")
+checar('WORK="$RAIZ/tools/.baixando"' in baixador, "o zip fica FORA de tools/ffmpeg (senão o `rm -rf DEST` apaga o arquivo no meio)")
+checar("extrair_com_python" in baixador, "a extração também é pelo Python")
+checar("tentando a proxima fonte" in baixador, "uma fonte que falha cai para a próxima")
+checar("tools/.baixando/" in (RAIZ / ".gitignore").read_text(encoding="utf-8"), "a pasta de trabalho está fora do Git")
+
 print("5) servidor.js injeta o binário embutido nos filhos (rodando o módulo no node)")
 exe_dir = tmp / "resources" / "ffmpeg"
 exe_dir.mkdir(parents=True, exist_ok=True)

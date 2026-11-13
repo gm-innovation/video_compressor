@@ -17,6 +17,7 @@ tools/mediamtx/
 tools/*.zip
 # ffmpeg/ffprobe que vao EMBUTIDOS no instalador (desktop/baixar-ffmpeg.sh): ~90 MB, nao versionar
 tools/ffmpeg/
+tools/.baixando/
 
 ground/mediamtx.log
 ground/api.log
