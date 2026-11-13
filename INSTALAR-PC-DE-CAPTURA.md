@@ -1,10 +1,10 @@
-# Instalar o PC de captura (câmeras ligadas direto na máquina) — 0.2.3, plug & play
+# Instalar o PC de captura (câmeras ligadas direto na máquina) — 0.2.5, plug & play
 
 O PC de captura é a máquina onde as câmeras estão plugadas (USB/HDMI-captura). Ele **captura e
 comprime local** e o vídeo comprimido sobe para o **lado terra** (a VPS da LECSOR ou outro computador
 da rede), que descomprime e mostra.
 
-A partir da **0.2.0** (corrigido na **0.2.1**, **0.2.2** e **0.2.3**) o instalador do PC de captura é **plug & play**: ele leva dentro do pacote o
+A partir da **0.2.0** (corrigido na **0.2.1**, **0.2.2**, **0.2.3** e **0.2.5**) o instalador do PC de captura é **plug & play**: ele leva dentro do pacote o
 servidor (API + `ground/`), o **ffmpeg**, o **mediamtx** e o **Python portátil**, e **já nasce
 configurado** para esta máquina. Não se instala Python, não se copia repositório e não se edita JSON.
 
@@ -12,7 +12,7 @@ configurado** para esta máquina. Não se instala Python, não se copia reposit�
 
 | item | de onde vem |
 |---|---|
-| instalador **`LECSOR-Captura-0.2.3-x64.exe`** | página de *Releases* do repositório |
+| instalador **`LECSOR-Captura-0.2.5-x64.exe`** | página de *Releases* do repositório |
 | as **câmeras** | USB, ligadas direto na máquina |
 
 Nada mais: Python, ffmpeg, mediamtx e o código do servidor viajam no instalador
@@ -20,7 +20,7 @@ Nada mais: Python, ffmpeg, mediamtx e o código do servidor viajam no instalador
 
 ## 2. Instalar (sem configuração)
 
-1. Rode o `LECSOR-Captura-0.2.3-x64.exe` (usuário comum basta; a instalação é por usuário).
+1. Rode o `LECSOR-Captura-0.2.5-x64.exe` (usuário comum basta; a instalação é por usuário).
 2. Abra o app. Ele já vem com:
    - `base = http://127.0.0.1:8765` → a tela desta máquina (é aqui que estão as câmeras);
    - servidor local **ligado**, subindo sozinho a cada abertura;
@@ -91,7 +91,7 @@ No computador/VPS que descomprime:
 curl -s http://127.0.0.1:9997/v3/paths/list   # os fluxos desta máquina devem aparecer aqui
 ```
 
-No app do lado terra (instalador **`LECSOR-Terra-0.2.3-x64.exe`**, `base` = `http://187.127.60.250:8085`),
+No app do lado terra (instalador **`LECSOR-Terra-0.2.5-x64.exe`**, `base` = `http://187.127.60.250:8085`),
 a câmera aparece **no ar** e a tela do cliente mostra a janela.
 
 **Como isso acontece (0.2.2):** quando o envio começa, o PC de captura **avisa o lado terra**
@@ -115,6 +115,7 @@ escreve no banco do lado terra. Se o anúncio falhar, fica no log
 | o fluxo aparece aqui mas não no lado terra | `destinoSrt` vazio/errado ou sem saída de rede: veja `ground\envios\log\repasse-<fluxo>.log` |
 | o fluxo chega no lado terra mas o cliente não vê | veja no log do repasse se apareceu `anunciei ao lado terra: ...`; se aparecer erro de token, o `resources\servidor\ground\ambiente.json` do pacote está sem `LECSOR_TOKEN_INGESTAO` (o token é o mesmo no lado terra) |
 | a segunda câmera "já está cadastrada" | versão anterior à 0.2.2: atualize o instalador — a identidade da câmera passou a ser o endereço único do dispositivo, não o nome |
+| o app do cliente lista as câmeras mas nenhuma delas é a que cadastrei (`cam-01`, `cam-02`) | da 0.2.5 o cadastro desta máquina sobe ao lado terra sozinho: ao cadastrar a câmera, ao ativar/desativar e ao subir o servidor local. Câmera cadastrada numa versão anterior à 0.2.5 sobe ao reinstalar (ou pelo botão **Publicar câmeras no lado terra**, na tela Câmeras do admin) |
 | "o lado terra não respondeu (conexão recusada)" e o endereço tentado é `127.0.0.1:8765` | config gravado por instalação anterior em `%APPDATA%\<app>\config.json`. Da 0.2.3 em diante o app **corrige sozinho** ao abrir (endereço de loopback num papel que não sobe servidor local volta para o de fábrica); reinstale por cima. Desinstalar não limpa essa pasta e não é preciso esperar entre desinstalar e instalar |
 | API não sobe | `desktop-logs\api-erro.log` (dentro de `resources\servidor\`) |
 | aparece `analise local: desligada` | é o esperado no pacote: sem `numpy`/`onnxruntime` no Python portátil o detector não roda; captura e repasse não dependem dele |
