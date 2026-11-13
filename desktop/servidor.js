@@ -13,6 +13,14 @@ function pythonDe(repo) {
   return fs.existsSync(venv) ? venv : 'python';
 }
 
+// O ffmpeg embutido no instalador (resources/ffmpeg/ffmpeg.exe). E' ele que faz a maquina listar e
+// capturar camera SEM depender de instalacao manual: sem ffmpeg a lista de dispositivos fica vazia.
+function ffmpegDe() {
+  const raiz = process.resourcesPath || path.join(__dirname, '..');
+  const exe = path.join(raiz, 'ffmpeg', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+  return fs.existsSync(exe) ? exe : '';
+}
+
 // Ambiente dos processos filhos. O destino do repasse (PC de captura -> lado terra) entra aqui:
 // vazio = nada e' repassado (o PC de captura serve so' a propria tela); preenchido, o mediamtx local
 // sobe o fluxo JA COMPRIMIDO para esse host:porta.
@@ -21,6 +29,14 @@ function amb(env, config) {
   const saida = Object.assign({}, env || {});
   if (destino) saida.LECSOR_DESTINO_SRT = destino;
   else delete saida.LECSOR_DESTINO_SRT;
+  const ff = ffmpegDe();
+  if (ff) {
+    saida.LECSOR_FFMPEG = ff;                                  // caminho explicito para o Python
+    saida.LECSOR_FFPROBE = path.join(path.dirname(ff), 'ffprobe' + path.extname(ff));
+    // e a pasta no PATH: qualquer chamada que escape do caminho explicito continua funcionando
+    const sep = process.platform === 'win32' ? ';' : ':';
+    saida.PATH = path.dirname(ff) + sep + (saida.PATH || '');
+  }
   return saida;
 }
 
@@ -54,12 +70,15 @@ function subir(config) {
 // A lista de cameras e a captura dependem do ffmpeg no PATH. Sem ele o app abre, mas nao existe
 // dispositivo nenhum para escolher — o estado precisa dizer isso, e nao mostrar lista vazia sem causa.
 function ffmpegInfo() {
-  const r = spawnSync('ffmpeg', ['-hide_banner', '-version'], { encoding: 'utf8', timeout: 15000 });
+  const embutido = ffmpegDe();
+  const comando = embutido || 'ffmpeg';
+  const r = spawnSync(comando, ['-hide_banner', '-version'], { encoding: 'utf8', timeout: 15000 });
   if (r.error || r.status !== 0) {
-    return 'ffmpeg: NAO ENCONTRADO no PATH — sem ele a lista de cameras fica vazia e a captura nao roda';
+    return 'ffmpeg: NAO ENCONTRADO' + (embutido ? ' (o embutido nao executou)' : ' — nem embutido, nem no PATH') +
+      ': sem ele a lista de cameras fica vazia e a captura nao roda';
   }
   const linha = String(r.stdout || '').split('\n')[0].trim();
-  return `ffmpeg: ok (${linha})`;
+  return `ffmpeg: ${embutido ? 'embutido no app' : 'do PATH da maquina'} — ${comando} (${linha})`;
 }
 
 function parar() { for (const { p } of filhos) { try { p.kill(); } catch (e) {} } filhos = []; }
@@ -73,4 +92,4 @@ function detalhe(config) {
   linhas.push(`repasse para o lado terra: ${destino || '(nada — so esta maquina)'}`);
   return linhas.join('\n') || 'nada rodando pelo aplicativo';
 }
-module.exports = { subir, parar, estado, detalhe, amb, pythonDe };
+module.exports = { subir, parar, estado, detalhe, amb, pythonDe, ffmpegDe };

@@ -56,12 +56,16 @@ def _fonte_args(d: dict) -> list[str]:
     return ["-re", "-i", fonte]
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ferramentas import caminho_ffmpeg  # noqa: E402
+
+
 def _comando(d: dict, segundos: float, alvo_arq: Path, original_arq: Path,
              bitrate: str | None = None) -> list[str]:
     alvo = str(bitrate or d.get("bitrate_alvo") or "1500k")
     fps = int(d.get("fps") or d.get("fps_nativo") or 30)
     codec = str(d.get("codec") or "libx264")
-    return (["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "warning", "-y"]
+    return ([caminho_ffmpeg(), "-hide_banner", "-nostdin", "-loglevel", "warning", "-y"]
             + _fonte_args(d)
             + ["-filter_complex", "[0:v]split=2[a][b]"]
             # ramo A: o ajuste que o fluxo usa na rede

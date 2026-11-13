@@ -845,10 +845,15 @@ function telaEnvios(t) {
       o.value = ''; o.textContent = '— nenhuma câmera nesta máquina —'; o.disabled = true;
       dispositivo.appendChild(o);
       avisoDisp.style.display = '';
-      avisoDisp.textContent = (d.pedido_de === 'outra_maquina')
+      // quando não há câmera nenhuma, a causa mais comum é ffmpeg ausente: dizer isso, e não só "vazio"
+      const ff = (d.ffmpeg || {}).ffmpeg || {};
+      const sobreFfmpeg = /^nenhum/.test(ff.origem || '')
+        ? 'o app não achou o ffmpeg (nem embutido, nem no PATH da máquina): sem ele nenhuma câmera é listada. '
+        : '';
+      avisoDisp.textContent = sobreFfmpeg + ((d.pedido_de === 'outra_maquina')
         ? 'esta lista vem de "' + (d.maquina || 'outra máquina') + '" (lado terra): câmera ligada NESTA máquina só ' +
           'aparece com o Servidor local no ar e base http://127.0.0.1:8765. ' + (d.motivo || '')
-        : (d.motivo || d.erro || 'nenhuma câmera encontrada nesta máquina');
+        : (d.motivo || d.erro || 'nenhuma câmera encontrada nesta máquina'));
       btnComprimir.disabled = (modo.value === 'camera');
       dispositivo.dataset.pronto = '1';
       return;

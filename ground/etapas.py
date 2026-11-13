@@ -22,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from entrada import entrada_teorica_kbps as _entrada_teorica_kbps, origem_da_entrada as _origem_da_entrada  # noqa: E402
+from ferramentas import caminho_ffmpeg  # noqa: E402  (o ffmpeg embutido no app vem por LECSOR_FFMPEG)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 RAIZ = Path(__file__).resolve().parent.parent
@@ -50,7 +51,7 @@ def _encode(fonte: str, saida: Path, *, kb: int | None = None, crf: int | None =
             duracao_amostra: float | None = None, preset: str = "medium",
             inicio: float = 0.0) -> float:
     """Uma passada de encode. kb = alvo de bitrate; crf = qualidade (o x264 escolhe o bitrate)."""
-    cmd = ["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "warning", "-y"]
+    cmd = [caminho_ffmpeg(), "-hide_banner", "-nostdin", "-loglevel", "warning", "-y"]
     if inicio:
         cmd += ["-ss", str(inicio)]
     if duracao_amostra:
@@ -115,7 +116,7 @@ def escolher_crf(fonte: str, *, fps: int = 30, pasta: Path | None = None, fonte2
 def medir_ssim_amostra(original: str, comprimido: str, segundos: float, fps: int = 30,
                        inicio: float = 0.0) -> float | None:
     # o -ss vai ANTES do segundo -i: e o original que precisa comecar na mesma janela da amostra
-    r = subprocess.run(["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "info", "-i", comprimido]
+    r = subprocess.run([caminho_ffmpeg(), "-hide_banner", "-nostdin", "-loglevel", "info", "-i", comprimido]
                         + (["-ss", str(inicio)] if inicio else []) +
                         ["-i", original, "-t", str(segundos),
                         "-lavfi", f"[0:v]fps={fps},setpts=PTS-STARTPTS[a];[1:v]fps={fps},setpts=PTS-STARTPTS[b];[a][b]ssim",
@@ -236,7 +237,7 @@ def comprimir(fonte: str, *, alvo: str = "auto", fps: int = 30, codec: str = "li
 def medir_ssim(original: str, comprimido: str, duracao_s: float | None, fps: int = 30) -> float | None:
     """Qualidade: SSIM medio do comprimido contra o original (1.0 = identico)."""
     recorte = ["-t", str(min(60, max(5, int(duracao_s or 30))))]
-    r = subprocess.run(["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "info",
+    r = subprocess.run([caminho_ffmpeg(), "-hide_banner", "-nostdin", "-loglevel", "info",
                         "-i", comprimido, "-i", original, *recorte,
                         "-lavfi", f"[0:v]fps={fps},setpts=PTS-STARTPTS[a];[1:v]fps={fps},setpts=PTS-STARTPTS[b];[a][b]ssim",
                         "-f", "null", "-"], capture_output=True, text=True, timeout=900)
@@ -558,7 +559,7 @@ def latencia_ponta_a_ponta(fluxo_id: str, *, alvo: str = "800k", fps: int = 30, 
     """
     relogio = r"%{localtime\:%T}"
     milis = r"%{eif\:mod(t*1000\,1000)\:d\:3}"
-    cmd = ["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "warning", "-re",
+    cmd = [caminho_ffmpeg(), "-hide_banner", "-nostdin", "-loglevel", "warning", "-re",
            "-f", "lavfi", "-i", f"testsrc2=size=1280x720:rate={fps}",
            "-vf", f"drawtext=text='{relogio}.{milis}':fontsize=64:fontcolor=white:box=1:boxcolor=black@0.6:x=20:y=20",
            "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",

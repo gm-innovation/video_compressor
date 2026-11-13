@@ -12,7 +12,7 @@ todos os passos são comandos ou menus copiáveis.
 | aplicativo **LECSOR Admin** (ou Cliente) | página de releases do repositório (`LECSOR-Admin-0.1.3-x64.exe`) | é a tela onde você insere as câmeras |
 | o **repositório** (pasta `lecsor-pipeline-video`) | `git clone` ou o pacote de código | tem o `ground/`, o `tools/mediamtx/mediamtx.exe` e os scripts |
 | **Python 3.11+** | python.org — marque **"Add python.exe to PATH"** | roda a API e o repasse |
-| **ffmpeg** | ffmpeg.org (build *essentials*, descompactar) — a pasta `bin` tem de estar no **PATH** | sem ele **nenhuma câmera é listada** e a captura não roda |
+| **ffmpeg** | **já vem dentro do instalador 0.1.4+** (`resources\ffmpeg\ffmpeg.exe`, encontrado pelo app sozinho) | é ele que **lista as câmeras** e captura; se faltar, a lista fica vazia. Em versão antiga do app, instale o build *essentials* e deixe a pasta `bin` no PATH |
 | as **câmeras** | USB na máquina | aparecem sozinhas na lista de dispositivos |
 
 O `mediamtx.exe` **não** se instala: ele viaja dentro do repositório (`tools/mediamtx/`).
@@ -79,7 +79,7 @@ No app apontado para o lado terra (`base` = `http://187.127.60.250:8085`), a câ
 
 | sintoma | onde olhar |
 |---|---|
-| nenhuma câmera na lista | o servidor local não está no ar, `base` ainda é o lado terra, **ou o `ffmpeg` não está no PATH** (o menu *Ver estado do servidor* diz: `ffmpeg: NAO ENCONTRADO`) |
+| nenhuma câmera na lista | o servidor local não está no ar, `base` ainda é o lado terra, **ou o app não achou o ffmpeg** — a própria tela diz "o app não achou o ffmpeg (nem embutido, nem no PATH)" e o menu *Ver estado do servidor* mostra `ffmpeg: embutido no app — <caminho> (versão)` |
 | a tela avisa "esta lista vem de ..." | você está no app apontado para o lado terra: troque `base` para `http://127.0.0.1:8765` e suba o **Servidor local** |
 | a lista volta vazia com motivo sobre driver/USB | o Windows não está vendo a câmera: confira o Gerenciador de Dispositivos e a porta USB |
 | o fluxo aparece na máquina mas não no lado terra | `destinoSrt` vazio/errado, ou sem saída de rede: veja `ground/envios/log/repasse-<fluxo>.log` |

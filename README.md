@@ -18,8 +18,12 @@ sistema comprime na máquina e o vídeo comprimido sobe para o lado terra (`dest
 
 ## Instaladores prontos (Windows x64)
 Na página de releases: https://github.com/gm-innovation/video_compressor/releases
-- `LECSOR-Cliente-0.1.3-x64.exe` — app do cliente
-- `LECSOR-Admin-0.1.3-x64.exe` — admin/operação (já vem apontado para o lado terra da LECSOR)
+- `LECSOR-Cliente-0.1.4-x64.exe` — app do cliente
+- `LECSOR-Admin-0.1.4-x64.exe` — admin/operação (já vem apontado para o lado terra da LECSOR)
+
+A partir da **0.1.4** os instaladores levam o **ffmpeg embutido** (`resources\ffmpeg\ffmpeg.exe` e
+`ffprobe.exe`): a máquina lista e captura câmera sem instalar nada. Quem builda usa
+`desktop/baixar-ffmpeg.sh` (baixa a build *essentials* e confere o SHA-256 publicado).
 
 Padrão de fábrica (0.1.2 em diante): `"base": "http://187.127.60.250:8085"` (lado terra da LECSOR) e
 `"destinoSrt": "187.127.60.250:8890"`. Num **PC de captura**, troque `base` para

@@ -4,6 +4,14 @@
 set -e
 cd "$(dirname "$0")"
 VERSAO=$(node -p "require('./package.json').version")
+
+# O ffmpeg vai EMBUTIDO no instalador (extraResources): sem o binario o app instalado nao lista nem
+# captura camera. Baixa (conferindo SHA-256) se faltar; se nao der, PARA — instalador sem ffmpeg e'
+# instalador quebrado para o cliente.
+bash ./baixar-ffmpeg.sh
+for b in ../tools/ffmpeg/ffmpeg.exe ../tools/ffmpeg/ffprobe.exe; do
+  [ -s "$b" ] || { echo "ERRO: $b ausente — rode desktop/baixar-ffmpeg.sh antes de construir"; exit 1; }
+done
 construir() {
   nome="$1"; superficie="$2"; id="$3"
   echo "== instalador: $nome ($superficie)"

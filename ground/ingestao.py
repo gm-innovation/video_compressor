@@ -10,6 +10,11 @@ from __future__ import annotations
 import argparse, datetime as dt, json, os, re, shutil, signal, socket, sqlite3, subprocess, sys, threading, time, unicodedata
 from pathlib import Path
 
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ferramentas import caminho_ffmpeg, caminho_ffprobe  # noqa: E402  (binarios embutidos no app)
+
+
 RAIZ = Path(__file__).resolve().parent.parent
 BANCO = RAIZ / "db" / "pipeline.db"
 ENVIOS = RAIZ / "ground" / "envios"
@@ -47,7 +52,7 @@ def hw() -> str:
     except Exception:
         pass
     try:
-        v = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True, timeout=30).stdout.splitlines()[0]
+        v = subprocess.run([caminho_ffmpeg(), "-version"], capture_output=True, text=True, timeout=30).stdout.splitlines()[0]
         v = v.split(" Copyright")[0]
     except Exception:
         v = "ffmpeg"
@@ -96,7 +101,7 @@ def resolver_link(url: str, timeout: int = 240) -> tuple[str, str | None, str]:
 def sonda(fonte: str) -> dict:
     """Resolucao, fps e bitrate de entrada (o quanto o video original pesa)."""
     try:
-        r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+        r = subprocess.run([caminho_ffprobe(), "-v", "error", "-select_streams", "v:0",
                             "-show_entries", "stream=width,height,r_frame_rate,bit_rate,codec_name",
                             "-show_entries", "format=bit_rate,duration,format_name,size",
                             "-of", "json", fonte], capture_output=True, text=True, timeout=45)
@@ -133,7 +138,7 @@ def _comando(fonte: str, fluxo_id: str, bitrate: str, codec: str, repetir: bool,
              fps: int = 30, arquivo_saida: str | None = None, copiar: bool = False,
              dispositivo: str | None = None, resolucao: str = "1920x1080") -> list[str]:
     destino = (f"srt://{srt_host}:{srt_port}?mode=caller&latency=200&pkt_size=1316&streamid=publish:{fluxo_id}")
-    cmd = ["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "warning"]
+    cmd = [caminho_ffmpeg(), "-hide_banner", "-nostdin", "-loglevel", "warning"]
     if tipo in ("camera", "sintetica"):
         # FONTE VIVA: a webcam (ou o gerador) entrega no tempo real — nada de -re nem de laço,
         # o envio e' CONTINUO, igual a operacao. Sem -t: so para quando o dono mandar parar.
@@ -512,7 +517,7 @@ def listar_dispositivos() -> dict:
     """
     d = {"video": [], "audio": [], "padrao": "", "maquina": socket.gethostname()}
     try:
-        r = subprocess.run(["ffmpeg", "-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"],
+        r = subprocess.run([caminho_ffmpeg(), "-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"],
                            capture_output=True, text=True, timeout=60, errors="replace")
     except FileNotFoundError:
         d.update(erro="ffmpeg nao encontrado nesta maquina (PATH)",
@@ -567,7 +572,7 @@ def capturar(*, tipo: str = "camera", dispositivo: str | None = None, resolucao:
     base = re.sub(r"[^a-z0-9]+", "-", unicodedata.normalize("NFKD", (rotulo or tipo).lower()))
     base = "".join(ch for ch in base if not unicodedata.combining(ch)).strip("-")[:38] or tipo
     destino = origem_dir / f"captura-{base}-{dt.datetime.now().strftime('%H%M%S')}.mp4"
-    cmd = (["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "warning", "-y"]
+    cmd = ([caminho_ffmpeg(), "-hide_banner", "-nostdin", "-loglevel", "warning", "-y"]
            + _args_fonte_viva(tipo, dispositivo, resolucao, fps)
            + ["-t", str(segundos), "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18",
               "-pix_fmt", "yuv420p", "-r", str(fps), "-an", str(destino)])
@@ -733,7 +738,7 @@ def _sondar_publicado(ident: int, fluxo_id: str) -> None:
     for espera in (3, 3, 4, 5, 6, 8, 10):
         time.sleep(espera)
         try:
-            saida = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+            saida = subprocess.run([caminho_ffprobe(), "-v", "error", "-select_streams", "v:0",
                                     "-show_entries", "stream=width,height,avg_frame_rate", "-of", "json",
                                     f"rtsp://127.0.0.1:8554/{fluxo_id}"],
                                    capture_output=True, text=True, timeout=15).stdout

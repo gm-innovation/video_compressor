@@ -35,6 +35,7 @@ from ingestao import iniciar as ing_iniciar, parar as ing_parar, listar as ing_l
 from ingestao import desligar_camera as ing_desligar_camera, ligar_camera as ing_ligar_camera  # noqa: E402
 from ingestao import capturar as ing_capturar, listar_dispositivos as ing_dispositivos, ao_vivo as ing_ao_vivo
 from ingestao import limpar_vivos_mortos as ing_limpar_vivos
+from ferramentas import resumo as resumo_ferramentas  # noqa: E402
 import etapas as etapas_pipeline  # noqa: E402
 import producao as producao_pipeline  # noqa: E402
 from urllib.parse import parse_qs, unquote, urlparse
@@ -693,6 +694,8 @@ class Handler(SimpleHTTPRequestHandler):
             # de onde veio o pedido: com a lista vazia, a tela precisa saber se esta' falando com o
             # lado terra (outra maquina) ou com a propria maquina, onde as cameras estao ligadas
             d["pedido_de"] = "esta_maquina" if self._local() else "outra_maquina"
+            # de onde vem o ffmpeg (embutido no app / PATH / nenhum): e' o que explica lista vazia
+            d["ffmpeg"] = resumo_ferramentas()
             d["sintetica"] = {"tipo": "sintetica", "descricao": "teste sintetico (testsrc2), sem camera",
                               "resolucoes": ["1920x1080", "1280x720"]}
             return self._json(200, d, {"Cache-Control": "no-store"})

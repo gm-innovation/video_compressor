@@ -11,6 +11,8 @@ from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
 BANCO = RAIZ / "db" / "pipeline.db"
+sys.path.insert(0, str(RAIZ / "ground"))
+from ferramentas import caminho_ffmpeg  # noqa: E402  (ffmpeg embutido no app: LECSOR_FFMPEG)
 
 def hw() -> str:
     gpu = "sem nvidia-smi"
@@ -19,7 +21,7 @@ def hw() -> str:
                              capture_output=True, text=True, timeout=30).stdout.strip() or gpu
     except Exception:
         pass
-    v = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True).stdout.splitlines()[0]
+    v = subprocess.run([caminho_ffmpeg(), "-version"], capture_output=True, text=True).stdout.splitlines()[0]
     return f"{gpu} | {v.split(' Copyright')[0]}"
 
 def entrada_de(c: dict) -> list[str]:
@@ -40,7 +42,7 @@ def comando(c: dict) -> list[str]:
     destino = f"srt://{c['srt_host']}:{c['srt_port']}?mode=caller&latency=200&pkt_size=1316"
     if c.get("streamid"):
         destino += f"&streamid=publish:{c['streamid']}"
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "warning"]
+    cmd = [caminho_ffmpeg(), "-hide_banner", "-loglevel", "warning"]
     if str(c.get("entrada") or "").lower() not in ("camera", "dshow", "fisica", "usb"):
         cmd += ["-re"]          # fonte sintetica/arquivo: entrega no tempo real; camera ao vivo ja' vem assim
     cmd += entrada_de(c)

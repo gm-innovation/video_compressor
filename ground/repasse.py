@@ -57,9 +57,13 @@ def _ja_rodando(fluxo: str) -> bool:
     return False
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ferramentas import caminho_ffmpeg  # noqa: E402
+
+
 def _comando(fluxo: str, destino: str, origem: str) -> list[str]:
     return [
-        "ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostdin",
+        caminho_ffmpeg(), "-hide_banner", "-loglevel", "warning", "-nostdin",
         "-rtsp_transport", "tcp", "-i", f"{origem.rstrip('/')}/{fluxo}",
         # o encode ja' veio pronto do PC de captura: aqui so' troca o transporte
         "-c", "copy", "-f", "mpegts",
