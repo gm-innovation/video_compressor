@@ -17,6 +17,7 @@ import json
 import re
 import os
 import secrets
+import socket
 import sqlite3
 import subprocess
 import time
@@ -111,6 +112,14 @@ def pode_ver_camera(usuario, camera: sqlite3.Row | None) -> bool:
 # --------------------------------------------------------------------------- banco / inicializacao
 def inicializar(semear_demo: bool = False) -> None:
     BANCO.parent.mkdir(parents=True, exist_ok=True)
+    # Tabelas que o codigo criava sob demanda (compressoes, telemetria_minuto, latencia_medicoes):
+    # numa instalacao limpa o historico de producao reclamava "no such table: compressoes" a cada
+    # minuto e a tela de compressoes vinha vazia. Criar aqui deixa o banco novo igual ao da bancada.
+    try:
+        etapas_pipeline.garantir_tabela()
+        producao_pipeline.garantir_tabelas()
+    except Exception as e:  # banco ocupado no boot nao pode derrubar a API
+        print("[api] aviso: nao criei as tabelas sob demanda:", type(e).__name__, e, flush=True)
     with conexao() as c:
         # schema.sql primeiro; os das fases em seguida. Todos os `db/schema*.sql` entram — instalar
         # num banco vazio tem que dar o MESMO banco que a bancada (faltava o schema-ingestao.sql:
@@ -565,6 +574,13 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(204, {}, {"Cache-Control": "max-age=86400"})
         if rota == "/api/saude":
             return self._json(200, {"ok": True, "banco": str(BANCO), "python": sys.version.split()[0]})
+        if rota == "/api/primeiro-acesso":
+            # Instalacao nova nasce SEM nenhum usuario: sem esta rota ninguem consegue entrar no PC
+            # de captura (foi o "abriu direto, sem login e senha" do cliente).
+            with conexao() as c:
+                quantos = c.execute("SELECT count(*) FROM usuarios WHERE ativo=1").fetchone()[0]
+            return self._json(200, {"precisa": quantos == 0, "local": self._local(),
+                                    "maquina": socket.gethostname()}, {"Cache-Control": "no-store"})
         if rota == "/api/eu":
             if not u:
                 return self._json(200, {"autenticado": False, "local": self._local()})
@@ -842,6 +858,37 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(401, {"erro": "e-mail ou senha invalidos"})
             token = criar_sessao(alvo["id"], self.headers.get("User-Agent", ""))
             auditar(alvo, "entrada", alvo["email"], self.client_address[0])
+            return self._json(200, {"ok": True, "nome": alvo["nome"], "papel": alvo["papel"]},
+                              {"Set-Cookie": f"sessao={token}; HttpOnly; SameSite=Lax; Path=/",
+                               "Cache-Control": "no-store"})
+        if rota == "/api/primeiro-acesso":
+            # Cria o PRIMEIRO administrador desta instalacao. Só vale enquanto nao existe usuario
+            # nenhum (depois disso a porta fecha: 403) e só na propria maquina do servidor (quem
+            # abre o aplicativo nela) — ninguem de fora pode reivindicar a instalacao.
+            if not self._local():
+                return self._json(403, {"erro": "o primeiro acesso e criado na propria maquina do servidor: abra o aplicativo nela"})
+            with conexao() as c:
+                if c.execute("SELECT count(*) FROM usuarios").fetchone()[0]:
+                    return self._json(403, {"erro": "esta instalacao ja tem usuario: entre com a conta que ja existe"})
+            d = self._corpo()
+            nome = str(d.get("nome") or "").strip()
+            email = str(d.get("email") or "").strip().lower()
+            senha = str(d.get("senha") or "")
+            if len(nome) < 3:
+                return self._json(400, {"erro": "informe o nome de quem vai operar esta maquina"})
+            if "@" not in email or "." not in email.split("@")[-1]:
+                return self._json(400, {"erro": "informe um e-mail valido"})
+            if len(senha) < 8:
+                return self._json(400, {"erro": "a senha precisa de 8 caracteres ou mais"})
+            salt = secrets.token_hex(8)
+            uid = "admin-" + secrets.token_hex(3)
+            with conexao() as c:
+                c.execute("""INSERT INTO usuarios (id,email,nome,papel,cliente_id,senha_hash,salt)
+                             VALUES (?,?,?,?,?,?,?)""",
+                          (uid, email, nome, "admin", None, hash_senha(senha, salt), salt))
+                alvo = c.execute("SELECT * FROM usuarios WHERE id=?", (uid,)).fetchone()
+            token = criar_sessao(alvo["id"], self.headers.get("User-Agent", ""))
+            auditar(alvo, "primeiro_acesso", email, self.client_address[0])
             return self._json(200, {"ok": True, "nome": alvo["nome"], "papel": alvo["papel"]},
                               {"Set-Cookie": f"sessao={token}; HttpOnly; SameSite=Lax; Path=/",
                                "Cache-Control": "no-store"})

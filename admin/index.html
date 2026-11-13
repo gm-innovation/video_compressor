@@ -31,6 +31,25 @@
   </form>
 </section>
 
+<!-- Instalacao nova: nao existe usuario nenhum no banco, entao nao ha login que funcione. Aqui o
+     operador cria o administrador desta maquina (o dono nao recebia login nenhum na instalacao). -->
+<section id="primeiro" class="entrada oculto">
+  <h1>LECSOR · primeiro acesso</h1>
+  <p class="sub">Esta instalação é nova. Crie agora o administrador desta máquina — é com ele que a operação entra.</p>
+  <div id="primeiro-erro" class="erro oculto"></div>
+  <form id="form-primeiro">
+    <label for="p-nome">Nome de quem opera</label>
+    <input id="p-nome" type="text" autocomplete="name" required>
+    <label for="p-email">E-mail</label>
+    <input id="p-email" type="email" autocomplete="username" required>
+    <label for="p-senha">Senha (8 caracteres ou mais)</label>
+    <input id="p-senha" type="password" autocomplete="new-password" minlength="8" required>
+    <label for="p-senha2">Repetir a senha</label>
+    <input id="p-senha2" type="password" autocomplete="new-password" minlength="8" required>
+    <button class="principal" type="submit">Criar e entrar</button>
+  </form>
+</section>
+
 <div class="sistema oculto" id="sistema">
   <aside class="lateral">
     <div class="marca"><span class="simbolo">L</span><span class="nome">LECSOR · ADMIN</span></div>
@@ -74,6 +93,7 @@
       <div class="controles">
         <a class="pil" href="/app" target="_blank" rel="noopener" style="text-decoration:none">tela do cliente</a>
         <span class="pil" id="relogio-servidor">—</span>
+        <span id="status-atualizar" title="estado do ultimo carregamento"></span>
         <button class="pil" id="btn-atualizar">Atualizar</button>
         <button class="pil" id="btn-sair">sair</button>
       </div>

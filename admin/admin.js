@@ -14,6 +14,35 @@ async function api(rota, opcoes) {
 }
 
 /* --------------------------------------------------------- entrada */
+/* Primeiro acesso: instalacao nova nao tem usuario nenhum, entao o login normal nunca funcionaria.
+   A tela troca para o formulario que cria o administrador desta maquina (a API so aceita isso da
+   propria maquina e enquanto nao existir usuario). */
+async function conferirPrimeiroAcesso() {
+  const r = await api('/api/primeiro-acesso');
+  if (r.ok && r.corpo && r.corpo.precisa) {
+    $('entrada').classList.add('oculto');
+    $('primeiro').classList.remove('oculto');
+    if (r.corpo.local === false) {
+      const e = $('primeiro-erro');
+      e.textContent = 'esta lista só pode ser criada na própria máquina do servidor (' + (r.corpo.maquina || 'servidor') + ')';
+      e.classList.remove('oculto');
+    }
+    $('p-nome').focus();
+    return true;
+  }
+  return false;
+}
+
+async function primeiroAcesso(ev) {
+  ev.preventDefault();
+  const erro = (t) => { const e = $('primeiro-erro'); e.textContent = t; e.classList.remove('oculto'); };
+  if ($('p-senha').value !== $('p-senha2').value) return erro('as duas senhas não são iguais');
+  const d = await api('/api/primeiro-acesso', { method: 'POST', body: JSON.stringify({
+    nome: $('p-nome').value, email: $('p-email').value, senha: $('p-senha').value }) });
+  if (!d.ok) return erro((d.corpo && d.corpo.erro) || 'não foi possível criar o primeiro acesso');
+  await abrir();
+}
+
 async function entrar(ev) {
   ev.preventDefault();
   const d = await api('/api/entrar', { method: 'POST', body: JSON.stringify({ email: $('email').value, senha: $('senha').value }) });
@@ -24,7 +53,7 @@ async function entrar(ev) {
 
 async function abrir() {
   const eu = await api('/api/eu');
-  if (!eu.corpo || !eu.corpo.autenticado || eu.corpo.papel === 'cliente') return;
+  if (!eu.corpo || !eu.corpo.autenticado || eu.corpo.papel === 'cliente') return conferirPrimeiroAcesso();
   A.usuario = eu.corpo;
   $('entrada').classList.add('oculto'); $('sistema').classList.remove('oculto');
   $('conta-email').textContent = eu.corpo.email;
@@ -42,6 +71,7 @@ function digitandoNaTela() {
 }
 
 async function atualizar() {
+  statusAtualizar('atualizando\u2026');
   try { const rc = await fetch('/api/cameras/detalhe'); if (rc.ok) A.camerasInterno = await rc.json(); } catch (e) {}
   const rs = await api('/api/resumo'); if (rs.ok) A.resumo = rs.corpo;
   const em = await api('/api/embarcacoes'); A.embarcacoes = (em.corpo && em.corpo.embarcacoes) || [];
@@ -57,10 +87,16 @@ async function atualizar() {
      cada 15 s por causa de campos que mudam sozinhos (gerado_em do resumo, uptime_s do sistema):
      a tela era limpa no meio da leitura do operador. */
   const marca = assinaturaTelas();
-  if (marca === A.marca) return;
+  if (marca === A.marca) { statusAtualizar('sem mudan\u00e7as desde ' + agora()); return; }
   A.marca = marca;
   desenhar();
+  statusAtualizar('atualizado ' + agora());
 }
+
+/* Feedback do botao "Atualizar": antes ele repintava so quando algo mudava e nao dizia nada, e quem
+   clicava com os mesmos dados nao via reacao nenhuma ("o botao esta surdo, mudo ou cego"). */
+function statusAtualizar(t) { const e = $('status-atualizar'); if (e) e.textContent = t; }
+function agora() { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()); }
 
 /* Impressao digital do que as telas realmente mostram. Campos que mudam sozinhos (relogio do
    resumo, uptime, idade das medidas) ficam de fora: sozinhos nao justificam repintar. */
@@ -835,7 +871,24 @@ function telaEnvios(t) {
   const preencherDispositivos = async () => {
     if (dispositivo.dataset.pronto) return;
     const r = await fetch('/api/dispositivos');
-    if (!r.ok) return;
+    if (!r.ok) {
+      // Antes voltava calada: com o endereco apontado para o lado terra e sem sessao a API responde
+      // erro, a lista ficava vazia e nada dizia o motivo (foi o "nao acha as cameras" no cliente).
+      let erro = '';
+      try { erro = ((await r.json()) || {}).erro || ''; } catch (e) {}
+      dispositivo.innerHTML = '';
+      const o = document.createElement('option');
+      o.value = ''; o.textContent = '\u2014 lista de c\u00e2meras indispon\u00edvel \u2014'; o.disabled = true;
+      dispositivo.appendChild(o);
+      semCamera = true;
+      avisoDisp.style.display = '';
+      avisoDisp.textContent = 'a API em uso (' + location.origin + ') respondeu HTTP ' + r.status +
+        (erro ? ' (' + erro + ')' : '') + '. C\u00e2mera ligada NESTA m\u00e1quina aparece com o Servidor local no ar e ' +
+        'base http://127.0.0.1:8765 \u2014 o menu do aplicativo tem "Testar c\u00e2meras desta m\u00e1quina".';
+      btnComprimir.disabled = (modo.value === 'camera');
+      dispositivo.dataset.pronto = '1';
+      return;
+    }
     const d = await r.json();
     const cams = d.video || [];
     dispositivo.innerHTML = '';
@@ -851,7 +904,7 @@ function telaEnvios(t) {
         ? 'o app não achou o ffmpeg (nem embutido, nem no PATH da máquina): sem ele nenhuma câmera é listada. '
         : '';
       avisoDisp.textContent = sobreFfmpeg + ((d.pedido_de === 'outra_maquina')
-        ? 'esta lista vem de "' + (d.maquina || 'outra máquina') + '" (lado terra): câmera ligada NESTA máquina só ' +
+        ? 'esta tela est\u00e1 em ' + location.origin + ' e a lista vem de "' + (d.maquina || 'outra máquina') + '" (lado terra): câmera ligada NESTA máquina só ' +
           'aparece com o Servidor local no ar e base http://127.0.0.1:8765. ' + (d.motivo || '')
         : (d.motivo || d.erro || 'nenhuma câmera encontrada nesta máquina'));
       btnComprimir.disabled = (modo.value === 'camera');
@@ -1059,6 +1112,7 @@ function telaSaude(t) {
 
 /* --------------------------------------------------------- interface */
 $('form-entrar').addEventListener('submit', entrar);
+$('form-primeiro').addEventListener('submit', primeiroAcesso);
 $('btn-sair').addEventListener('click', async () => { await api('/api/sair', { method: 'POST' }); location.reload(); });
 $('btn-atualizar').addEventListener('click', atualizar);
 document.querySelectorAll('.item[data-tela]').forEach((b) => b.addEventListener('click', () => {

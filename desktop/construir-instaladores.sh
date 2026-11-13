@@ -13,7 +13,8 @@ VERSAO=$(node -p "require('./package.json').version")
 bash ./baixar-ffmpeg.sh
 bash ./baixar-servidor.sh
 for b in ../tools/ffmpeg/ffmpeg.exe ../tools/ffmpeg/ffprobe.exe ../tools/python/python.exe \
-         ../tools/mediamtx/mediamtx.exe ../ground/api.py ../ground/repasse.py ../admin/admin.js; do
+         ../tools/mediamtx/mediamtx.exe ../ground/api.py ../ground/repasse.py ../admin/admin.js \
+         ../fronts/vms.css ../fronts/admin.css ../fronts/video.js; do
   [ -s "$b" ] || { echo "ERRO: $b ausente — o instalador precisa dele dentro do pacote"; exit 1; }
 done
 

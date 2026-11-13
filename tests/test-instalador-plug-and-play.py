@@ -17,8 +17,15 @@ O que este teste prova:
   7) o menu mostra o erro do `subir` em vez de descartá-lo, e existe o item de abrir com o Windows;
   8) a análise local é opcional: só sobe se o Python tiver numpy/onnxruntime, e o reinício automático
      tem limite (nada de processo girando para sempre);
-  9) instalação limpa cria o banco COMPLETO (todos os `db/schema*.sql`, inclusive a ingestão), e o
-     banco mora na pasta do usuário — sobrevive a atualização do aplicativo.
+  9) instalação limpa cria o banco COMPLETO (todos os `db/schema*.sql`, inclusive a ingestão) e as
+     tabelas que o código criava sob demanda (compressoes, telemetria_minuto), e o banco mora na
+     pasta do usuário — sobrevive a atualização do aplicativo;
+ 10) o pacote leva as TELAS inteiras (`fronts/`: vms.css, admin.css, video.js) e o build PARA sem elas;
+ 11) PROVA DE EXECUÇÃO: o servidor montado como no pacote serve /admin e /fronts/*.css com 200 (era
+     404 — foi o "sem css" que o dono viu na instalação do cliente);
+ 12) a câmera e o papel pela TELA: menu "Testar câmeras desta máquina", endereço e destino editáveis,
+     presets de papel e estado do servidor que só diz "no ar" com processo vivo;
+ 13) a lista de câmeras não volta calada quando a API nega o pedido, e o botão Atualizar dá retorno.
 """
 from __future__ import annotations
 
@@ -28,6 +35,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -189,6 +199,176 @@ checar("ingestoes" in tabelas and "ingestoes_amostras" in tabelas,
        f"instalação limpa cria as tabelas da ingestão (faltava o schema-ingestao.sql): {tabelas[:120]}")
 checar("cameras" in tabelas and "usuarios" in tabelas, "as tabelas básicas do acompanhamento entram")
 shutil.rmtree(tmpdb.parent, ignore_errors=True)
+
+
+print("10) o pacote leva as TELAS inteiras (css e video), nao so o servidor")
+checar(any(e.get("from") == "../fronts" and e.get("to") == "servidor/fronts" for e in pkg["build"]["extraResources"]),
+       "extraResources leva fronts/ -> servidor/fronts (as telas pedem /fronts/vms.css, /fronts/admin.css, /fronts/video.js)")
+checar(not any(e.get("from") == "../portal" for e in pkg["build"]["extraResources"]),
+       "portal/ saiu do pacote (nenhuma rota da API serve /portal)")
+checar(all(f in construir for f in ("../fronts/vms.css", "../fronts/admin.css", "../fronts/video.js")),
+       "o build PARA se faltar css/js das telas (mesma regra do ffmpeg)")
+for f in ("vms.css", "admin.css", "video.js", "estilo.css"):
+    checar((RAIZ / "fronts" / f).is_file() and (RAIZ / "fronts" / f).stat().st_size > 500,
+           f"fronts/{f} existe e nao esta vazio")
+
+print("11) o servidor DO PACOTE serve as telas estilizadas (prova de execucao, nao de texto)")
+por_from = {e["from"]: e.get("to") for e in pkg["build"]["extraResources"]}
+pyserv = RAIZ / "tools" / "python" / "python.exe"
+if not pyserv.is_file():
+    print("   (pulado: tools/python/python.exe nao esta nesta maquina — rode desktop/baixar-servidor.sh)")
+    checar(False, "Python portatil presente para a prova de execucao do pacote")
+else:
+    pkgdir = Path(tempfile.mkdtemp(prefix="plugplay-pacote-")) / "servidor"
+    pkgdir.mkdir(parents=True)
+    for origem in ("ground", "admin", "app", "board", "db", "analytics", "fronts"):
+        shutil.copytree(RAIZ / origem, pkgdir / origem, ignore=shutil.ignore_patterns("__pycache__", "desktop-logs"))
+    porta = 18799
+    ambiente = dict(os.environ, LECSOR_BANCO=str(pkgdir / "pipeline.db"), LECSOR_BIND="127.0.0.1")
+    proc = subprocess.Popen([str(pyserv), str(pkgdir / "ground" / "api.py"), str(porta)],
+                            cwd=str(pkgdir), env=ambiente, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    def buscar(rota):
+        for _ in range(40):
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{porta}{rota}", timeout=2) as r:
+                    return r.status, r.headers.get("Content-Type", ""), r.read().decode("utf-8", "replace")
+            except Exception:
+                time.sleep(0.5)
+        return 0, "", ""
+    try:
+        st, ct, corpo = buscar("/admin")
+        checar(st == 200 and "text/html" in ct, f"o servidor do pacote serve /admin (HTTP {st})")
+        for arquivo, tipo in (("vms.css", "text/css"), ("admin.css", "text/css"), ("video.js", "javascript")):
+            st, ct, corpo = buscar("/fronts/" + arquivo)
+            checar(st == 200 and tipo in ct and len(corpo) > 500,
+                   f"/fronts/{arquivo} responde HTTP {st} {ct} com conteudo (era 404: pacote sem fronts/)")
+        st, ct, _ = buscar("/api/dispositivos")
+        checar(st == 200, f"/api/dispositivos responde 200 no servidor do pacote (HTTP {st})")
+        st, ct, _ = buscar("/portal")
+        checar(st != 200, f"/portal nao e servido pela API (HTTP {st}) — portal/ nao pertence ao pacote")
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except Exception:
+            proc.kill()
+        shutil.rmtree(pkgdir.parent, ignore_errors=True)
+
+print("12) a camera e o papel: pela TELA, sem editar JSON")
+checar("Testar c" in main and "api/dispositivos" in main,
+       "menu \"Testar cameras desta maquina\": consulta o loopback (127.0.0.1) mesmo com base no lado terra")
+checar("pedirTexto" in main and "LECSOR_RESPOSTA:" in main,
+       "o menu pede o valor em janela propria (nao manda mais editar config.json)")
+checar("Usar como PC de captura" in main and "Usar como lado terra" in main,
+       "presets: uma maquina vira captura ou lado terra sem reinstalar")
+checar("ajuste_manual" in main and "!doUsuario.ajuste_manual" in main,
+       "escolha do operador na tela vence o papel do instalador no proximo boot")
+checar("Destino do repasse (lado terra)" in main and "config.destinoSrt = valor" in main,
+       "destino do repasse e' editavel pela tela e grava no config")
+checar("vivos()" in srv and "MORREU (codigo" in srv and "servidor local PARADO" in srv,
+       "estado do servidor so diz \"no ar\" com processo vivo; morto diz o motivo (porta ocupada)")
+checar("caixaServidor" in main, "o menu confere o estado depois de subir e mostra o veredito")
+
+print("13) a lista de cameras nao volta mais calada")
+adm = (RAIZ / "admin" / "admin.js").read_text(encoding="utf-8")
+checar("if (!r.ok) return;" not in adm, "preencherDispositivos nao retorna em silencio quando a API nega o pedido")
+checar("respondeu HTTP" in adm and "location.origin" in adm,
+       "a tela diz o que a API respondeu e em que endereco ela esta (camera, ffmpeg ou endereco errado)")
+checar("Testar c" in adm, "a propria mensagem aponta o menu \"Testar cameras desta maquina\"")
+checar("statusAtualizar" in adm and "sem mudan" in adm,
+       "botao Atualizar mostra o que fez (atualizando / sem mudancas desde HH:MM:SS)")
+checar("status-atualizar" in (RAIZ / "admin" / "index.html").read_text(encoding="utf-8"),
+       "o lugar do aviso existe na barra da tela")
+
+print("14) instalacao limpa nao reclama de tabela ausente")
+api_txt = (RAIZ / "ground" / "api.py").read_text(encoding="utf-8")
+checar("garantir_tabela" in api_txt and "garantir_tabelas" in api_txt,
+       "inicializar() cria as tabelas que o codigo criava sob demanda (compressoes, telemetria_minuto)")
+tmp14 = Path(tempfile.mkdtemp(prefix="plugplay-tab-")) / "pipeline.db"
+amb14 = dict(os.environ, LECSOR_BANCO=str(tmp14))
+r14 = subprocess.run(
+    [sys.executable, "-c",
+     "import sqlite3, sys; sys.path.insert(0, 'ground'); import api; api.inicializar();\n"
+     "print(sorted(x[0] for x in sqlite3.connect(api.BANCO).execute(\"SELECT name FROM sqlite_master WHERE type='table'\")))"],
+    capture_output=True, text=True, timeout=180, env=amb14, cwd=str(RAIZ))
+tabelas_limpas = r14.stdout.strip() + r14.stderr.strip()
+checar("erro" not in r14.stderr.lower(), f"inicializar() de instalacao limpa nao levanta erro: {r14.stderr.strip()[:120]}")
+shutil.rmtree(tmp14.parent, ignore_errors=True)
+checar("compressoes" in tabelas_limpas and "telemetria_minuto" in tabelas_limpas,
+       f"banco de instalacao limpa ja tem compressoes/telemetria_minuto: {tabelas_limpas[:160]}")
+
+
+print("15) primeiro acesso: instalacao nova tem como entrar (login de verdade, ponta a ponta)")
+checar("primeiro-acesso" in (RAIZ / "ground" / "api.py").read_text(encoding="utf-8"),
+       "a API cria o primeiro administrador quando o banco nao tem usuario nenhum")
+checar('id="form-primeiro"' in (RAIZ / "admin" / "index.html").read_text(encoding="utf-8"),
+       "a tela do admin mostra o formulario de primeiro acesso (sem ele, login novo = beco sem saida)")
+checar("primeiroAcesso" in adm and "conferirPrimeiroAcesso" in adm,
+       "a tela chama o primeiro acesso quando a API diz que precisa")
+porta15 = 18811
+db15 = Path(tempfile.mkdtemp(prefix="plugplay-login-")) / "pipeline.db"
+prints = [(RAIZ / "ground"), (RAIZ / "db"), (RAIZ / "admin"), (RAIZ / "app"), (RAIZ / "fronts"), (RAIZ / "analytics"), (RAIZ / "board")]
+casa = Path(tempfile.mkdtemp(prefix="plugplay-login-")) / "servidor"
+for d15 in prints:
+    shutil.copytree(d15, casa / d15.name, ignore=shutil.ignore_patterns("__pycache__", "desktop-logs"))
+amb15 = dict(os.environ, LECSOR_BANCO=str(db15), LECSOR_BIND="127.0.0.1")
+pyserv15 = RAIZ / "tools" / "python" / "python.exe"
+if not pyserv15.is_file():
+    print("   (pulado: sem tools/python/python.exe nesta maquina)")
+else:
+    proc15 = subprocess.Popen([str(pyserv15), str(casa / "ground" / "api.py"), str(porta15)],
+                              cwd=str(casa), env=amb15, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    def pedir(rota, dados=None, cookie=None):
+        req = urllib.request.Request(f"http://127.0.0.1:{porta15}{rota}", method="POST" if dados is not None else "GET")
+        if dados is not None:
+            req.add_header("Content-Type", "application/json")
+            req.data = json.dumps(dados).encode()
+        if cookie:
+            req.add_header("Cookie", cookie)
+        try:
+            with urllib.request.urlopen(req, timeout=8) as r:
+                return r.status, json.loads(r.read().decode()), r.headers.get("Set-Cookie", "")
+        except urllib.error.HTTPError as e:
+            try:
+                return e.code, json.loads(e.read().decode()), ""
+            except Exception:
+                return e.code, {}, ""
+        except Exception:
+            return 0, {}, ""
+    for _ in range(40):
+        if pedir("/api/primeiro-acesso")[0] == 200:
+            break
+        time.sleep(0.5)
+    try:
+        st, corpo, _ = pedir("/api/primeiro-acesso")
+        checar(st == 200 and corpo.get("precisa") is True,
+               f"instalacao limpa responde precisa=true (HTTP {st}: {corpo})")
+        st, corpo, _ = pedir("/api/entrar", {"email": "ninguem@teste.local", "senha": "senha-de-teste-123"})
+        checar(st == 401, f"antes do primeiro acesso, login normal falha (HTTP {st}) — era o beco sem saida")
+        st, corpo, _ = pedir("/api/primeiro-acesso", {"nome": "Operador de bancada", "email": "operador-teste@local.test",
+                                                      "senha": "curta"})
+        checar(st == 400, f"senha curta e recusada no primeiro acesso (HTTP {st})")
+        st, corpo, setcookie = pedir("/api/primeiro-acesso", {"nome": "Operador de bancada",
+                                                              "email": "operador-teste@local.test", "senha": "senha-de-teste-123"})
+        cookie = setcookie.split(";")[0] if setcookie else ""
+        checar(st == 200 and corpo.get("papel") == "admin" and cookie.startswith("sessao="),
+               f"o primeiro acesso cria o administrador e ja abre sessao (HTTP {st}, papel {corpo.get('papel')})")
+        st, corpo, _ = pedir("/api/eu", cookie=cookie)
+        checar(st == 200 and corpo.get("autenticado") is True, f"a sessao criada vale (HTTP {st}: {corpo})")
+        st, corpo, _ = pedir("/api/entrar", {"email": "operador-teste@local.test", "senha": "senha-de-teste-123"})
+        checar(st == 200 and corpo.get("ok") is True, f"o login normal passa a funcionar com essa conta (HTTP {st})")
+        st, corpo, _ = pedir("/api/primeiro-acesso", {"nome": "Outro", "email": "outro@local.test", "senha": "senha-de-teste-123"})
+        checar(st == 403, f"depois do primeiro usuario a rota fecha (HTTP {st}: {corpo.get('erro')})")
+        st, corpo, _ = pedir("/api/primeiro-acesso")
+        checar(st == 200 and corpo.get("precisa") is False, "instalacao com usuario responde precisa=false")
+    finally:
+        proc15.terminate()
+        try:
+            proc15.wait(timeout=10)
+        except Exception:
+            proc15.kill()
+        shutil.rmtree(casa.parent, ignore_errors=True)
+        shutil.rmtree(db15.parent, ignore_errors=True)
 
 print()
 if falhas:

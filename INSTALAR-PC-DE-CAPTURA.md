@@ -1,10 +1,10 @@
-# Instalar o PC de captura (câmeras ligadas direto na máquina) — 0.2.0, plug & play
+# Instalar o PC de captura (câmeras ligadas direto na máquina) — 0.2.1, plug & play
 
 O PC de captura é a máquina onde as câmeras estão plugadas (USB/HDMI-captura). Ele **captura e
 comprime local** e o vídeo comprimido sobe para o **lado terra** (a VPS da LECSOR ou outro computador
 da rede), que descomprime e mostra.
 
-A partir da **0.2.0** o instalador do PC de captura é **plug & play**: ele leva dentro do pacote o
+A partir da **0.2.0** (corrigido na **0.2.1**) o instalador do PC de captura é **plug & play**: ele leva dentro do pacote o
 servidor (API + `ground/`), o **ffmpeg**, o **mediamtx** e o **Python portátil**, e **já nasce
 configurado** para esta máquina. Não se instala Python, não se copia repositório e não se edita JSON.
 
@@ -12,7 +12,7 @@ configurado** para esta máquina. Não se instala Python, não se copia reposit�
 
 | item | de onde vem |
 |---|---|
-| instalador **`LECSOR-Captura-0.2.0-x64.exe`** | página de *Releases* do repositório |
+| instalador **`LECSOR-Captura-0.2.1-x64.exe`** | página de *Releases* do repositório |
 | as **câmeras** | USB, ligadas direto na máquina |
 
 Nada mais: Python, ffmpeg, mediamtx e o código do servidor viajam no instalador
@@ -20,26 +20,36 @@ Nada mais: Python, ffmpeg, mediamtx e o código do servidor viajam no instalador
 
 ## 2. Instalar (sem configuração)
 
-1. Rode o `LECSOR-Captura-0.2.0-x64.exe` (usuário comum basta; a instalação é por usuário).
+1. Rode o `LECSOR-Captura-0.2.1-x64.exe` (usuário comum basta; a instalação é por usuário).
 2. Abra o app. Ele já vem com:
    - `base = http://127.0.0.1:8765` → a tela desta máquina (é aqui que estão as câmeras);
    - servidor local **ligado**, subindo sozinho a cada abertura;
    - repasse para o lado terra (`destinoSrt = 187.127.60.250:8890`);
    - *abrir junto com o Windows* marcado.
-3. Confira no menu **Servidor local → Ver estado do servidor**. O esperado:
+3. **Primeiro acesso**: numa instalação nova **não existe usuário nenhum** no banco local, então a
+   tela abre no formulário **Primeiro acesso** — preencha *nome de quem opera*, *e-mail* e uma
+   *senha* (8 caracteres ou mais) e clique em **Criar e entrar**. Essa conta é o administrador
+   **desta máquina** e passa a valer também para o login normal (o banco é local; não depende de
+   internet). Sem isso não havia como entrar: era o beco sem saída da instalação anterior.
+4. Confira no menu **Servidor local → Ver estado do servidor**. O esperado:
 
 ```
-servidor local no ar (2 processos)
+servidor local no ar (2 de 2 processos)
 esta maquina: <nome-do-pc>
 endereco em uso (base): http://127.0.0.1:8765
 servidor: C:\...\resources\servidor (embutido no aplicativo)
 python: C:\...\resources\servidor\python\python.exe
-mediamtx: pid 12345
-api: pid 12346
-servidor: analise local: desligada (o Python em uso não tem numpy/onnxruntime) — captura e repasse seguem normais
+mediamtx: pid 12345 (vivo)
+api: pid 12346 (vivo)
 ffmpeg: embutido no app — C:\...\resources\ffmpeg\ffmpeg.exe (ffmpeg version ...)
 repasse para o lado terra: 187.127.60.250:8890
 ```
+
+No topo da caixa vem a sondagem das portas (processo vivo **não** é a mesma coisa que servidor no
+ar): `API local (127.0.0.1:8765): respondeu HTTP 200` e `mediamtx (127.0.0.1:9997): respondeu HTTP 200`.
+
+Se algum processo morrer, a linha dele diz `MORREU (codigo N)` seguida da última linha do log — a
+versão anterior dizia "no ar (2 processos)" mesmo com o mediamtx morto por porta ocupada.
 
 São **dois** processos de propósito: `mediamtx` (recebe o SRT local e publica) e a `api` da máquina. A
 **análise local** (detector de objetos) é opcional — ela só sobe se o Python em uso tiver
@@ -72,7 +82,7 @@ No computador/VPS que descomprime:
 curl -s http://127.0.0.1:9997/v3/paths/list   # os fluxos desta máquina devem aparecer aqui
 ```
 
-No app do lado terra (instalador **`LECSOR-Terra-0.2.0-x64.exe`**, `base` = `http://187.127.60.250:8085`),
+No app do lado terra (instalador **`LECSOR-Terra-0.2.1-x64.exe`**, `base` = `http://187.127.60.250:8085`),
 a câmera aparece **no ar** e a tela do cliente mostra a janela.
 
 ## 5. Se algo não subir
@@ -81,7 +91,10 @@ a câmera aparece **no ar** e a tela do cliente mostra a janela.
 |---|---|
 | caixa "Servidor local NAO subiu" | a mensagem diz o que falta (ex.: `faltando no servidor: tools/mediamtx/mediamtx.exe`) — normalmente instalador incompleto: reinstale o `LECSOR-Captura` |
 | nenhuma câmera na lista | veja a lista de dispositivos: `curl -s http://127.0.0.1:8765/api/dispositivos`; se `video` vier vazio com motivo de driver/USB, é o Windows que não está vendo a câmera (Gerenciador de Dispositivos / porta USB) |
-| a lista vem do outro lado | o `base` do app foi trocado: menu **Ajuda → Endereço do lado terra...**; o PC de captura tem de apontar para `http://127.0.0.1:8765` |
+| a lista vem do outro lado | o `base` do app foi trocado: menu **Ajuda → Endereço do lado terra em uso...**; o PC de captura tem de apontar para `http://127.0.0.1:8765` (ou use **Servidor local → Papel desta instalacao → Usar como PC de captura**) |
+| a tela não lista câmera nenhuma | menu **Servidor local → Testar câmeras desta máquina**: consulta sempre a máquina do app (loopback) e mostra a lista, o ffmpeg e o motivo — independente do endereço em uso |
+| não tenho login / esqueci a senha | instalação nova: tela **Primeiro acesso**; depois disso o admin cria/reseta usuários em **Usuários** (a rota de primeiro acesso só vale enquanto não existir usuário e só na própria máquina) |
+| clico em **Atualizar** e "nada acontece" | o botão agora mostra **atualizando…** e **sem mudanças desde HH:MM:SS** quando os dados são os mesmos |
 | o fluxo aparece aqui mas não no lado terra | `destinoSrt` vazio/errado ou sem saída de rede: veja `ground\envios\log\repasse-<fluxo>.log` |
 | API não sobe | `desktop-logs\api-erro.log` (dentro de `resources\servidor\`) |
 | aparece `analise local: desligada` | é o esperado no pacote: sem `numpy`/`onnxruntime` no Python portátil o detector não roda; captura e repasse não dependem dele |
@@ -97,7 +110,19 @@ No clone do repositório o app usa o papel `bancada` e respeita o `servidorLocal
 `%APPDATA%\LECSOR Pipeline de Video\config.json` quando a pasta existe — o servidor embutido no
 instalador continua valendo como padrão. Nada disso é necessário na máquina do cliente.
 
-## 7. Regra que não muda
+## 7. Trocar o papel desta máquina (sem reinstalar)
+
+No menu **Servidor local → Papel desta instalacao**:
+
+- **Usar como PC de captura (esta máquina)**: aponta o app para `http://127.0.0.1:8765`, liga o
+  servidor local e reabre as telas;
+- **Usar como lado terra (servidor na rede)**: pergunta o endereço, aponta o app para ele, desliga o
+  servidor local e zera o repasse.
+
+Os itens **Destino do repasse (lado terra)...** e **Endereço do lado terra em uso...** pedem o valor
+numa janelinha e gravam no config — ninguém precisa editar JSON.
+
+## 8. Regra que não muda
 
 Credencial de câmera/DVR **nunca** entra no app, no repositório ou no navegador; o navegador do
 cliente nunca recebe endereço interno. Câmera por IP só entra pela VPN/por dentro da operação.

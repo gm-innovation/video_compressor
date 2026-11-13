@@ -3,6 +3,7 @@
 // nem chave de API — ele so abre as rotas servidas pela API, igual ao navegador faria.
 const { app, BrowserWindow, Menu, shell, ipcMain, dialog } = require('electron');
 const fs = require('fs');
+const http = require('http');
 const path = require('path');
 
 const RAIZ = __dirname;
@@ -38,7 +39,9 @@ function lerConfig() {
   // Config de OUTRO papel (ou das versões antigas, que não gravavam `papel`): endereço e servidor
   // local não valem para esta instalação — voltam para os de fábrica deste papel. Foi isso que fez
   // uma instalação nova de PC de captura abrir apontada para o lado terra.
-  const herdado = !!doUsuario && doUsuario.papel !== PAPEL;
+  // `ajuste_manual` = o operador mudou o papel/endereco pela tela: a escolha dele manda, e o
+  // papel do instalador deixa de resetar base/servidor local no proximo boot.
+  const herdado = !!doUsuario && doUsuario.papel !== PAPEL && !doUsuario.ajuste_manual;
   if (herdado) {
     delete doUsuario.base; delete doUsuario.destinoSrt; delete doUsuario.servidorLocal;
   }
@@ -56,6 +59,78 @@ function gravarConfig(c) {
   fs.mkdirSync(path.dirname(alvo), { recursive: true });
   fs.writeFileSync(alvo, JSON.stringify(c, null, 2) + '\n');
 }
+// --- entrada de texto (o menu do Electron nao tem campo): janela pequena que devolve o valor
+// pelo titulo da pagina (sem Node na interface, sem IPC novo, sem credencial nenhuma).
+function pedirTexto(titulo, valor, dica) {
+  return new Promise((resolve) => {
+    const j = new BrowserWindow({ width: 580, height: 215, resizable: false, minimizable: false, maximizable: false,
+      title: titulo, backgroundColor: '#0b1220', alwaysOnTop: true, skipTaskbar: true,
+      webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true } });
+    const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><style>
+body{margin:0;padding:16px 18px;background:#0b1220;color:#e6edf7;font:14px/1.5 "Segoe UI",system-ui,sans-serif}
+h1{font-size:15px;margin:0 0 6px}p{margin:0 0 10px;color:#9aa7bd;font-size:12px}
+input{width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #24334d;border-radius:8px;background:#111b2e;color:#e6edf7;font:14px monospace}
+.d{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+button{padding:7px 14px;border-radius:8px;border:1px solid #24334d;background:#16213a;color:#e6edf7;font:14px inherit;cursor:pointer}
+button.principal{background:#1d4ed8;border-color:#1d4ed8}</style></head><body>
+<h1>${titulo}</h1><p>${dica || ''}</p>
+<input id="v" value="${String(valor == null ? '' : valor).replace(/"/g, '&quot;')}">
+<div class="d"><button id="c">Cancelar</button><button id="ok" class="principal">Salvar</button></div>
+<script>
+  document.getElementById('v').focus();
+  const fim = (v) => { document.title = 'LECSOR_RESPOSTA:' + btoa(unescape(encodeURIComponent(v === null ? '\\u0000' : v))); };
+  document.getElementById('ok').onclick = () => fim(document.getElementById('v').value.trim());
+  document.getElementById('c').onclick = () => fim(null);
+  document.getElementById('v').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') fim(document.getElementById('v').value.trim());
+    if (e.key === 'Escape') fim(null);
+  });
+</script></body></html>`;
+    let pronto = false;
+    const fechar = (v) => { if (pronto) return; pronto = true; resolve(v); try { j.close(); } catch (e) {} };
+    j.on('page-title-updated', (e, t) => {
+      if (!String(t).startsWith('LECSOR_RESPOSTA:')) return;
+      let v = '';
+      try { v = decodeURIComponent(escape(Buffer.from(String(t).slice(16), 'base64').toString('binary'))); } catch (erro) {}
+      fechar(v === '\u0000' ? null : v);
+    });
+    j.on('closed', () => fechar(null));
+    j.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+  });
+}
+
+// Le um JSON de um endereco LOCAL (loopback) do proprio aplicativo — sem base remota, sem credencial.
+function buscarJson(url, ms = 6000) {
+  return new Promise((resolve) => {
+    const req = http.get(url, (r) => {
+      let corpo = '';
+      r.setEncoding('utf8');
+      r.on('data', (d) => { corpo += d; });
+      r.on('end', () => { let json = null; try { json = JSON.parse(corpo); } catch (e) {} resolve({ status: r.statusCode, json, corpo }); });
+    });
+    req.on('error', (e) => resolve({ status: 0, json: null, corpo: '', erro: e.message }));
+    req.setTimeout(ms, () => { req.destroy(); resolve({ status: 0, json: null, corpo: '', erro: 'sem resposta em ' + ms + ' ms' }); });
+  });
+}
+
+function recarregarTelas() {
+  const abertas = Array.from(janelas.keys());
+  for (const [, j] of janelas) { try { j.close(); } catch (e) {} }
+  janelas.clear();
+  for (const n of (abertas.length ? abertas : config.abrirAoIniciar)) abrir(n);
+}
+
+/// Subiu de verdade? Espera os processos assentarem e SONDA as portas: contar processo vivo nao
+// basta — com a porta ocupada o mediamtx morre logo depois e a caixa dizia "no ar" enquanto nada
+// servia (foi o que o dono viu no PC do cliente).
+async function caixaServidor(motivo) {
+  await new Promise((r) => setTimeout(r, 2500));
+  const s = await servidor.sondagem(config);
+  dialog.showMessageBox({ message: servidor.estado(),
+    detail: (motivo ? motivo + '\n\n' : '') + 'checagem feita ' + new Date().toLocaleTimeString('pt-BR') +
+      ', logo apos subir o servidor:\n' + s.linhas.join('\n') + '\n\n' + servidor.detalhe(config) });
+}
+
 const config = lerConfig();
 if (SUPERFICIE) config.abrirAoIniciar = [SUPERFICIE];
 
@@ -140,8 +215,30 @@ function menu() {
     { label: 'Servidor local', submenu: [
       { label: 'Subir servidor nesta maquina (API, mediamtx, agente)', click: () => {
           const r = servidor.subir(config);
-          if (r.erro) dialog.showErrorBox('Servidor local NAO subiu', r.erro);
-          else dialog.showMessageBox({ message: servidor.estado(), detail: servidor.detalhe(config) });
+          if (r.erro) return dialog.showErrorBox('Servidor local NAO subiu', r.erro);
+          caixaServidor('Servidor disparado agora; as telas carregam em alguns segundos.');
+        } },
+      { label: 'Testar câmeras desta maquina', click: async () => {
+          // Olha SEMPRE a maquina do aplicativo (loopback), mesmo com o endereco apontado para o
+          // lado terra: era o que faltava para saber se o problema e' camera, ffmpeg ou endereco.
+          const porta = (config.servidorLocal || {}).portaApi || 8765;
+          const r = await buscarJson(`http://127.0.0.1:${porta}/api/dispositivos`);
+          if (r.status !== 200) {
+            return dialog.showMessageBox({ message: 'Nao consegui falar com o servidor local desta maquina',
+              detail: `Endereco tentado: http://127.0.0.1:${porta}/api/dispositivos\n` +
+                (r.erro ? 'Motivo: ' + r.erro : 'Resposta: HTTP ' + r.status) +
+                '\n\nSuba o servidor local (menu Servidor local \u2192 Subir servidor nesta maquina) e tente de novo.' });
+          }
+          const d = r.json || {};
+          const cams = Array.isArray(d.video) ? d.video : [];
+          const ff = (d.ffmpeg || {}).ffmpeg || {};
+          const linhas = [`maquina que respondeu: ${d.maquina || '(nao informado)'}`,
+            `c\u00e2meras nesta maquina (${cams.length}): ${cams.length ? cams.join(' | ') : '(nenhuma)'}`,
+            `ffmpeg: ${ff.origem || '(nao informado)'}${ff.caminho ? ' \u2014 ' + ff.caminho : ''}`];
+          if (d.motivo) linhas.push('motivo: ' + d.motivo);
+          if (d.sintetica) linhas.push('existe tambem uma fonte sintetica de teste (testsrc2)');
+          linhas.push('', 'esta maquina: ' + require('os').hostname());
+          dialog.showMessageBox({ message: cams.length ? 'C\u00e2meras encontradas nesta maquina' : 'Nenhuma c\u00e2mera encontrada nesta maquina', detail: linhas.join('\n') });
         } },
       { label: 'Parar servidor local', click: () => {
           servidor.parar(config);
@@ -153,17 +250,64 @@ function menu() {
           config.abrirComWindows = !!item.checked; gravarConfig(config);
           try { app.setLoginItemSettings({ openAtLogin: !!item.checked }); } catch (e) {}
         } },
-      { label: 'Ver estado do servidor', click: () => dialog.showMessageBox({ message: servidor.estado(), detail: servidor.detalhe(config) }) },
-      { label: 'Destino do repasse (lado terra)...', click: () => dialog.showMessageBox({
-          message: 'Repasse dos fluxos desta maquina',
-          detail: (config.destinoSrt ? 'Subindo para: ' + config.destinoSrt : 'Nada e repassado: esta maquina serve so a propria tela.')
-            + '\n\nPara trocar, edite "destinoSrt" no config.json ao lado do aplicativo (ex.: 187.127.60.250:8890) e suba o servidor local de novo.' }) }
+      { label: 'Ver estado do servidor', click: async () => {
+          // sondagem de verdade: porta respondendo e' diferente de processo vivo
+          const s = await servidor.sondagem(config);
+          dialog.showMessageBox({ message: servidor.estado(),
+            detail: s.linhas.join('\n') + '\n\n' + servidor.detalhe(config) });
+        } },
+      { label: 'Destino do repasse (lado terra)...', click: async () => {
+          const valor = await pedirTexto('Destino do repasse (lado terra)', config.destinoSrt || '',
+            'host:porta do lado terra que recebe os fluxos (ex.: 187.127.60.250:8890). Vazio = nada sobe desta maquina.');
+          if (valor === null) return;
+          if (valor && !/^\S+:\d{2,5}$/.test(valor)) return dialog.showErrorBox('Endereco invalido', 'Informe host:porta (ex.: 187.127.60.250:8890) ou deixe vazio.');
+          config.destinoSrt = valor; gravarConfig(config);
+          const rodando = servidor.vivos().length > 0;
+          if (rodando) { servidor.parar(); servidor.subir(config); }
+          dialog.showMessageBox({ message: 'Destino do repasse salvo',
+            detail: (valor || '(nada \u2014 so esta maquina)') + (rodando ? '\n\nO servidor local foi reiniciado para o novo destino valer.' : '\n\nSuba o servidor local para o repasse valer.') });
+        } },
+      { label: 'Papel desta instalacao', submenu: [
+        { label: 'Usar como PC de captura (esta maquina)', click: () => {
+            // Preset: sem reinstalar e sem editar JSON (era o que faltava no PC de captura).
+            config.ajuste_manual = true;
+            config.base = 'http://127.0.0.1:8765';
+            config.servidorLocal = Object.assign({}, config.servidorLocal, { ligado: true, portaApi: 8765 });
+            if (!config.servidorLocal.repo) config.servidorLocal.repo = servidor.repoDe(config);
+            gravarConfig(config);
+            // Sobe o servidor ANTES de reabrir as telas: apontadas para o loopback, elas precisam da
+            // API respondendo (senao abrem na pagina de erro "o lado terra nao respondeu").
+            const r = servidor.subir(config);
+            if (r.erro) return dialog.showErrorBox('Servidor local NAO subiu', r.erro);
+            setTimeout(recarregarTelas, 1800);
+            caixaServidor('Esta instalacao agora e PC de captura: telas em ' + config.base + '.');
+          } },
+        { label: 'Usar como lado terra (servidor na rede)', click: async () => {
+            const valor = await pedirTexto('Endereco do lado terra', String(config.base || '').replace(/^https?:\/\//, ''),
+              'endereco do servidor que recebe e mostra (ex.: 187.127.60.250:8085 ou 192.168.0.10:8085).');
+            if (valor === null) return;
+            if (!/^\S+:\d{2,5}$/.test(valor)) return dialog.showErrorBox('Endereco invalido', 'Informe host:porta (ex.: 187.127.60.250:8085).');
+            config.ajuste_manual = true;
+            config.base = 'http://' + valor;
+            config.destinoSrt = '';
+            config.servidorLocal = Object.assign({}, config.servidorLocal, { ligado: false });
+            gravarConfig(config); recarregarTelas();
+            dialog.showMessageBox({ message: 'Instalacao apontada para o lado terra',
+              detail: config.base + '\n\nEsta maquina nao sobe servidor local nem repassa fluxo.' });
+          } }
+      ] }
     ] },
     { label: 'Ajuda', submenu: [
-      { label: 'Endereco do lado terra...', click: () => dialog.showMessageBox({
-          message: 'Lado terra em uso',
-          detail: config.base + '\n\nRepasse desta maquina: ' + (config.destinoSrt || '(nada — so esta maquina)')
-            + '\n\nPara trocar, edite config.json ao lado do aplicativo.' }) },
+      { label: 'Endereco do lado terra em uso...', click: async () => {
+          const valor = await pedirTexto('Endereco do lado terra', String(config.base || '').replace(/^https?:\/\//, ''),
+            'Hoje: ' + config.base + ' \u00b7 repasse desta maquina: ' + (config.destinoSrt || '(nada \u2014 so esta maquina)') + '\nInforme host:porta do servidor que serve as telas (ex.: 187.127.60.250:8085).');
+          if (valor === null) return;
+          if (!/^\S+:\d{2,5}$/.test(valor)) return dialog.showErrorBox('Endereco invalido', 'Informe host:porta (ex.: 187.127.60.250:8085).');
+          config.ajuste_manual = true;
+          config.base = valor.startsWith('http') ? valor : 'http://' + valor;
+          gravarConfig(config); recarregarTelas();
+          dialog.showMessageBox({ message: 'Endereco salvo', detail: 'As telas foram reabertas em ' + config.base });
+        } },
       { label: 'Sobre', click: () => dialog.showMessageBox({ message: 'LECSOR Pipeline de Video', detail: (SUPERFICIE ? 'Superficie: ' + SUPERFICIE + '. ' : 'Superficies: cliente, admin e bancada. ') + 'Interface sem acesso a credencial de camera e sem chave de API.' }) }
     ] }
   );

@@ -2,6 +2,7 @@
 // partir do código QUE VAI NO PACOTE (`resources/servidor`). Fora dos arquivos do app não roda nada.
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
+const http = require('http');
 const path = require('path');
 
 let filhos = [];
@@ -167,8 +168,49 @@ function parar() {
   for (const { p } of filhos) { try { p.kill(); } catch (e) {} }
   filhos = [];
 }
+// Vivo = processo disparado que ainda nao saiu. Contar processo "subido" nao basta: com a porta
+// ocupada o mediamtx morre logo depois e a tela dizia "no ar" enquanto nada servia.
+function vivos() { return filhos.filter((f) => f.p && f.p.exitCode === null && !f.p.killed); }
 function estado() {
-  return filhos.length ? `servidor local no ar (${filhos.length} processos)` : 'servidor local parado';
+  if (!filhos.length) return 'servidor local parado';
+  const v = vivos();
+  if (!v.length) return 'servidor local PARADO (os processos morreram — veja desktop-logs/*-erro.log)';
+  return `servidor local no ar (${v.length} de ${filhos.length} processos)`;
+}
+// Sonda as portas do servidor local: contar processo vivo nao basta (no Windows duas instancias
+// conseguem subir na mesma porta e uma serve nada). Isto diz o que REALMENTE responde.
+function sondar(url, ms = 1500) {
+  return new Promise((resolve) => {
+    const req = http.get(url, (r) => { r.resume(); resolve(r.statusCode || 0); });
+    req.on('error', () => resolve(0));
+    req.setTimeout(ms, () => { req.destroy(); resolve(0); });
+  });
+}
+async function sondagem(config) {
+  const c = config || configAtual || {};
+  const porta = (c.servidorLocal || {}).portaApi || 8765;
+  const api = await sondar(`http://127.0.0.1:${porta}/api/eu`);
+  const mtx = await sondar('http://127.0.0.1:9997/v3/paths/list');
+  const linhas = [
+    `API local (127.0.0.1:${porta}): ${api ? 'respondeu HTTP ' + api : 'NAO respondeu'}`,
+    `mediamtx (127.0.0.1:9997): ${mtx ? 'respondeu HTTP ' + mtx : 'NAO respondeu'}`,
+  ];
+  const mortos = filhos.filter((f) => !(f.p && f.p.exitCode === null && !f.p.killed));
+  if ((api || mtx) && mortos.length) {
+    linhas.push('atencao: algo ja responde nessas portas enquanto ' + mortos.map((f) => f.nome).join('/') +
+      ' morreu — provavelmente OUTRA instancia deste servidor ja esta rodando nesta maquina.');
+  }
+  if (!api && !mtx && mortos.length) linhas.push('o servidor NAO subiu de verdade: veja o motivo acima.');
+  return { api, mtx, linhas };
+}
+
+// Ultima linha de erro do processo — para o estado dizer O MOTIVO, nao so que morreu.
+function ultimaLinhaErro(nome, repo) {
+  try {
+    const linhas = fs.readFileSync(path.join(repo, 'desktop-logs', nome + '-erro.log'), 'utf8')
+      .split('\n').filter((l) => l.trim());
+    return linhas.length ? linhas[linhas.length - 1].slice(0, 200) : '';
+  } catch (e) { return ''; }
 }
 function detalhe(config) {
   const c = config || configAtual || {};
@@ -181,10 +223,15 @@ function detalhe(config) {
     `servidor: ${repo ? repo + (repo === servidorEmbutido() ? ' (embutido no aplicativo)' : ' (do config.json)') : 'NAO ENCONTRADO'}`,
     `python: ${python}`
   ];
-  for (const f of filhos) linhas.push(`${f.nome}: pid ${f.p.pid}`);
+  for (const f of filhos) {
+    const vivo = f.p && f.p.exitCode === null && !f.p.killed;
+    if (vivo) { linhas.push(`${f.nome}: pid ${f.p.pid} (vivo)`); continue; }
+    const motivo = ultimaLinhaErro(f.nome, repo) || 'sem linha no log de erro';
+    linhas.push(`${f.nome}: MORREU (codigo ${f.p && f.p.exitCode}) — ${motivo}`);
+  }
   linhas.push(ffmpegInfo());
   linhas.push(`repasse para o lado terra: ${destino || '(nada — so esta maquina)'}`);
   return linhas.join('\n');
 }
 
-module.exports = { subir, parar, estado, detalhe, amb, pythonDe, ffmpegDe, repoDe, servidorEmbutido, raizRecursos };
+module.exports = { subir, parar, estado, detalhe, vivos, sondagem, sondar, amb, pythonDe, ffmpegDe, repoDe, servidorEmbutido, raizRecursos };
