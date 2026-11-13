@@ -417,6 +417,14 @@ checar(r19.returncode == 0, "test-config-endereco.py passou" if r19.returncode =
        else f"test-config-endereco.py FALHOU: {(r19.stdout or '')[-400:]}")
 
 print()
+print("== 20. o envio AO VIVO publica o cadastro da camera no lado terra ==")
+r20 = subprocess.run([sys.executable, str(RAIZ / "tests" / "test-envio-ao-vivo-publica.py")],
+                     capture_output=True, text=True, encoding="utf-8", errors="replace")
+checar(r20.returncode == 0, "test-envio-ao-vivo-publica.py passou" if r20.returncode == 0
+       else f"test-envio-ao-vivo-publica.py FALHOU: {(r20.stdout or '')[-400:]}")
+
+
+print()
 if falhas:
     print(f"FALHOU — {len(falhas)} verificação(ões):")
     for f in falhas:

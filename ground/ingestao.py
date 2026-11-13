@@ -264,6 +264,22 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
                          ON CONFLICT(id) DO UPDATE SET rotulo=excluded.rotulo, ativo=1, local='envio'""",
                       (camera_id, embarcacao_id, rotulo or slug, fluxo_id, "envio"))
     threading.Thread(target=_bombear, args=(ident, proc, log), daemon=True).start()
+    # O envio ao vivo tambem precisa EXISTIR para o cliente. Era o furo do "o fluxo chega no lado
+    # terra e o app do cliente nao mostra a camera": quem sobe o fluxo por esta tela (envio ao vivo)
+    # nunca avisava o lado terra — o anuncio vivia so' no caminho do repasse. Aqui o cadastro desta
+    # camera sobe junto com o envio (id/rotulo/fluxo/ativo, nunca endereco nem credencial).
+    if registrar_camera:
+        try:
+            import repasse
+            destino = f"{srt_host}:{srt_port}" if srt_host else ""
+            r = repasse.publicar_cadastro({"id": camera_id, "fluxo_id": fluxo_id, "rotulo": rotulo or slug,
+                                           "embarcacao_id": embarcacao_id, "ativo": 1}, destino=destino)
+            recado = ("cadastro publicado no lado terra" if r.get("ok")
+                      else f"o lado terra ainda NAO tem esta camera ({r.get('motivo') or r.get('erro')})")
+        except Exception as e:
+            recado = f"nao publiquei o cadastro no lado terra ({type(e).__name__}: {e})"
+        print(f"[envios] {fluxo_id}: {recado}", flush=True)
+        aviso = (aviso + " · " if aviso else "") + recado
     return {"id": ident, "fluxo_id": fluxo_id, "camera_id": camera_id, "pid": proc.pid,
             "comando": " ".join(cmd), "entrada": s, "alvo": bitrate, "aviso": aviso, "log": str(log),
             "pagina": origem_pagina, "fps_alvo": fps, "arquivo_saida": arquivo_saida}

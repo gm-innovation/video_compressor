@@ -141,7 +141,7 @@ def publicar_cadastro(camera: dict, destino: str | None = None) -> dict:
         with urllib.request.urlopen(req, timeout=10) as r:
             j = json.loads(r.read() or b"{}")
         _log(fluxo, f"cadastro publicado no lado terra: {j.get('id')} em {j.get('embarcacao_id')}"
-                    + ("" if j.get("ativo") else " (desativada)"))
+                    + ("" if j.get("ativo", True) else " (desativada)"))
         return {"ok": bool(j.get("ok")), "resposta": j}
     except Exception as e:
         _log(fluxo, f"nao consegui publicar o cadastro no lado terra ({type(e).__name__}: {e})")
