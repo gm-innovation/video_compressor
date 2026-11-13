@@ -64,7 +64,9 @@ def entrar(email: str, senha: str, tempo: float = TEMPO_PADRAO) -> dict | None:
     except Exception:
         return None
     u = d.get("user") or {}
-    return {"ok": True, "id": u.get("id"), "email": (u.get("email") or email).lower()}
+    meta = u.get("user_metadata") or {}
+    return {"ok": True, "id": u.get("id"), "email": (u.get("email") or email).lower(),
+            "nome": str(meta.get("nome") or "").strip(), "papel": str(meta.get("papel") or "").strip()}
 
 
 def id_por_email(email: str, tempo: float = TEMPO_PADRAO) -> str | None:

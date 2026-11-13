@@ -49,3 +49,7 @@ supabase/.temp/
 *.env
 # clipes das medicoes de compressao: reproduziveis pelos scripts ground/medir-*.py, pesados demais para o repo
 ground/medicoes-hd/
+
+# ambiente do pacote (Supabase/token de ingestao/embarcacao do PC de captura): segredo, nunca no git
+ground/ambiente.json
+desktop/ambiente.json

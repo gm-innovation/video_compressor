@@ -16,10 +16,12 @@ Regras que valem sempre:
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -71,6 +73,45 @@ def _comando(fluxo: str, destino: str, origem: str) -> list[str]:
     ]
 
 
+def _api_lado_terra(destino: str) -> str:
+    """Base HTTP do lado terra: `LECSOR_LADO_TERRA_API` ou o host do SRT na porta 8085."""
+    base = (os.environ.get("LECSOR_LADO_TERRA_API") or "").strip().rstrip("/")
+    if base:
+        return base
+    host = (destino or "").split(":")[0].strip()
+    return f"http://{host}:{os.environ.get('LECSOR_PORTA_API', '8085')}" if host else ""
+
+
+def anunciar(fluxo: str, destino: str, rotulo: str | None = None) -> dict:
+    """Avisa o lado terra que este fluxo entrou no ar, para ele aparecer na tela do cliente.
+
+    Sem isto o fluxo chega no mediamtx do lado terra mas nao existe linha em `cameras` la' e
+    ninguem ve' nada (foi o "cliente nao recebe o video"). O anuncio e' autenticado pelo token de
+    ingestao (nunca por sessao de navegador) e so' cria/atualiza o cadastro da camera.
+    """
+    base = _api_lado_terra(destino)
+    token = (os.environ.get("LECSOR_TOKEN_INGESTAO") or "").strip()
+    if not base or not token:
+        _log(fluxo, "sem lado terra/token de ingestao — nao anunciei o fluxo (ninguem vera' na tela)")
+        return {"ok": False, "motivo": "sem lado terra ou sem LECSOR_TOKEN_INGESTAO"}
+    corpo = {"fluxo_id": fluxo, "rotulo": (rotulo or os.environ.get("LECSOR_ROTULO") or fluxo)}
+    emb = (os.environ.get("LECSOR_EMBARCACAO") or "").strip()
+    if emb:
+        corpo["embarcacao_id"] = emb
+    dados = json.dumps(corpo).encode("utf-8")
+    req = urllib.request.Request(f"{base}/api/cameras/anuncio", data=dados,
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": f"Bearer {token}"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            j = json.loads(r.read() or b"{}")
+        _log(fluxo, f"anunciei ao lado terra: {j.get('id')} em {j.get('embarcacao_id')}")
+        return {"ok": bool(j.get("ok")), "resposta": j}
+    except Exception as e:
+        _log(fluxo, f"nao consegui anunciar ao lado terra ({type(e).__name__}: {e}) — o fluxo chega, mas nao aparece na tela")
+        return {"ok": False, "erro": str(e)}
+
+
 def repassar(fluxo: str, destino: str, origem: str) -> int:
     if not destino:
         _log(fluxo, "sem destino (LECSOR_DESTINO_SRT) — nada a repassar")
@@ -78,6 +119,7 @@ def repassar(fluxo: str, destino: str, origem: str) -> int:
     if _ja_rodando(fluxo):
         _log(fluxo, "ja' existe repasse vivo deste fluxo — saindo sem duplicar")
         return 0
+    anunciar(fluxo, destino)
     _log(fluxo, f"repassando {origem}/{fluxo} -> srt://{destino} (-c copy)")
     while True:
         r = subprocess.run(_comando(fluxo, destino, origem), capture_output=True, text=True)

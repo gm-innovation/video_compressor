@@ -43,10 +43,25 @@ function ffmpegDe() {
   return fs.existsSync(exe) ? exe : '';
 }
 
+// Ambiente gravado no pacote (perfil do papel): Supabase, token de ingestao e embarcacao. Fica
+// FORA do git e DENTRO do instalador — e' o que faz o PC nascer configurado (plug & play), sem
+// ninguem digitar chave nem endereco. Nenhum valor de segredo entra em log.
+function ambienteDoPacote(repo) {
+  try {
+    const p = path.join(repo || '', 'ambiente.json');
+    if (!repo || !fs.existsSync(p)) return {};
+    const d = JSON.parse(fs.readFileSync(p, 'utf8'));
+    return (d && typeof d === 'object' && !Array.isArray(d)) ? d : {};
+  } catch (e) {
+    return {};
+  }
+}
+
 // Ambiente dos processos filhos: destino do repasse, ffmpeg e python embutidos (o mediamtx chama
 // `python ground/repasse.py`, então a pasta do python precisa estar no PATH dele também).
 function amb(env, config, python) {
-  const saida = Object.assign({}, env || {});
+  // o que veio no pacote primeiro; o ambiente de quem já está rodando por cima (bancada manda)
+  const saida = Object.assign({}, ambienteDoPacote(repoDe(config)), env || {});
   const destino = String(((config || {}).destinoSrt) || '').trim();
   if (destino) saida.LECSOR_DESTINO_SRT = destino;
   else delete saida.LECSOR_DESTINO_SRT;

@@ -890,7 +890,12 @@ function telaEnvios(t) {
       return;
     }
     const d = await r.json();
-    const cams = d.video || [];
+    // `dispositivos` traz o seletor unico (@device_pnp_...) de cada camera: e' o que permite
+    // DUAS cameras de mesmo nome existirem ao mesmo tempo (antes as duas viravam a mesma e a
+    // segunda era recusada como ja cadastrada). `video` (nomes) fica como reserva.
+    const cams = (d.dispositivos && d.dispositivos.length)
+      ? d.dispositivos.map((x) => ({ valor: x.seletor || x.video, rotulo: x.rotulo || x.video }))
+      : (d.video || []).map((v) => ({ valor: v, rotulo: v }));
     dispositivo.innerHTML = '';
     semCamera = !cams.length;
     if (semCamera) {
@@ -913,7 +918,7 @@ function telaEnvios(t) {
     }
     avisoDisp.style.display = 'none';
     for (const v of cams) {
-      const o = document.createElement('option'); o.value = v; o.textContent = v; dispositivo.appendChild(o);
+      const o = document.createElement('option'); o.value = v.valor; o.textContent = v.rotulo; dispositivo.appendChild(o);
     }
     btnComprimir.disabled = false;
     dispositivo.dataset.pronto = '1';
@@ -1026,7 +1031,7 @@ function telaEnvios(t) {
     const r = (rotulo.value || '').trim(), b = qualidade.value, qf = fps.value, aud = audio.value;
     if (modo.value === 'camera' || modo.value === 'sintetica') {
       const tipo = modo.value;
-      const nomeFonte = tipo === 'camera' ? (dispositivo.value || 'webcam do notebook') : 'teste sintético';
+      const nomeFonte = tipo === 'camera' ? ((dispositivo.options[dispositivo.selectedIndex] || {}).textContent || 'webcam do notebook') : 'teste sintético';
       dizer('ligando o envio contínuo de ' + nomeFonte + '… (sem tempo determinado: só para quando você mandar)');
       fetch('/api/ingestao/ao-vivo', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tipo: tipo, dispositivo: dispositivo.value, fps: Number(qf) || 30,

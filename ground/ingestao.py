@@ -212,6 +212,10 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
     if tipo == "camera" and not (dispositivo or DISPOSITIVO_PADRAO):
         # sem dispositivo nao existe captura: recusar na borda e' melhor que subir um dshow vazio
         return {"erro": "escolha a camera na lista (nenhum dispositivo de captura foi informado)"}
+    if tipo == "camera":
+        # guarda o seletor unico: a coluna `fonte` e' a identidade da camera (duas cameras de
+        # mesmo nome passam a ter linhas distintas e uma nao bloqueia a outra)
+        dispositivo = _normalizar_dispositivo(dispositivo)
     if tipo in ("camera", "sintetica"):
         # fonte viva: nao ha arquivo para sondar. A resolucao vem do pedido e o alvo e' fixo
         # (o numero medido passa a ser o do envio CONTINUO, lido do -progress do ffmpeg).
@@ -508,6 +512,20 @@ if __name__ == "__main__":
 DISPOSITIVO_PADRAO = os.environ.get("LECSOR_DISPOSITIVO", "").strip()
 
 
+def _normalizar_dispositivo(nome: str | None) -> str:
+    """Devolve o seletor que vai em `video=` do dshow, tirando o prefixo se vier pronto.
+
+    O NOME amigavel nao identifica a camera: duas webcams USB iguais aparecem com o mesmo nome
+    ("USB Video Device"), e o registro de "camera em uso" casava por nome — cadastrar a primeira
+    fazia a segunda ser recusada como se fosse a mesma. O "Alternative name" (@device_pnp_...) e'
+    unico por dispositivo e e' o que identifica de verdade.
+    """
+    t = (nome or "").strip()
+    if t.startswith("video="):
+        t = t[len("video="):].strip()
+    return t
+
+
 def listar_dispositivos() -> dict:
     """Webcams e microfones que o ffmpeg enxerga (dshow do Windows).
 
@@ -526,14 +544,34 @@ def listar_dispositivos() -> dict:
     except Exception as e:
         d.update(erro=str(e), motivo="nao foi possivel consultar as cameras desta maquina")
         return d
-    video, audio = [], []
+    video, audio, dispositivos = [], [], []
+    pendente = None          # (tipo, nome) aguardando o "Alternative name" da linha seguinte
     for linha in (r.stderr or "").splitlines():
-        if "Alternative name" in linha:
+        m_alt = re.search(r'Alternative name "([^"]+)"', linha)
+        if m_alt:
+            # o Alternative name (@device_pnp_...) e' UNICO por dispositivo: e' ele que separa
+            # duas webcams de mesmo nome. Antes a linha era descartada e as duas viravam uma so'.
+            if pendente and pendente[0] == "video":
+                dispositivos.append({"video": pendente[1], "seletor": m_alt.group(1)})
+            pendente = None
             continue
         m = re.search(r'"([^"]+)"\s*\((video|audio)\)', linha)
         if m:
             (video if m.group(2) == "video" else audio).append(m.group(1))
-    d.update(video=video, audio=audio, padrao=(video[0] if video else DISPOSITIVO_PADRAO))
+            pendente = (m.group(2), m.group(1))
+    # duas cameras com o mesmo nome recebem rotulo distinto na tela: "USB Video Device (1)/(2)"
+    total = {}
+    for x in dispositivos:
+        total[x["video"]] = total.get(x["video"], 0) + 1
+    visto = {}
+    for i, x in enumerate(dispositivos):
+        n = x["video"]
+        visto[n] = visto.get(n, 0) + 1
+        x["rotulo"] = n if total[n] == 1 else f"{n} ({visto[n]})"
+        x["indice"] = i
+    d.update(video=video, audio=audio, dispositivos=dispositivos,
+             padrao=(video[0] if video else DISPOSITIVO_PADRAO),
+             padrao_seletor=((dispositivos[0]["seletor"] if dispositivos else "")))
     if not video:
         d["motivo"] = ("o ffmpeg nao encontrou camera nesta maquina: confira o driver, a porta USB "
                        "e se o dispositivo aparece no Gerenciador de Dispositivos")
@@ -547,7 +585,7 @@ def _args_fonte_viva(tipo: str, dispositivo: str | None, resolucao: str, fps: in
     # (guardava o nome do dispositivo), o que zerava a entrada/compressao na tela.
     return ["-f", "dshow", "-rtbufsize", "256M", "-framerate", str(fps or 30),
             "-video_size", _resolucao_valida(resolucao, "1280x720"),
-            "-i", f'video={dispositivo or DISPOSITIVO_PADRAO}']
+            "-i", f'video={_normalizar_dispositivo(dispositivo or DISPOSITIVO_PADRAO)}']
 
 
 def _resolucao_valida(txt: str | None, padrao: str = "1280x720") -> str:
@@ -600,7 +638,11 @@ def ao_vivo(*, tipo: str = "camera", dispositivo: str | None = None, resolucao: 
         return {"erro": "fonte ao vivo invalida: use 'camera' (webcam) ou 'sintetica'"}
     if tipo == "camera" and not (dispositivo or "").strip():
         disp = listar_dispositivos()
-        dispositivo = disp.get("padrao") or DISPOSITIVO_PADRAO
+        dispositivo = disp.get("padrao_seletor") or disp.get("padrao") or DISPOSITIVO_PADRAO
+    if tipo == "camera":
+        # identidade pelo seletor unico (@device_pnp_...), nunca pelo nome amigavel: e' o que
+        # permite DUAS cameras USB iguais conviverem (a 2a deixava de ser recusada como duplicata)
+        dispositivo = _normalizar_dispositivo(dispositivo)
     nome = (rotulo or "").strip() or ("webcam do notebook" if tipo == "camera" else "teste sintetico")
     # a webcam do Windows (dshow) so abre UMA vez: dois envios da mesma camera brigam pelo dispositivo
     # e o segundo fica com quadro preto. Melhor recusar com recado claro do que pintar tela preta.
@@ -647,10 +689,12 @@ def liberar_camera(dispositivo: str | None = None, espera: float = 1.5) -> dict:
     continuou segurando a camera — o envio seguinte respondia "camera em uso" e a camera
     so voltava desligando e ligando na mao. Aqui ela volta sozinha, sem ninguem mexer no cabo.
     """
-    nome = (dispositivo or DISPOSITIVO_PADRAO).strip()
+    nome = _normalizar_dispositivo(dispositivo or DISPOSITIVO_PADRAO)
     if os.name != "nt" or not nome:
         return {"dispositivo": nome, "liberados": 0, "pids": []}
-    alvo = "*video=" + nome + "*"
+    # o seletor @device_pnp_... tem ? e # (curingas do -like): [ ] precisam de escape literal
+    literal = nome.replace("[", "[[]").replace("]", "[]]")
+    alvo = "*video=" + literal + "*"
     ps = ("Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine "
           "-and $_.CommandLine -like '" + alvo + "' } | ForEach-Object { try { Stop-Process -Id "
           "$_.ProcessId -Force -ErrorAction Stop; $_.ProcessId } catch {} }")
@@ -667,7 +711,7 @@ def liberar_camera(dispositivo: str | None = None, espera: float = 1.5) -> dict:
 
 def _camera_em_uso(dispositivo: str | None, validade_s: int = 12) -> dict | None:
     """Diz se algum envio VIVO ainda esta segurando a mesma webcam (dshow nao compartilha o dispositivo)."""
-    alvo = f"dshow:{(dispositivo or DISPOSITIVO_PADRAO).strip()}"
+    alvo = f"dshow:{_normalizar_dispositivo(dispositivo or DISPOSITIVO_PADRAO)}"
     with conexao() as c:
         for r in c.execute("""SELECT id, fluxo_id, rotulo, estado, atualizado_em, fonte, pid FROM ingestoes
                               WHERE tipo='camera' AND fonte=? ORDER BY id DESC LIMIT 10""", (alvo,)):

@@ -13,6 +13,7 @@ Uso: python ground/api.py [porta] [--semear-demo]
 from __future__ import annotations
 import datetime as dt
 import hashlib
+import hmac
 import json
 import re
 import os
@@ -579,7 +580,13 @@ class Handler(SimpleHTTPRequestHandler):
             # de captura (foi o "abriu direto, sem login e senha" do cliente).
             with conexao() as c:
                 quantos = c.execute("SELECT count(*) FROM usuarios WHERE ativo=1").fetchone()[0]
+            try:
+                import supabase_auth
+                tem_supabase = supabase_auth.configurado()
+            except Exception:
+                tem_supabase = False
             return self._json(200, {"precisa": quantos == 0, "local": self._local(),
+                                    "supabase": tem_supabase, "usuarios": quantos,
                                     "maquina": socket.gethostname()}, {"Cache-Control": "no-store"})
         if rota == "/api/eu":
             if not u:
@@ -767,6 +774,20 @@ class Handler(SimpleHTTPRequestHandler):
                     saida.append({"id": cam["id"], "rotulo": cam["rotulo"], "embarcacao_id": cam["embarcacao_id"],
                                   "local": cam["local"], "no_ar": no_ar, "motivo": motivo, "tracks": p.get("tracks", []),
                                   "leitores": len(p.get("readers", [])), "encoder": perfil_encoder(cam["fluxo_id"])})
+                # O fluxo que CHEGA no lado terra nao tinha como aparecer: so' linha cadastrada era
+                # listada, e o bordo nao escreve no banco daqui. Para operador/admin, mostra tambem
+                # o caminho VIVO do mediamtx sem cadastro — e' o caso do PC de captura que subiu e
+                # ainda nao foi cadastrado. Cliente NAO ve isto (nao ha contrato a verificar).
+                if u["papel"] in PAPEL_ADMIN and not emb:
+                    conhecidos = {x[0] for x in c.execute("SELECT fluxo_id FROM cameras").fetchall()}
+                    for nome, p in mt.items():
+                        if nome in conhecidos or not (p.get("ready") and p.get("tracks")):
+                            continue
+                        saida.append({"id": "fluxo:" + nome, "rotulo": nome + " (no ar, sem cadastro)",
+                                      "embarcacao_id": None, "local": "bordo", "no_ar": True, "motivo": "",
+                                      "tracks": p.get("tracks", []), "leitores": len(p.get("readers", [])),
+                                      "encoder": {}, "sem_cadastro": True,
+                                      "aviso": "fluxo recebido do bordo sem câmera cadastrada: cadastre no PC de captura"})
             return self._json(200, {"cameras": saida})
         if rota == "/api/decisoes":
             if not u:
@@ -849,6 +870,11 @@ class Handler(SimpleHTTPRequestHandler):
             # mas senha trocada no Supabase vale aqui — recusa de la nao cai para o local.
             import supabase_auth
             veredito = supabase_auth.entrar(email, senha)
+            if veredito and veredito.get("ok") and not alvo:
+                # O Supabase reconheceu o usuario e esta instalacao ainda nao o conhece: adota a
+                # identidade em vez de recusar. Era o "so' permite entrar com as credenciais novas"
+                # no PC instalado (banco local nasceu vazio e so' tinha o admin do primeiro acesso).
+                alvo = self._adotar_do_supabase(email, veredito, senha)
             if veredito is None:
                 entrou = bool(alvo) and conferir_senha(alvo, senha)
             else:
@@ -880,6 +906,24 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(400, {"erro": "informe um e-mail valido"})
             if len(senha) < 8:
                 return self._json(400, {"erro": "a senha precisa de 8 caracteres ou mais"})
+            # Se a credencial JA' existe no Supabase (o cliente que ja' usa o app), adota essa
+            # identidade em vez de criar mais um administrador solto na maquina — era isso que
+            # deixava o login novo "sem vinculo com o cliente que ja' estava sendo testado".
+            import supabase_auth
+            try:
+                _cfg = supabase_auth.configurado()
+            except Exception:
+                _cfg = False
+            if _cfg:
+                v = supabase_auth.entrar(email, senha)
+                if v and v.get("ok"):
+                    alvo = self._adotar_do_supabase(email, v, senha)
+                    token = criar_sessao(alvo["id"], self.headers.get("User-Agent", ""))
+                    auditar(alvo, "primeiro_acesso_supabase", email, self.client_address[0])
+                    return self._json(200, {"ok": True, "nome": alvo["nome"], "papel": alvo["papel"],
+                                            "origem": "supabase"},
+                                      {"Set-Cookie": f"sessao={token}; HttpOnly; SameSite=Lax; Path=/",
+                                       "Cache-Control": "no-store"})
             salt = secrets.token_hex(8)
             uid = "admin-" + secrets.token_hex(3)
             with conexao() as c:
@@ -1193,6 +1237,8 @@ class Handler(SimpleHTTPRequestHandler):
                           (d["id"], d["cliente_id"], d["nome"], d.get("imo", ""), d.get("estado", "em operacao")))
             auditar(u, "criar_embarcacao", d["id"], self.client_address[0])
             return self._json(201, {"id": d["id"]})
+        if rota == "/api/cameras/anuncio":
+            return self._anuncio_bordo()
         if rota == "/api/cameras":
             if not (u and u["papel"] in PAPEL_ADMIN):
                 return self._json(401, {"erro": "entre no sistema"})
@@ -1295,6 +1341,66 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception:
             host = ""
         return host.strip() or "127.0.0.1"
+
+    def _adotar_do_supabase(self, email: str, veredito: dict, senha: str):
+        """Cria a linha local para o usuario que o Supabase Auth reconheceu.
+
+        Sem isto uma instalacao nova (banco local vazio) recusava o usuario que ja' existe no
+        Supabase — era preciso criar "mais um login" em cada maquina. O papel NUNCA vem do token:
+        nasce como `cliente` (menor privilegio) ate o administrador ajustar, porque o Supabase nao
+        guarda papel nem cliente. O hash local guarda a MESMA senha informada, para o login
+        continuar funcionando na bancada sem rede.
+        """
+        papel = str(veredito.get("papel") or "").strip().lower()
+        if papel not in ("cliente", "operador", "admin"):
+            papel = "cliente"
+        nome = str(veredito.get("nome") or "").strip() or email.split("@")[0]
+        salt = secrets.token_hex(8)
+        uid = "sb-" + secrets.token_hex(6)
+        with conexao() as c:
+            c.execute("""INSERT INTO usuarios (id,email,nome,papel,cliente_id,senha_hash,salt,ativo)
+                         VALUES (?,?,?,?,NULL,?,?,1)""",
+                      (uid, email, nome, papel, hash_senha(senha, salt), salt))
+            linha = c.execute("SELECT * FROM usuarios WHERE email=? AND ativo=1", (email,)).fetchone()
+        auditar(linha, "adocao_supabase", f"{email} ({papel})", self.client_address[0])
+        return linha
+
+    def _anuncio_bordo(self) -> None:
+        """O PC de captura avisa o lado terra que um fluxo entrou no ar.
+
+        Sem isto o fluxo chega no mediamtx do lado terra e nao aparece para ninguem: `GET /api/cameras`
+        so' listava linhas da tabela `cameras`, e o bordo nao tem como escrever no banco daqui.
+        Autorizacao pelo token de ingestao (nunca por sessao de navegador): quem anuncia e' o bordo.
+        """
+        esperado = (os.environ.get("LECSOR_TOKEN_INGESTAO") or "").strip()
+        recebido = (self.headers.get("Authorization") or "").strip()
+        if recebido.lower().startswith("bearer "):
+            recebido = recebido[7:].strip()
+        if not esperado or not hmac.compare_digest(recebido, esperado):
+            return self._json(401, {"erro": "token de ingestao invalido"})
+        d = self._corpo()
+        fluxo = re.sub(r"[^a-zA-Z0-9_\-]", "-", str(d.get("fluxo_id") or "").strip())
+        if not fluxo:
+            return self._json(422, {"erro": "informe o fluxo_id"})
+        rotulo = (str(d.get("rotulo") or fluxo).strip() or fluxo)[:120]
+        emb = str(d.get("embarcacao_id") or os.environ.get("LECSOR_EMBARCACAO_BORDO") or "").strip()
+        with conexao() as c:
+            if not emb:
+                # sem embarcacao informada: a bancada propria e' o caso padrao do primeiro bordo
+                linha = (c.execute("SELECT id FROM embarcacoes WHERE id='bancada'").fetchone()
+                         or c.execute("SELECT id FROM embarcacoes ORDER BY id LIMIT 1").fetchone())
+                if not linha:
+                    return self._json(422, {"erro": "cadastre uma embarcacao no lado terra primeiro"})
+                emb = linha["id"]
+            elif not c.execute("SELECT 1 FROM embarcacoes WHERE id=?", (emb,)).fetchone():
+                return self._json(422, {"erro": "embarcacao_id inexistente"})
+            c.execute("""INSERT INTO cameras (id,embarcacao_id,rotulo,fluxo_id,local,ativo)
+                         VALUES (?,?,?,?,?,1)
+                         ON CONFLICT(id) DO UPDATE SET rotulo=excluded.rotulo,
+                             embarcacao_id=excluded.embarcacao_id, ativo=1, local='bordo'""",
+                      (fluxo, emb, rotulo, fluxo, "bordo"))
+        auditar(None, "anuncio_bordo", f"{fluxo} -> {emb}", self.client_address[0])
+        return self._json(201, {"ok": True, "id": fluxo, "embarcacao_id": emb, "rotulo": rotulo})
 
     def _whep(self, camera_id: str, usuario) -> None:
         # Sem sessao so a propria maquina do servidor ve o fluxo (painel de bancada); de fora, 401.

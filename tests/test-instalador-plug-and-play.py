@@ -371,6 +371,38 @@ else:
         shutil.rmtree(db15.parent, ignore_errors=True)
 
 print()
+print("== 16. ambiente do pacote (Supabase/token de ingestao) vai no PC de captura e so nele ==")
+marc = (RAIZ / "desktop" / "construir-instaladores.sh").read_text(encoding="utf-8")
+checar("ambiente.json" in marc and "leva_ambiente" in marc,
+       "o build decide por papel se o ambiente entra no pacote")
+checar('construir "LECSOR Captura" admin captura captura 1' in marc,
+       "o PC de captura LEVA o ambiente (nasce plug & play)")
+for papel_args in ('construir "LECSOR Terra" cliente terra terra 0',
+                   'construir "LECSOR Admin" admin terra admin 0',
+                   'construir "LECSOR Cliente" cliente terra cliente 0'):
+    checar(papel_args in marc, f"so' mostra tela -> SEM ambiente: {papel_args}")
+ser = (RAIZ / "desktop" / "servidor.js").read_text(encoding="utf-8")
+checar("ambienteDoPacote" in ser and "ambiente.json" in ser,
+       "o servidor embutido le' o ambiente do pacote para os processos filhos")
+gi = (RAIZ / ".gitignore").read_text(encoding="utf-8")
+checar("desktop/ambiente.json" in gi and "ground/ambiente.json" in gi,
+       "o ambiente (segredo) esta fora do git")
+
+print()
+print("== 17. duas cameras USB de MESMO nome coexistem ==")
+r17 = subprocess.run([sys.executable, str(RAIZ / "tests" / "test-cameras-iguais.py")],
+                     capture_output=True, text=True, encoding="utf-8", errors="replace")
+checar(r17.returncode == 0, "test-cameras-iguais.py passou" if r17.returncode == 0
+       else f"test-cameras-iguais.py FALHOU: {(r17.stdout or '')[-400:]}")
+
+print()
+print("== 18. o fluxo enviado pelo bordo aparece no lado terra ==")
+r18 = subprocess.run([sys.executable, str(RAIZ / "tests" / "test-fluxo-no-lado-terra.py")],
+                     capture_output=True, text=True, encoding="utf-8", errors="replace")
+checar(r18.returncode == 0, "test-fluxo-no-lado-terra.py passou" if r18.returncode == 0
+       else f"test-fluxo-no-lado-terra.py FALHOU: {(r18.stdout or '')[-400:]}")
+
+print()
 if falhas:
     print(f"FALHOU — {len(falhas)} verificação(ões):")
     for f in falhas:
