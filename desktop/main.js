@@ -204,7 +204,22 @@ function menu() {
       { label: 'Subir servidor nesta maquina (API, mediamtx, agente)', click: () => {
           const r = servidor.subir(config);
           if (r.erro) return dialog.showErrorBox('Servidor local NAO subiu', r.erro);
-          caixaServidor('Servidor disparado agora; as telas carregam em alguns segundos.');
+          // Ligar o servidor local tem que mudar para onde a tela aponta: é o servidor LOCAL que
+          // conhece as câmeras ligadas nesta maquina, e é ele que empacota e repassa o fluxo para o
+          // lado terra. Antes ele subia e nada mudava — a tela continuava vindo do servidor remoto
+          // (sem câmera nenhuma) e o repasse ficava "(nada - só esta maquina)".
+          const porta = (config.servidorLocal || {}).portaApi || 8765;
+          const local = `http://127.0.0.1:${porta}`;
+          const antes = config.base;
+          config.servidorLocal = Object.assign({}, config.servidorLocal, { ligado: true, portaApi: porta });
+          if (!config.servidorLocal.repo) config.servidorLocal.repo = servidor.repoDe(config);
+          if (!config.destinoSrt) config.destinoSrt = (PAPEIS[PAPEL] || {}).destinoSrt || PADRAO.destinoSrt || '';
+          config.base = local;
+          gravarConfig(config);
+          if (config.base !== antes) setTimeout(recarregarTelas, 1800);
+          caixaServidor('Servidor disparado agora; as telas carregam em alguns segundos.'
+            + (config.base !== antes ? `\n\nEsta instalacao agora fala com o servidor desta maquina (${config.base}):`
+              + ' é ele que lista as cameras ligadas aqui e repassa o fluxo para o lado terra.' : ''));
         } },
       { label: 'Testar câmeras desta maquina', click: async () => {
           // Olha SEMPRE a maquina do aplicativo (loopback), mesmo com o endereco apontado para o

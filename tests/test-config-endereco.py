@@ -98,6 +98,42 @@ d = json.loads(r.stdout.strip().splitlines()[-1])
 checar(d["destinoSrt"] == "" and d["abrir"] is False and d["ligado"] is False,
        "lado terra: sem destino SRT, sem autostart e sem servidor local (só mostra tela)")
 
+# --- servidor local LIGADO nesta máquina: o app fala com ele -------------------------------
+print()
+print("4) servidor local ligado nesta maquina")
+CASOS_LOCAL = [
+    ("terra", {"papel": "terra", "base": "http://187.127.60.250:8085",
+               "servidorLocal": {"ligado": True, "portaApi": 8765}},
+     "http://127.0.0.1:8765", "187.127.60.250:8890",
+     "O CASO DO DONO: ligou o servidor local numa instalacao apontada para o lado terra -> a tela "
+     "passa a vir do servidor local (com as cameras desta maquina) e o repasse fica configurado"),
+    ("terra", {"papel": "terra", "base": "http://187.127.60.250:8085", "destinoSrt": "",
+               "servidorLocal": {"ligado": True, "portaApi": 8765}},
+     "http://127.0.0.1:8765", "",
+     "destino apagado DE PROPOSITO continua vazio (o repasse nao volta sozinho)"),
+    ("terra", {"papel": "terra", "base": "http://187.127.60.250:8085",
+               "servidorLocal": {"ligado": False, "portaApi": 8765}},
+     "http://187.127.60.250:8085", "",
+     "servidor local desligado: lado terra continua sendo o endereco, sem inventar repasse"),
+]
+for i, (papel, usuario, base_esp, destino_esp, prova) in enumerate(CASOS_LOCAL, 1):
+    js = f"""
+const {{resolver}} = require({json.dumps(str(RAIZ / 'desktop' / 'configuracao.js'))});
+const r = resolver({json.dumps(PADRAO)}, {json.dumps(PAPEIS)}, {json.dumps(papel)}, {json.dumps(usuario)});
+console.log(JSON.stringify({{base: r.config.base, destinoSrt: r.config.destinoSrt, corrigido: !!r.corrigido}}));
+"""
+    r = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=60)
+    d = json.loads(r.stdout.strip().splitlines()[-1])
+    checar(d["base"] == base_esp and d["destinoSrt"] == destino_esp,
+           f"local {i}: {prova} (base={d['base']}, destino={d['destinoSrt']!r})")
+
+# o menu "Subir servidor nesta maquina" tem que reapontar a tela (nao basta subir o processo)
+main = (RAIZ / "desktop" / "main.js").read_text(encoding="utf-8")
+checar("Subir servidor nesta maquina" in main and "config.base = local" in main,
+       "subir o servidor local reaponta a tela para ele (o menu nao so sobe o processo)")
+checar("config.destinoSrt = (PAPEIS[PAPEL] || {}).destinoSrt || PADRAO.destinoSrt" in main,
+       "subir o servidor local tambem preenche o destino do repasse quando esta vazio")
+
 # o pacote TEM que levar o módulo novo, senão o app quebra ao abrir
 pkg = json.loads((RAIZ / "desktop" / "package.json").read_text(encoding="utf-8"))
 checar("configuracao.js" in pkg["build"]["files"], "configuracao.js entra no pacote (build.files)")

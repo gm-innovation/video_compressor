@@ -382,8 +382,10 @@ checar("ambiente.json" in marc and "leva_ambiente" in marc,
        "o build decide por papel se o ambiente entra no pacote")
 checar('construir "LECSOR Captura" admin captura captura 1' in marc,
        "o PC de captura LEVA o ambiente (nasce plug & play)")
+checar('construir "LECSOR Admin" admin terra admin 1' in marc,
+       "o Admin (console do operador) tambem LEVA o ambiente: usado na maquina das cameras ele "
+       "precisa do token de ingestao para anunciar o fluxo ao lado terra")
 for papel_args in ('construir "LECSOR Terra" cliente terra terra 0',
-                   'construir "LECSOR Admin" admin terra admin 0',
                    'construir "LECSOR Cliente" cliente terra cliente 0'):
     checar(papel_args in marc, f"so' mostra tela -> SEM ambiente: {papel_args}")
 ser = (RAIZ / "desktop" / "servidor.js").read_text(encoding="utf-8")

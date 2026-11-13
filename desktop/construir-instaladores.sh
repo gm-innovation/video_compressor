@@ -47,6 +47,9 @@ construir "LECSOR Captura" admin captura captura 1
 # Lado terra: recebe e mostra (servidor em nuvem ou na rede do cliente).
 construir "LECSOR Terra" cliente terra terra 0
 # Bancada/engenharia e os dois papeis de tela antigos (mesmo pacote, papel do lado terra).
-construir "LECSOR Admin" admin terra admin 0
+# O Admin LEVA o ambiente: ele e' o console do operador e pode ser usado na maquina das cameras
+# (menu "Subir servidor nesta maquina"), onde precisa anunciar o fluxo ao lado terra — sem o token de
+# ingestao o fluxo chega e ninguem ve'.
+construir "LECSOR Admin" admin terra admin 1
 construir "LECSOR Cliente" cliente terra cliente 0
 echo "== pronto:"; ls -la dist/*/*.exe 2>/dev/null | grep -v uninstaller

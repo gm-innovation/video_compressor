@@ -12,6 +12,10 @@
 //     tem nada escutando em 127.0.0.1, então apontar para loopback aí é sempre engano (config velho
 //     gravado no MESMO papel, que o guard do item 2 não pegava). Foi o "lado terra não respondeu
 //     (conexão recusada)" numa instalação que abria em 127.0.0.1:8765.
+//  4) servidor local LIGADO nesta máquina => o aplicativo fala com ELE (base = 127.0.0.1:porta), e o
+//     destino do repasse sai de fábrica quando o operador nunca definiu um. É o servidor local que
+//     conhece as câmeras ligadas aqui e é ele que repassa o fluxo; sem isso, subir o servidor numa
+//     instalação apontada para o lado terra não mudava nada (tela remota sem câmera + repasse "(nada)").
 'use strict';
 
 const LOOPBACK = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?(?:\/|$)/i;
@@ -42,9 +46,22 @@ function resolver(PADRAO, PAPEIS, PAPEL, doUsuario) {
         { servidorLocal: Object.assign({}, fabrica.servidorLocal, doUsuario.servidorLocal || {}) })
     : fabrica;
 
-  // Incoerência papel x endereço: quem não sobe servidor local não escuta em loopback.
   let corrigido = false;
-  if (ehLoopback(config.base) && !config.servidorLocal.ligado) {
+  const porta = config.servidorLocal.portaApi || 8765;
+  const local = `http://127.0.0.1:${porta}`;
+  if (config.servidorLocal.ligado) {
+    // Servidor local LIGADO nesta maquina: o aplicativo fala com ELE. É o servidor que conhece as
+    // câmeras ligadas aqui, e é quem empacota e repassa o fluxo para o lado terra. Sem isto, ligar o
+    // servidor local numa instalação apontada para o lado terra não mudava nada: a tela continuava
+    // vindo do servidor remoto (sem as câmeras desta maquina) e o repasse ficava "(nada)".
+    // O destino do repasse também sai de fábrica (só quando o operador nunca definiu um: quem
+    // apagou o destino de propósito continua com o repasse desligado), senão o fluxo desta maquina
+    // não sobe para o lado terra — era o "(nada - so esta maquina)" depois de ligar o servidor.
+    const destinoProprio = !!doUsuario && Object.prototype.hasOwnProperty.call(doUsuario, 'destinoSrt');
+    if (!destinoProprio && !config.destinoSrt) config.destinoSrt = fabrica.destinoSrt || PADRAO.destinoSrt || '';
+    if (config.base !== local) { config.base = local; corrigido = true; }
+  } else if (ehLoopback(config.base)) {
+    // Incoerência papel x endereço: quem NÃO sobe servidor local não escuta em loopback.
     config.base = fabrica.base;
     corrigido = true;
   }
