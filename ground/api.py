@@ -753,6 +753,76 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(403, {"erro": "so operacao e administrador enviam video de teste"})
             return self._json(200, {"ingestoes": ing_listar(), "atualizado_em": dt.datetime.now().astimezone().isoformat(timespec="seconds")},
                               {"Cache-Control": "no-store"})
+        if rota in ("/api/declarado", "/api/envios/declarado"):
+            # O QUADRO do que o PC de captura declara: ultima declaracao de cada fluxo (com hora e
+            # idade), ultima medicao de qualidade e a ULTIMA TENTATIVA de anuncio — aceita ou recusada.
+            # E' o que responde "o barco esta' falando com terra?" sem precisar de ssh na maquina.
+            # SO' operacao/admin, sem a excecao de "chamada local": o corpo traz o IP de quem
+            # declarou, e um CLIENTE logado nesta mesma maquina nao pode receber endereco interno
+            # (regra fixada pelo dono). O cliente ve o comparativo no comprovante do trecho.
+            if not self._pode_operar(u):
+                return self._json(403, {"erro": "so operacao e administrador veem o que o bordo declarou"})
+            agora_dt = dt.datetime.now().astimezone()
+
+            def _idade_de(quando):
+                try:
+                    return round((agora_dt - dt.datetime.fromisoformat(str(quando))).total_seconds(), 1)
+                except Exception:
+                    return None
+
+            def ultima_tentativa(c, fluxo):
+                try:
+                    r = c.execute("""SELECT em, rota, aceito, motivo, ip FROM anuncios_recebidos
+                                     WHERE fluxo_id=? ORDER BY id DESC LIMIT 1""", (fluxo,)).fetchone()
+                except sqlite3.Error:
+                    return None
+                return dict(r) if r else None
+
+            def qual(c, fluxo):
+                try:
+                    r = c.execute("""SELECT ssim, ajuste, medido_em, compressao_pct, mb_alvo, mb_original
+                                     FROM medicoes_qualidade WHERE fluxo_id=? ORDER BY id DESC LIMIT 1""",
+                                  (fluxo,)).fetchone()
+                except sqlite3.Error:
+                    return None
+                return dict(r) if r else None
+
+            declarado, sem_declaracao = [], []
+            with conexao() as c:
+                try:
+                    linhas = [dict(r) for r in c.execute("""SELECT fluxo_id, rotulo, estado, tipo, codec,
+                                resolucao, fps, bitrate_alvo, bitrate_entrada_kbps, bitrate_saida_kbps,
+                                corte_pct, duracao_s, declarado_em, recebido_em, declarado_por
+                            FROM ingestoes WHERE declarado_em IS NOT NULL
+                            ORDER BY declarado_em DESC LIMIT 50""")]
+                except sqlite3.Error:
+                    linhas = []
+                for l in linhas:
+                    q = qual(c, l["fluxo_id"]) or {}
+                    l["idade_s"] = _idade_de(l.get("declarado_em"))
+                    l["recebido_ha_s"] = _idade_de(l.get("recebido_em"))
+                    l["qualidade"] = ({**q, "idade_s": _idade_de(q.get("medido_em"))} if q else None)
+                    l["ultima_tentativa"] = ultima_tentativa(c, l["fluxo_id"])
+                    declarado.append(l)
+                vistos = {l["fluxo_id"] for l in declarado}
+                try:
+                    fluxos_tentados = [dict(r) for r in c.execute("""SELECT DISTINCT fluxo_id
+                                            FROM anuncios_recebidos WHERE fluxo_id IS NOT NULL AND fluxo_id<>''
+                                            ORDER BY id DESC LIMIT 50""")]
+                except sqlite3.Error:
+                    fluxos_tentados = []
+                for f in fluxos_tentados:
+                    if f["fluxo_id"] in vistos:
+                        continue
+                    t = ultima_tentativa(c, f["fluxo_id"])
+                    sem_declaracao.append({"fluxo_id": f["fluxo_id"], "ultima_tentativa": t,
+                                           "qualidade": (qual(c, f["fluxo_id"]) or None)})
+            return self._json(200, {"declarado": declarado, "sem_declaracao": sem_declaracao,
+                                    "agora": agora_dt.isoformat(timespec="seconds"),
+                                    "explica": ("'declarado' e' o que o PC de captura informou do envio; "
+                                                "'sem_declaracao' lista quem tentou anunciar e nao tem "
+                                                "declaracao gravada (com o motivo da recusa, quando houve)")},
+                              {"Cache-Control": "no-store"})
         if rota in ("/api/compressoes", "/api/compressoes/lista"):
             if not (self._pode_operar(u) or self._local()):
                 return self._json(403, {"erro": "so operacao e administrador veem as compressoes"})
@@ -1452,6 +1522,9 @@ class Handler(SimpleHTTPRequestHandler):
             return self._anuncio_bordo()
         if rota == "/api/qualidade/anuncio":
             return self._anuncio_qualidade()
+        if rota == "/api/envios/anuncio":
+            # o bordo DECLARA os numeros do envio que esta' no ar (lado "declarado" do atestado)
+            return self._anuncio_envio()
         if rota == "/api/cameras":
             if not (u and u["papel"] in PAPEL_ADMIN):
                 return self._json(401, {"erro": "entre no sistema"})
@@ -1730,6 +1803,100 @@ class Handler(SimpleHTTPRequestHandler):
                        str(d.get("medido_em") or dt.datetime.now().astimezone().isoformat(timespec="seconds"))))
         auditar(None, "anuncio_qualidade", f"{fluxo} ssim={round(ssim, 4)}", self.client_address[0])
         return self._json(201, {"ok": True, "fluxo_id": fluxo, "ssim": ssim})
+
+    def _autoriza_ingestao(self) -> bool:
+        """Token de ingestao: quem anuncia e' o BORDO (PC de captura), nunca um navegador."""
+        esperado = (os.environ.get("LECSOR_TOKEN_INGESTAO") or "").strip()
+        recebido = (self.headers.get("Authorization") or "").strip()
+        if recebido.lower().startswith("bearer "):
+            recebido = recebido[7:].strip()
+        return bool(esperado) and hmac.compare_digest(recebido, esperado)
+
+    def _registrar_anuncio(self, rota: str, fluxo: str, aceito: bool, motivo: str = "") -> None:
+        """Guarda TODA tentativa de anuncio (aceita ou recusada): e' isto que torna a falha visivel.
+
+        Sem esta tabela, "nada chegou" nao tinha como ser distinguido de "o bordo nunca falou", de
+        "falou errado" ou de "foi recusado" — e era exatamente o caso do dono em 15/11/2026 (0 linhas
+        no lado terra e nenhuma pista). O IP fica aqui porque esta rota e' de operacao, nunca do cliente.
+        """
+        try:
+            with conexao() as c:
+                c.execute("""CREATE TABLE IF NOT EXISTS anuncios_recebidos (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT, em TEXT NOT NULL,
+                                rota TEXT NOT NULL, fluxo_id TEXT, aceito INTEGER NOT NULL,
+                                motivo TEXT, ip TEXT)""")
+                c.execute("""INSERT INTO anuncios_recebidos (em, rota, fluxo_id, aceito, motivo, ip)
+                             VALUES (?,?,?,?,?,?)""",
+                          (dt.datetime.now().astimezone().isoformat(timespec="seconds"), rota, fluxo,
+                           1 if aceito else 0, (motivo or "")[:200], self.client_address[0]))
+        except Exception:
+            pass
+
+    def _anuncio_envio(self) -> None:
+        """O PC de captura DECLARA os numeros do envio que esta' no ar (entrada, saida, corte, alvo...).
+
+        E' o lado "declarado" do atestado do trecho de 1 minuto: o lado terra mede o arquivo que baixa,
+        mas nao tem como saber o que a maquina de captura declara — os numeros nasciam na tabela
+        `ingestoes` DO BORDO e nunca saiam de la'. Aqui eles entram em `ingestoes` daqui, que e' de
+        onde o atestado ja' le'. Autorizacao pelo token de ingestao. Nunca recebe nem guarda endereco,
+        porta, protocolo ou credencial de camera — so' o que o bordo declara do proprio envio.
+        """
+        d = self._corpo()
+        fluxo = re.sub(r"[^a-zA-Z0-9_\-]", "-", str(d.get("fluxo_id") or "").strip())
+        if not self._autoriza_ingestao():
+            self._registrar_anuncio("envios", fluxo, False, "token de ingestao invalido")
+            return self._json(401, {"erro": "token de ingestao invalido"})
+        if not fluxo:
+            self._registrar_anuncio("envios", "", False, "sem fluxo_id")
+            return self._json(422, {"erro": "informe o fluxo_id"})
+
+        def num(chave):
+            bruto = d.get(chave)
+            try:
+                return float(bruto) if bruto not in (None, "") else None
+            except (TypeError, ValueError):
+                return None
+
+        def texto(chave, limite: int = 120):
+            return str(d.get(chave) or "").strip()[:limite]
+
+        carimbo = str(d.get("carimbo") or "").strip() or dt.datetime.now().astimezone().isoformat(timespec="seconds")
+        recebido = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+        declarado_por = f"{self.client_address[0]} ({texto('motivo', 60)})" if texto("motivo") else self.client_address[0]
+        valores = {"camera_id": texto("camera_id"), "rotulo": texto("rotulo") or fluxo,
+                   "tipo": texto("tipo", 40), "codec": texto("codec", 40),
+                   "bitrate_alvo": texto("bitrate_alvo", 20), "resolucao": texto("resolucao", 40),
+                   "fps": num("fps"), "bitrate_entrada_kbps": num("bitrate_entrada_kbps"),
+                   "bitrate_saida_kbps": num("bitrate_saida_kbps"), "corte_pct": num("corte_pct"),
+                   "velocidade": num("velocidade"), "tamanho_mb": num("tamanho_mb"),
+                   "duracao_s": num("duracao_s"), "estado": texto("estado", 20) or "no_ar",
+                   "fonte": texto("fonte", 200), "declarado_em": carimbo, "declarado_por": declarado_por,
+                   "recebido_em": recebido, "atualizado_em": carimbo}
+        try:
+            import ingestao as _ingestao
+            _ingestao.garantir_schema()   # tabela `ingestoes` com as colunas da declaracao (idempotente)
+        except Exception:
+            pass
+        with conexao() as c:
+            linha = c.execute("SELECT id FROM ingestoes WHERE fluxo_id=? ORDER BY id DESC LIMIT 1",
+                              (fluxo,)).fetchone()
+            if linha:
+                sets = ", ".join(f"{k}=?" for k in valores)
+                c.execute(f"UPDATE ingestoes SET {sets} WHERE id=?", (*valores.values(), linha["id"]))
+                ident = linha["id"]
+            else:
+                chaves = ["fluxo_id", *valores.keys()]
+                marcas = ", ".join("?" * len(chaves))
+                cur = c.execute(f"""INSERT INTO ingestoes ({", ".join(chaves)}) VALUES ({marcas})""",
+                                (fluxo, *valores.values()))
+                ident = cur.lastrowid
+        self._registrar_anuncio("envios", fluxo, True, texto("motivo", 60))
+        auditar(None, "anuncio_envio", f"{fluxo} id={ident}", self.client_address[0])
+        return self._json(201, {"ok": True, "fluxo_id": fluxo, "id": ident,
+                                "declarado_em": carimbo, "recebido_em": recebido,
+                                "bitrate_entrada_kbps": valores["bitrate_entrada_kbps"],
+                                "bitrate_saida_kbps": valores["bitrate_saida_kbps"],
+                                "corte_pct": valores["corte_pct"]})
 
     def _whep(self, camera_id: str, usuario) -> None:
         # Sem sessao so a propria maquina do servidor ve o fluxo (painel de bancada); de fora, 401.

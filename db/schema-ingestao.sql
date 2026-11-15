@@ -16,7 +16,13 @@ CREATE TABLE IF NOT EXISTS ingestoes (
   estado TEXT DEFAULT 'iniciando',   -- iniciando | no_ar | parado | erro
   pid INTEGER, erro TEXT, log TEXT,
   srt_host TEXT,                     -- onde o fluxo foi publicado (127.0.0.1 = esta maquina; IP = lado terra)
-  criado_em TEXT, atualizado_em TEXT, parado_em TEXT
+  criado_em TEXT, atualizado_em TEXT, parado_em TEXT,
+  -- Declaracao que o PC de captura manda JUNTO com o video (POST /api/envios/anuncio): quando o lado
+  -- terra recebe, estes campos ficam preenchidos e o atestado do trecho de 1 minuto ganha o lado
+  -- "declarado" para comparar com o que o arquivo prova. Nulos = nada declarado.
+  declarado_em TEXT,                 -- carimbo do BORDO (quando a maquina de captura declarou)
+  declarado_por TEXT,                -- de qual maquina veio a declaracao (so operacao ve; nunca o cliente)
+  recebido_em TEXT                   -- quando o lado terra recebeu (relogio daqui)
 );
 CREATE TABLE IF NOT EXISTS ingestoes_amostras (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

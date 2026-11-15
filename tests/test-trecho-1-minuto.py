@@ -277,7 +277,7 @@ paths:
         s, at2 = admin.pedir(f"/api/trechos/{id2}/atestado")
         con2 = at2.get("contas") or {}
         dec2 = at2.get("declarado_pelo_pc_de_captura") or {}
-        exigir(dec2.get("origem") == "medicao de qualidade anunciada pelo bordo",
+        exigir((dec2.get("origem") or "").startswith("medicao de qualidade anunciada pelo bordo"),
                "o atestado diz DE ONDE veio o declarado: %r" % dec2.get("origem"))
         exigir(con2.get("bate") is True,
                "o medido no arquivo bate com o declarado pelo bordo (%s x %s, dif %s%%)"

@@ -455,6 +455,14 @@ checar(r24.returncode == 0, "test-trecho-1-minuto.py passou" if r24.returncode =
 
 
 print()
+print("== 25. o que o PC de captura DECLARA chega ao lado terra (declarado x medido) ==")
+r25 = subprocess.run([sys.executable, str(RAIZ / "tests" / "test-declarado-chega-ao-lado-terra.py")],
+                     capture_output=True, text=True, encoding="utf-8", errors="replace")
+checar(r25.returncode == 0, "test-declarado-chega-ao-lado-terra.py passou" if r25.returncode == 0
+       else f"test-declarado-chega-ao-lado-terra.py FALHOU: {(r25.stdout or '')[-400:]}")
+
+
+print()
 if falhas:
     print(f"FALHOU — {len(falhas)} verificação(ões):")
     for f in falhas:

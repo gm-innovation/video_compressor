@@ -302,15 +302,27 @@ async function mostrarProva(camera) {
   const med = j.medido_no_arquivo || {};
   const dec = j.declarado_pelo_pc_de_captura || {};
   const con = j.contas || {};
+  // quando o PC de captura declara, a hora da declaração aparece junto do número: sem o "declarado
+  // quando" o comparativo não diz se o ajuste declarado ainda é o que está no ar.
+  const semDecl = (v) => (v === null || v === undefined);
+  const quando = (iso) => (iso ? ' (declarado em ' + String(iso).replace('T', ' ').slice(0, 19) + ')' : '');
   const linhas = [
     j.leitura || '',
     'medido no arquivo: ' + (med.mb || 0) + ' MB em ' + (med.duracao_s || 0) + ' s = ' + (med.kbps || 0) + ' kbps',
-    'declarado pelo PC de captura: ' + (dec.kbps_saida === null || dec.kbps_saida === undefined ? 'não informado' : dec.kbps_saida + ' kbps') +
+    'declarado pelo PC de captura: ' + (semDecl(dec.kbps_saida) ? 'não informado' : dec.kbps_saida + ' kbps') +
+      quando(dec.declarado_em) +
       (dec.alvo ? ' · alvo ' + dec.alvo : '') + (dec.codec ? ' · ' + dec.codec : '') +
-      (dec.resolucao ? ' · ' + dec.resolucao : ''),
-    'compressão recalculada aqui: ' + (con.compressao_pct_calculada === null || con.compressao_pct_calculada === undefined
+      (dec.resolucao ? ' · ' + dec.resolucao : '') + (semDecl(dec.fps) ? '' : ' · ' + dec.fps + ' fps'),
+    semDecl(dec.kbps_entrada) ? '' : 'entrada declarada: ' + dec.kbps_entrada + ' kbps' +
+      (semDecl(dec.corte_pct) ? '' : ' → corte de ' + dec.corte_pct + '%'),
+    'compressão recalculada aqui: ' + (semDecl(con.compressao_pct_calculada)
       ? 'não fecha a conta (' + (con.base_do_original || '') + ')' : con.compressao_pct_calculada + '%') +
       (con.original_estimado_mb ? ' (original estimado ' + con.original_estimado_mb + ' MB)' : ''),
+    semDecl(con.bate) ? '' : 'comparação declarado × medido: ' +
+      (con.bate ? 'dentro da tolerância de ' : 'FORA da tolerância de ') + (con.tolerancia_pct || 15) + '%' +
+      (semDecl(con.diferenca_pct) ? '' : ' (diferença ' + con.diferenca_pct + '%)'),
+    semDecl(dec.ssim) ? '' : 'qualidade declarada: SSIM ' + dec.ssim +
+      (dec.medido_em ? ' (medido em ' + String(dec.medido_em).replace('T', ' ').slice(0, 19) + ')' : ''),
     'sha256: ' + (med.sha256 || '') + ' (o arquivo baixado é este mesmo)'
   ];
   prova.textContent = linhas.filter(Boolean).join('\n');

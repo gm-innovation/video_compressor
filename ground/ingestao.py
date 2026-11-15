@@ -38,7 +38,8 @@ def garantir_schema():
     with conexao() as c:
         c.executescript(sql)
         # colunas novas em banco que ja existia (CREATE TABLE IF NOT EXISTS nao altera tabela pronta)
-        for coluna, tipo in (("srt_host", "TEXT"),):
+        for coluna, tipo in (("srt_host", "TEXT"), ("declarado_em", "TEXT"),
+                             ("declarado_por", "TEXT"), ("recebido_em", "TEXT")):
             try:
                 c.execute(f"ALTER TABLE ingestoes ADD COLUMN {coluna} {tipo}")
             except sqlite3.OperationalError:
@@ -306,9 +307,19 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
             recado = f"nao publiquei o cadastro no lado terra ({type(e).__name__}: {e})"
         print(f"[envios] {fluxo_id}: {recado}", flush=True)
         aviso = (aviso + " · " if aviso else "") + recado
+    # A DECLARACAO do envio sobe JUNTO com o video: kbps de entrada, kbps de saida, corte %, alvo,
+    # codec, resolucao e fps. E' o lado "declarado" do atestado do trecho de 1 minuto — antes esses
+    # numeros so' existiam nesta maquina e o lado terra respondia "o PC de captura nao informou".
+    d = _declarar_envio(ident, "entrada no ar")
+    if d is not None:
+        recado_envio = ("declaracao do envio publicada no lado terra" if d.get("ok")
+                        else f"o lado terra ainda NAO tem o declarado deste envio ({d.get('motivo') or d.get('erro')})")
+        print(f"[envios] {fluxo_id}: {recado_envio}", flush=True)
+        aviso = (aviso + " · " if aviso else "") + recado_envio
     return {"id": ident, "fluxo_id": fluxo_id, "camera_id": camera_id, "pid": proc.pid,
             "comando": " ".join(cmd), "entrada": s, "alvo": bitrate, "aviso": aviso, "log": str(log),
-            "pagina": origem_pagina, "fps_alvo": fps, "arquivo_saida": arquivo_saida}
+            "pagina": origem_pagina, "fps_alvo": fps, "arquivo_saida": arquivo_saida,
+            "declarado_ao_lado_terra": bool(d and d.get("ok"))}
 
 def _motivo_da_falha(codigo: int, log: Path, r: dict) -> str | None:
     """Motivo curto quando o envio NAO subiu, para a tela poder avisar em vez de so ficar preta.
@@ -346,6 +357,7 @@ def _motivo_da_falha(codigo: int, log: Path, r: dict) -> str | None:
 def _bombear(ident: int, proc: subprocess.Popen, log: Path):
     """Le o -progress do ffmpeg e mantem a tabela ingestoes atualizada."""
     ultimo, ultima_amostra, inicio, ultima_gravacao = {}, time.time(), time.time(), 0.0
+    ultima_declaracao = 0.0
     pendente = {}
     try:
         for linha in proc.stdout:
@@ -372,6 +384,10 @@ def _bombear(ident: int, proc: subprocess.Popen, log: Path):
                              tamanho_mb=?, duracao_s=?, corte_pct=?, atualizado_em=?, erro=NULL WHERE id=?""",
                           (round(taxa, 1), round(fps, 1), round(vel, 2), round(tam, 1), round(dur, 1),
                            corte, agora(), ident))
+            if time.time() - ultima_declaracao >= DECLARAR_CADA_S:
+                # em thread: a declaracao sai pela rede e o laco do ffmpeg nao pode parar por causa dela
+                ultima_declaracao = time.time()
+                threading.Thread(target=_declarar_envio, args=(ident, "no ar"), daemon=True).start()
             if time.time() - ultima_amostra >= 10:
                 ultima_amostra = time.time()
                 with conexao() as c:
@@ -400,6 +416,43 @@ def _bombear(ident: int, proc: subprocess.Popen, log: Path):
                            f" fps {r['fps'] or '?'}; {round(time.time()-inicio)} s no ar",
                            f"ground/envios (log {Path(r['log']).name})", dt.date.today().isoformat(), hw(),
                            f"ground/ingestao.py --fonte {r['fonte']} --bitrate {r['bitrate_alvo']}"))
+        # ultimo recado ao lado terra: sem isto o lado terra ficaria com o MEIO do envio como se fosse
+        # o envio inteiro (ex.: parado por queda do link e o declarado ainda dizendo "no ar")
+        _declarar_envio(ident, "fim do envio")
+
+DECLARAR_CADA_S = 30.0   # o envio se declara ao lado terra de tempo em tempo enquanto esta' no ar
+
+
+def _declarar_envio(ident: int | None, motivo: str = "") -> dict | None:
+    """Manda ao lado terra o que ESTA maquina declara do envio que esta' no ar (linha de `ingestoes`).
+
+    E' o lado "declarado" do atestado do trecho de 1 minuto: sem isto o lado terra so' tem o que ele
+    proprio mediu no arquivo baixado e o comparativo fica pela metade. Vai por HTTP autenticado pelo
+    token de ingestao e NUNCA leva endereco, porta, protocolo ou credencial de camera.
+
+    Best-effort de proposito: declarar e' informacao — nao pode atrasar, travar nem derrubar o envio
+    do video. Quem chama decide se espera (aqui no fim do envio) ou dispara em thread (a cada 30 s).
+    """
+    if not ident:
+        return None
+    try:
+        with conexao() as c:
+            r = c.execute("SELECT * FROM ingestoes WHERE id=?", (ident,)).fetchone()
+        if not r:
+            return None
+        d = dict(r)
+        import repasse
+        destino = str(d.get("srt_host") or "").strip() or (os.environ.get("LECSOR_DESTINO_SRT") or "")
+        envio = {k: d.get(k) for k in ("fluxo_id", "camera_id", "rotulo", "tipo", "codec", "resolucao",
+                                       "fps", "bitrate_alvo", "bitrate_entrada_kbps", "bitrate_saida_kbps",
+                                       "corte_pct", "velocidade", "tamanho_mb", "duracao_s", "estado", "fonte")}
+        envio["carimbo"] = d.get("atualizado_em") or agora()
+        envio["motivo"] = motivo
+        return repasse.publicar_envio(envio, destino=destino)
+    except Exception as e:
+        print(f"[envios] {ident}: nao declarei o envio ao lado terra ({type(e).__name__}: {e})", flush=True)
+        return None
+
 
 def parar(ident: int, remover_camera: bool = False) -> dict:
     with conexao() as c:
@@ -425,7 +478,12 @@ def parar(ident: int, remover_camera: bool = False) -> dict:
         if (r["fonte"] or "").startswith("dshow:"):
             disp = r["fonte"].split("dshow:", 1)[1]
         livre = liberar_camera(disp) if disp else {"liberados": 0}
-        return {"ok": True, "id": ident, "fluxo_id": r["fluxo_id"], **livre}
+        saida = {"ok": True, "id": ident, "fluxo_id": r["fluxo_id"], **livre}
+    # fora do `with`: a declaracao le a linha JA gravada como 'parado' e abre conexao propria
+    d = _declarar_envio(ident, "parado pela tela")
+    if d is not None:
+        saida["declarado_ao_lado_terra"] = bool(d.get("ok"))
+    return saida
 
 
 def desligar_camera(camera_id: str) -> dict:

@@ -83,6 +83,17 @@ async function atualizar() {
     for (const f of (jq.fluxos || [])) mapa[f.fluxo_id] = Object.assign({ piso_aceito: jq.piso_aceito }, f);
     A.qualidadeFluxos = mapa;
   } catch (e) { A.qualidadeFluxos = A.qualidadeFluxos || {}; }
+  /* O que o PC de captura DECLARA do envio (entrada, saída, corte, alvo, resolução) e a última
+     tentativa de anúncio, aceita ou recusada. É o lado "declarado" do comparativo: sem isto esta
+     tela só tinha o que o lado terra mede, e o dono não tinha com o que comparar. */
+  try {
+    const rd = await fetch('/api/declarado');
+    const jd = rd.ok ? await rd.json() : {};
+    const mapa = {};
+    for (const f of (jd.declarado || [])) mapa[f.fluxo_id] = f;
+    A.declaradoFluxos = mapa;
+    A.declaradoSemFluxos = jd.sem_declaracao || [];
+  } catch (e) { A.declaradoFluxos = A.declaradoFluxos || {}; A.declaradoSemFluxos = A.declaradoSemFluxos || []; }
   const rs = await api('/api/resumo'); if (rs.ok) A.resumo = rs.corpo;
   const em = await api('/api/embarcacoes'); A.embarcacoes = (em.corpo && em.corpo.embarcacoes) || [];
   const cm = await api('/api/cameras'); A.cameras = (cm.corpo && cm.corpo.cameras) || [];
@@ -380,6 +391,25 @@ function telaCameras(t) {
      captura) e chega aqui pelo anúncio autenticado do bordo: a tela mostra o último número com a
      idade, porque SSIM sem "medida quando" não diz se o ajuste medido ainda é o que está no ar. */
   const qualDe = (l) => (A.qualidadeFluxos || {})[l.fluxo_id || l.id] || null;
+  const horaCurta = (iso) => (iso ? String(iso).replace('T', ' ').slice(11, 19) : '—');
+  /* O que a máquina de captura declarou do envio que está no ar — e, quando não declarou, o que ela
+     TENTOU (declaração recusada mostra o motivo em vez de sumir na tela). */
+  const declaradoDe = (l) => (A.declaradoFluxos || {})[l.fluxo_id || l.id] || null;
+  const textoDeclarado = (l) => {
+    const d = declaradoDe(l);
+    if (!d) {
+      const sem = (A.declaradoSemFluxos || []).find((x) => x.fluxo_id === (l.fluxo_id || l.id));
+      const t = sem && sem.ultima_tentativa;
+      if (t && !t.aceito) return 'NAO declarado · tentou ' + horaCurta(t.em) + ' e foi recusada (' + (t.motivo || 'sem motivo') + ')';
+      if (t) return 'NAO declarado · ultimo anuncio ' + horaCurta(t.em) + ' chegou sem os numeros';
+      return 'NAO declarado (o PC de captura nao informou)';
+    }
+    return fmt(d.bitrate_saida_kbps) + ' kbps declarado'
+      + (d.bitrate_entrada_kbps ? ' de ' + fmt(d.bitrate_entrada_kbps) + ' kbps' : '')
+      + (d.corte_pct === null || d.corte_pct === undefined ? '' : ' · corte ' + fmt(d.corte_pct) + '%')
+      + (d.resolucao ? ' · ' + d.resolucao : '') + (d.fps ? ' · ' + fmt(d.fps, 0) + ' fps' : '')
+      + (d.estado ? ' · ' + d.estado : '') + ' · declarado ' + horaCurta(d.declarado_em);
+  };
   const textoQualidade = (l) => {
     const q = qualDe(l);
     if (!q) return '— (não medida ainda)';
@@ -396,6 +426,7 @@ function telaCameras(t) {
     { rotulo: 'Como o agente pega', valor: (l) => { const c = porId[l.id] || {}; return c.captura || '—'; } },
     { rotulo: 'Encoder', valor: (l) => { const e = (l.viva && l.viva.encoder) || {}; return [e.codec, e.resolucao, e.fps ? e.fps + ' fps' : '', e.bitrate].filter(Boolean).join(' · '); } },
     { rotulo: 'Qualidade (SSIM)', valor: textoQualidade },
+    { rotulo: 'Declarado pelo PC de captura', valor: textoDeclarado },
     { rotulo: 'Alvo (só desta câmera)', valor: (l) => {
         const c = porId[l.id] || {};
         const caixa = document.createElement('div');

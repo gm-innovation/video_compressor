@@ -183,6 +183,44 @@ def publicar_qualidade(medicao: dict, destino: str | None = None) -> dict:
         return {"ok": False, "erro": str(e)}
 
 
+def publicar_envio(envio: dict, destino: str | None = None) -> dict:
+    """Declara ao lado terra o que ESTA maquina esta enviando, junto com o video.
+
+    E' o lado "declarado" do atestado do trecho de 1 minuto: kbps de entrada (o que o encoder
+    recebe), kbps de saida (o que sai para a rede), corte %, alvo, codec, resolucao, fps e o
+    instante. Sem isto o lado terra so' tem o que ELE mediu no arquivo e o atestado responde
+    "o PC de captura nao informou" — era o pedido do dono em 15/11/2026 (comparativos completos).
+    Nunca sai daqui endereco, porta, protocolo ou credencial de camera: so' numeros do envio.
+    """
+    if not isinstance(envio, dict) or not str(envio.get("fluxo_id") or "").strip():
+        return {"ok": False, "motivo": "envio sem fluxo_id"}
+    fluxo = str(envio["fluxo_id"]).strip()
+    base = _api_lado_terra(destino or (os.environ.get("LECSOR_DESTINO_SRT") or ""))
+    token = (os.environ.get("LECSOR_TOKEN_INGESTAO") or "").strip()
+    if not base or not token:
+        _log(fluxo, "sem lado terra/token de ingestao — declaracao do envio NAO publicada "
+                    "(o atestado vai dizer 'o PC de captura nao informou')")
+        return {"ok": False, "motivo": "sem lado terra ou sem LECSOR_TOKEN_INGESTAO"}
+    campos = ("fluxo_id", "camera_id", "rotulo", "tipo", "codec", "resolucao", "fps", "bitrate_alvo",
+              "bitrate_entrada_kbps", "bitrate_saida_kbps", "corte_pct", "velocidade", "tamanho_mb",
+              "duracao_s", "estado", "fonte", "carimbo")
+    corpo = {k: envio.get(k) for k in campos if envio.get(k) is not None}
+    req = urllib.request.Request(f"{base}/api/envios/anuncio", data=json.dumps(corpo).encode("utf-8"),
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": f"Bearer {token}"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            j = json.loads(r.read() or b"{}")
+        _log(fluxo, f"envio declarado ao lado terra: entrada {corpo.get('bitrate_entrada_kbps') or '?'} kbps"
+                    f" -> saida {corpo.get('bitrate_saida_kbps') or '?'} kbps"
+                    f" (corte {corpo.get('corte_pct') if corpo.get('corte_pct') is not None else '?'}%)")
+        return {"ok": bool(j.get("ok")), "resposta": j}
+    except Exception as e:
+        _log(fluxo, f"nao consegui declarar o envio ao lado terra ({type(e).__name__}: {e}) — o atestado"
+                    f" vai mostrar 'o PC de captura nao informou'")
+        return {"ok": False, "erro": str(e)}
+
+
 def repassar(fluxo: str, destino: str, origem: str) -> int:
     if not destino:
         _log(fluxo, "sem destino (LECSOR_DESTINO_SRT) — nada a repassar")

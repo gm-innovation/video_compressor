@@ -267,6 +267,32 @@ def ultima(fluxo_id: str) -> dict | None:
     return dict(r) if r else None
 
 
+def _republicar(u: dict) -> str:
+    """Republica no lado terra uma medicao JA' feita (vinda do cache).
+
+    O lado terra nao tem a fonte crua: se a medicao for reaproveitada aqui e nao for republicada, o
+    numero simplesmente nunca chega la' (era o "medicoes_qualidade = 0 linhas" em terra). O `medido_em`
+    original vai junto, porque SSIM sem "medido quando" nao diz se o ajuste ainda e' o que esta' no ar.
+    """
+    try:
+        import repasse
+        medicao = {k: u.get(k) for k in ("fluxo_id", "ssim", "ajuste", "resolucao", "fps", "segundos",
+                                         "mb_alvo", "mb_original", "compressao_pct", "fonte", "medido_em")}
+        destino = None
+        with conexao_banco() as c:
+            r = c.execute("SELECT srt_host FROM ingestoes WHERE fluxo_id=? ORDER BY id DESC LIMIT 1",
+                          (u.get("fluxo_id") or "",)).fetchone()
+        if r and r["srt_host"]:
+            destino = str(r["srt_host"])
+        rel = repasse.publicar_qualidade(medicao, destino=destino)
+        recado = ("medicao reaproveitada e publicada no lado terra" if rel.get("ok")
+                  else f"o lado terra ainda NAO tem esta medicao ({rel.get('motivo') or rel.get('erro')})")
+    except Exception as e:
+        recado = f"nao publiquei a medicao no lado terra ({type(e).__name__}: {e})"
+    print(f"[qualidade] {u.get('fluxo_id')}: {recado}", flush=True)
+    return recado
+
+
 def medir_se_preciso(fluxo_id: str, validade_s: float = 600.0, segundos: float = SEGUNDOS_PADRAO,
                      bitrate: str | None = None, dados: dict | None = None) -> dict:
     """Mede se a ultima medicao estiver velha OU se for de outro ajuste (usada ao subir o envio).
@@ -281,8 +307,14 @@ def medir_se_preciso(fluxo_id: str, validade_s: float = 600.0, segundos: float =
             idade = (datetime.now(FUSO) - datetime.fromisoformat(u["medido_em"])).total_seconds()
             mesmo_ajuste = (bitrate is None) or (str(u.get("ajuste") or "") == str(bitrate))
             if idade < validade_s and mesmo_ajuste:
+                # reaproveitar NAO pode engolir a publicacao: quem mede e' esta maquina (a que tem a
+                # fonte crua) e o lado terra so' sabe o numero se ele for anunciado de novo aqui.
+                recado = _republicar(u)
                 return {"ok": True, "pulado": True, "ssim": u["ssim"], "medido_em": u["medido_em"],
-                        "idade_s": round(idade, 1), "ajuste": u.get("ajuste")}
+                        "idade_s": round(idade, 1), "ajuste": u.get("ajuste"), "lado_terra": recado,
+                        "resolucao": u.get("resolucao"), "fps": u.get("fps"), "segundos": u.get("segundos"),
+                        "mb_alvo": u.get("mb_alvo"), "mb_original": u.get("mb_original"),
+                        "compressao_pct": u.get("compressao_pct")}
         except Exception:
             pass
     return medir(fluxo_id, segundos=segundos, bitrate=bitrate, dados=dados)

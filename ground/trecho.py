@@ -319,10 +319,21 @@ def atestado(trecho_id: int) -> dict:
         q = {}
         try:
             linha = c.execute("""SELECT fluxo_id, rotulo, fonte, tipo, codec, bitrate_alvo, resolucao, fps,
-                                        bitrate_entrada_kbps, bitrate_saida_kbps, corte_pct, estado, atualizado_em
+                                        bitrate_entrada_kbps, bitrate_saida_kbps, corte_pct, estado,
+                                        atualizado_em, declarado_em, recebido_em
                                  FROM ingestoes WHERE fluxo_id=? ORDER BY id DESC LIMIT 1""",
                               (t["fluxo_id"],)).fetchone()
             env = dict(linha) if linha else {}
+        except sqlite3.Error:
+            env = {}
+        # a ULTIMA tentativa de declaracao deste fluxo (aceita ou recusada): quando o bordo nao
+        # conseguiu declarar, isto e' a diferenca entre "nao informou" e "tentou e foi recusado" —
+        # sem o IP, porque este comprovante sai do lado do cliente.
+        tentativa = None
+        try:
+            linha = c.execute("""SELECT em, aceito, motivo FROM anuncios_recebidos
+                                 WHERE fluxo_id=? ORDER BY id DESC LIMIT 1""", (t["fluxo_id"],)).fetchone()
+            tentativa = dict(linha) if linha else None
         except sqlite3.Error:
             pass
         try:
@@ -341,8 +352,20 @@ def atestado(trecho_id: int) -> dict:
     # kbps do comprimido e do original que o bordo informou (a medicao que ele anunciou ao lado terra)
     saida_kbps = env.get("bitrate_saida_kbps") or _kbps_de_mb(q.get("mb_alvo"), q.get("segundos"))
     entrada_kbps = env.get("bitrate_entrada_kbps") or _kbps_de_mb(q.get("mb_original"), q.get("segundos"))
-    origem = ("envio registrado nesta maquina" if env.get("bitrate_saida_kbps")
-              else ("medicao de qualidade anunciada pelo bordo" if saida_kbps else "nada declarado"))
+    declarado_em = env.get("declarado_em")
+    # de onde saiu o numero "declarado" — o atestado diz, sem disfarcar, e quando ele foi declarado
+    if env.get("bitrate_saida_kbps") and declarado_em:
+        origem = f"declaracao do PC de captura recebida aqui (declarada em {declarado_em})"
+    elif env.get("bitrate_saida_kbps"):
+        origem = "envio registrado nesta maquina"
+    elif saida_kbps:
+        origem = f"medicao de qualidade anunciada pelo bordo (medida em {q.get('medido_em') or '?'})"
+    elif tentativa:
+        origem = ("o PC de captura tentou declarar este fluxo e a tentativa nao virou declaracao"
+                  if tentativa.get("aceito") else
+                  f"o PC de captura tentou declarar este fluxo e foi RECUSADO ({tentativa.get('motivo') or 'sem motivo'})")
+    else:
+        origem = "nada declarado (nenhuma declaracao deste fluxo chegou ao lado terra)"
     compr_declarada = q.get("compressao_pct")
     bytes_original = (entrada_kbps * 1000.0 / 8.0 * duracao) if entrada_kbps else None
     compr_calculada = (round((1 - t["bytes"] / bytes_original) * 100, 2) if bytes_original else None)
@@ -370,6 +393,8 @@ def atestado(trecho_id: int) -> dict:
             "compressao_pct": compr_declarada, "ssim": q.get("ssim"),
             "corte_pct": env.get("corte_pct"), "estado": env.get("estado"),
             "medido_em": q.get("medido_em"), "atualizado_em": env.get("atualizado_em"),
+            "declarado_em": declarado_em, "recebido_em": env.get("recebido_em"),
+            "ultima_tentativa": tentativa,
             "fonte": env.get("fonte") or q.get("fonte"), "origem": origem},
         "contas": {"tolerancia_pct": int(TOLERANCIA_KBPS * 100),
                    "bate": bate, "diferenca_pct": (round((medidos_kbps - saida_kbps) / float(saida_kbps) * 100, 2)
@@ -380,15 +405,23 @@ def atestado(trecho_id: int) -> dict:
                    "original_estimado_mb": (round(bytes_original / 1e6, 2) if bytes_original else None),
                    "base_do_original": ("bitrate de entrada informado pelo PC de captura" if bytes_original
                                         else "sem o original informado pelo PC de captura: a compressao nao fecha a conta")},
-        "leitura": _leitura(medidos_kbps, saida_kbps, bate, compr_declarada, compr_calculada, bate_compr, origem),
+        "leitura": _leitura(medidos_kbps, saida_kbps, bate, compr_declarada, compr_calculada, bate_compr,
+                             origem, tentativa),
     }
 
 
-def _leitura(medidos, declarados, bate, compr_declarada, compr_calculada, bate_compr, origem) -> str:
+def _leitura(medidos, declarados, bate, compr_declarada, compr_calculada, bate_compr, origem,
+             tentativa=None) -> str:
     """Frase curta e verificavel do que o arquivo prova — a resposta que o dono quer poder contestar."""
     if not declarados:
+        recado = ""
+        if tentativa and not tentativa.get("aceito"):
+            recado = (f"; a ultima tentativa de declaracao ({tentativa.get('em')}) foi RECUSADA"
+                      f" ({tentativa.get('motivo') or 'sem motivo'}): o bordo tentou e o lado terra nao aceitou")
+        elif tentativa:
+            recado = f"; a ultima declaracao deste fluxo chegou em {tentativa.get('em')} mas sem o kbps"
         return (f"o arquivo prova {medidos} kbps num trecho; o PC de captura nao informou o kbps deste fluxo "
-                f"({origem}) — nao ha com o que comparar")
+                f"({origem}) — nao ha com o que comparar{recado}")
     frase = (f"o arquivo prova {medidos} kbps; o PC de captura declarou {declarados} kbps ({origem}) — "
              + ("dentro da tolerancia de" if bate else "FORA da tolerancia de")
              + f" {int(TOLERANCIA_KBPS * 100)}%")
