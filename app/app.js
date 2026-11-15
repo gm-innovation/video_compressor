@@ -3,7 +3,7 @@
 const S = {
   usuario: null, embarcacoes: [], cameras: [], embarcacaoId: null,
   tela: 'visualizar', layout: 3, auto: true, pagina: 1, selecionadas: new Set(), ia: false,
-  podeCamera: false,
+  podeCamera: false, trechoEmCurso: false,
   eventos: [], contagens: [], relatorios: null, timer: null,
   analises: { agentes: [], contagens: [], eventos: [] }, agentesPorCamera: {}
 };
@@ -179,6 +179,28 @@ function desenharVisualizar() {
       'max-height:3.9em;overflow:hidden';
     jan.appendChild(aviso);
     pintarAviso(c, jan);
+    // ---- trecho de 1 minuto: a prova de que o Mbps e a compressão informados são reais.
+    // Baixa 60 s do vídeo COMO ELE CHEGA no lado terra (o servidor grava em -c copy: sem reencodar)
+    // e mostra, no mesmo lugar, o medido no arquivo x o declarado pelo PC de captura.
+    const ctrlT = document.createElement('span');
+    ctrlT.className = 'controle-trecho';
+    const bT = document.createElement('button');
+    bT.className = 'botao-trecho';
+    bT.textContent = 'Baixar 1 minuto';
+    bT.title = 'Baixa 60 s do vídeo como ele chega no lado terra, sem reencodar, para conferir o tamanho';
+    bT.onclick = (ev) => { ev.stopPropagation(); baixarTrecho(c, bT); };
+    const bP = document.createElement('button');
+    bP.className = 'botao-trecho oculto';
+    bP.textContent = 'Comprovante (.json)';
+    bP.onclick = (ev) => { ev.stopPropagation(); baixarComprovante(c); };
+    ctrlT.appendChild(bT); ctrlT.appendChild(bP);
+    jan.appendChild(ctrlT);
+    const linhaT = document.createElement('div'); linhaT.className = 'trecho-linha'; linhaT.style.display = 'none';
+    const provaT = document.createElement('div'); provaT.className = 'trecho-prova'; provaT.style.display = 'none';
+    // o comprovante ocupa parte do video: um clique fecha (ele volta no proximo trecho)
+    provaT.title = 'Clique para fechar o comprovante';
+    provaT.onclick = (ev) => { ev.stopPropagation(); provaT.style.display = 'none'; };
+    jan.appendChild(linhaT); jan.appendChild(provaT);
     jan.appendChild(marca); jan.appendChild(caixas); jan.appendChild(rot);
     grade.appendChild(jan);
     window.Video.ligar(c.id, c.id, v);
@@ -201,6 +223,113 @@ async function energia(cameraId, ligar) {
                       { method: 'POST', body: JSON.stringify({ camera_id: cameraId }) });
   if (!d.ok) { alert((d.corpo && d.corpo.erro) || 'não foi possível ligar/desligar a câmera'); return; }
   await atualizar();
+}
+
+/* ------------------------------------------------------------------ trecho de 1 minuto (a prova)
+   Baixa 60 s do vídeo COMO ELE CHEGA no lado terra e põe, na mesma janela, o que o ARQUIVO prova
+   (bytes x 8 / segundos) ao lado do que o PC de captura declarou — com veredito "bate/não bate".
+   Sem isso a redução de banda informada é palavra. A gravação é feita pelo servidor em -c copy
+   (bits que chegaram, sem reencodar) e a tela mostra os MB subindo enquanto grava. */
+function janelaDa(cameraId) {
+  return document.querySelector('.janela[data-cam="' + String(cameraId).replace(/"/g, '\\"') + '"]');
+}
+
+function linhaTrecho(jan, texto) {
+  const linha = jan && jan.querySelector('.trecho-linha');
+  if (!linha) return;
+  linha.style.display = 'block';
+  linha.textContent = texto;
+}
+
+async function baixarTrecho(camera, botao) {
+  const jan = janelaDa(camera.id);
+  if (S.trechoEmCurso) { linhaTrecho(jan, 'já existe um trecho sendo gravado nesta tela — espere terminar'); return; }
+  S.trechoEmCurso = true;
+  let timer = null;
+  botao.disabled = true;
+  linhaTrecho(jan, 'gravando 60 s…');
+  try {
+    timer = setInterval(async () => {
+      const e = await api('/api/cameras/' + encodeURIComponent(camera.id) + '/trecho/estado');
+      const c = e.corpo || {};
+      if (c.gravando) {
+        linhaTrecho(jan, 'gravando ' + Math.round(c.segundos || 0) + ' s… ' + (c.mb || 0).toFixed(1) +
+          ' MB recebidos (' + (c.kbps_agora || 0) + ' kbps agora)');
+      }
+    }, 1000);
+    const r = await fetch('/api/cameras/' + encodeURIComponent(camera.id) + '/trecho?segundos=60',
+                          { credentials: 'same-origin' });
+    if (!r.ok) {
+      let j = {};
+      try { j = JSON.parse(await r.text()); } catch (e) { j = {}; }
+      throw new Error(j.erro || ('HTTP ' + r.status));
+    }
+    const bytes = Number(r.headers.get('X-Lecsor-Bytes') || 0);
+    const kbps = Number(r.headers.get('X-Lecsor-Kbps-Medidos') || 0);
+    const dur = Number(r.headers.get('X-Lecsor-Duracao-S') || 0);
+    const id = r.headers.get('X-Lecsor-Trecho-Id') || '';
+    const cd = r.headers.get('Content-Disposition') || '';
+    const nome = (cd.split('filename="')[1] || 'trecho.mp4').replace('"', '');
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = nome;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 120000);
+    camera.trecho = { id, bytes, kbps, duracao: dur, nome, mb: bytes / 1e6 };
+    linhaTrecho(jan, 'baixado: ' + nome + ' · ' + (bytes / 1e6).toFixed(1) + ' MB em ' + Math.round(dur) +
+      ' s = ' + kbps + ' kbps');
+    const bp = jan && jan.querySelector('.controle-trecho .oculto');
+    if (bp) bp.classList.remove('oculto');
+    await mostrarProva(camera);
+  } catch (e) {
+    linhaTrecho(jan, 'não foi possível baixar o trecho: ' + (e && e.message ? e.message : e));
+  } finally {
+    if (timer) clearInterval(timer);
+    botao.disabled = false;
+    S.trechoEmCurso = false;
+  }
+}
+
+/* Mostra o comprovante na própria janela: medido no arquivo x declarado pelo PC de captura. */
+async function mostrarProva(camera) {
+  const jan = janelaDa(camera.id);
+  if (!jan || !(camera.trecho && camera.trecho.id)) return;
+  const prova = jan.querySelector('.trecho-prova');
+  const d = await api('/api/trechos/' + encodeURIComponent(camera.trecho.id) + '/atestado');
+  const j = d.corpo || {};
+  if (!d.ok) { prova.textContent = 'não foi possível montar o comprovante: ' + (j.erro || d.status); prova.style.display = 'block'; return; }
+  const med = j.medido_no_arquivo || {};
+  const dec = j.declarado_pelo_pc_de_captura || {};
+  const con = j.contas || {};
+  const linhas = [
+    j.leitura || '',
+    'medido no arquivo: ' + (med.mb || 0) + ' MB em ' + (med.duracao_s || 0) + ' s = ' + (med.kbps || 0) + ' kbps',
+    'declarado pelo PC de captura: ' + (dec.kbps_saida === null || dec.kbps_saida === undefined ? 'não informado' : dec.kbps_saida + ' kbps') +
+      (dec.alvo ? ' · alvo ' + dec.alvo : '') + (dec.codec ? ' · ' + dec.codec : '') +
+      (dec.resolucao ? ' · ' + dec.resolucao : ''),
+    'compressão recalculada aqui: ' + (con.compressao_pct_calculada === null || con.compressao_pct_calculada === undefined
+      ? 'não fecha a conta (' + (con.base_do_original || '') + ')' : con.compressao_pct_calculada + '%') +
+      (con.original_estimado_mb ? ' (original estimado ' + con.original_estimado_mb + ' MB)' : ''),
+    'sha256: ' + (med.sha256 || '') + ' (o arquivo baixado é este mesmo)'
+  ];
+  prova.textContent = linhas.filter(Boolean).join('\n');
+  prova.style.display = 'block';
+}
+
+/* Entrega o comprovante em arquivo, para mandar a terceiros junto com o vídeo. */
+async function baixarComprovante(camera) {
+  if (!(camera.trecho && camera.trecho.id)) return;
+  const d = await api('/api/trechos/' + encodeURIComponent(camera.trecho.id) + '/atestado');
+  if (!d.ok) { alert((d.corpo && d.corpo.erro) || 'não foi possível montar o comprovante'); return; }
+  const texto = JSON.stringify(d.corpo, null, 2);
+  const blob = new Blob([texto], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'comprovante-' + (camera.trecho.id || 0) + '-' + String(camera.rotulo || 'camera').replace(/[^\w\-]+/g, '-') + '.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
 
 function pintarAviso(c, jan) {

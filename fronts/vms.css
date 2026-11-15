@@ -68,6 +68,19 @@ select.pil{padding:7px 9px}
 .rotulo-cam .ponto.ruim{background:var(--ruim)}
 /* botao de energia da camera (so onde a camera esta plugada): desligar solta o dispositivo */
 .controle-cam{position:absolute;bottom:4px;right:7px;z-index:3}
+/* trecho de 1 minuto: prova, na tela do cliente, de que o Mbps/compressao informados sao reais */
+.controle-trecho{position:absolute;bottom:27px;left:7px;z-index:3;display:flex;gap:6px}
+.botao-trecho{background:rgba(10,16,26,.78);border:1px solid var(--borda2);color:#dbe6f6;font-size:11px;
+  padding:2px 9px;border-radius:6px;cursor:pointer}
+.botao-trecho:hover{border-color:var(--azul);color:#fff}
+.botao-trecho:disabled{opacity:.55;cursor:default}
+.trecho-linha{position:absolute;left:7px;right:7px;bottom:52px;z-index:3;background:rgba(6,10,18,.82);
+  border:1px solid var(--borda2);border-radius:6px;color:#cfe0f5;font-size:11px;padding:3px 7px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.trecho-prova{position:absolute;left:7px;right:7px;top:26px;z-index:4;background:rgba(6,10,18,.92);
+  border:1px solid var(--azul);border-radius:6px;color:#e6eefb;font-size:11px;line-height:1.45;
+  padding:7px 9px;white-space:pre-wrap;max-height:60%;overflow:auto;cursor:pointer}
+.caixas{position:absolute;inset:0;pointer-events:none}
 .botao-cam{background:rgba(10,16,26,.72);border:1px solid var(--borda2);color:#dbe6f6;font-size:11px;
   padding:2px 9px;border-radius:6px;cursor:pointer}
 .botao-cam:hover{border-color:var(--azul);color:#fff}

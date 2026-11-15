@@ -447,6 +447,14 @@ checar(r23.returncode == 0, "test-comparacao-3-alvos.py passou" if r23.returncod
 
 
 print()
+print("== 24. o botão 'Baixar 1 minuto' prova o tamanho e a compressão informada ==")
+r24 = subprocess.run([sys.executable, str(RAIZ / "tests" / "test-trecho-1-minuto.py")],
+                     capture_output=True, text=True, encoding="utf-8", errors="replace")
+checar(r24.returncode == 0, "test-trecho-1-minuto.py passou" if r24.returncode == 0
+       else f"test-trecho-1-minuto.py FALHOU: {(r24.stdout or '')[-400:]}")
+
+
+print()
 if falhas:
     print(f"FALHOU — {len(falhas)} verificação(ões):")
     for f in falhas:

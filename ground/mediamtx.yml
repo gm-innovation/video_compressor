@@ -4,6 +4,15 @@ logDestinations: [stdout]
 
 rtsp: yes
 rtspAddress: 127.0.0.1:8554
+# So' TCP: o produto nunca le' RTSP por UDP e o modo UDP abre :8000/:8001 (RTP/RTCP). Se essas portas
+# estiverem ocupadas na maquina do cliente, o mediamtx RECUSA subir — plug & play nao pode depender de
+# portas que o produto nao usa.
+rtspTransports: [tcp]
+# listeners HTTP auxiliares do mediamtx (metricas, pprof, playback): por padrao sobem em :9998/:9999/
+# :9996 em TODAS as interfaces; aqui ficam presos no loopback, como o resto.
+metricsAddress: 127.0.0.1:9998
+pprofAddress: 127.0.0.1:9999
+playbackAddress: 127.0.0.1:9996
 rtmp: no
 hls: yes
 hlsAddress: 127.0.0.1:8888

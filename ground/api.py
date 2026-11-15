@@ -39,6 +39,7 @@ from ingestao import capturar as ing_capturar, listar_dispositivos as ing_dispos
 from ingestao import limpar_vivos_mortos as ing_limpar_vivos
 from ferramentas import caminho_banco, resumo as resumo_ferramentas  # noqa: E402
 import etapas as etapas_pipeline  # noqa: E402
+import trecho as trecho_modulo  # noqa: E402
 import producao as producao_pipeline  # noqa: E402
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -118,6 +119,7 @@ def inicializar(semear_demo: bool = False) -> None:
     # minuto e a tela de compressoes vinha vazia. Criar aqui deixa o banco novo igual ao da bancada.
     try:
         etapas_pipeline.garantir_tabela()
+        trecho_modulo.garantir_tabela()   # historico dos trechos baixados (prova da compressao)
         producao_pipeline.garantir_tabelas()
     except Exception as e:  # banco ocupado no boot nao pode derrubar a API
         print("[api] aviso: nao criei as tabelas sob demanda:", type(e).__name__, e, flush=True)
@@ -545,6 +547,113 @@ class Handler(SimpleHTTPRequestHandler):
     def _local(self) -> bool:
         return self.client_address[0] in ("127.0.0.1", "::1")
 
+    # ---- trecho de 1 minuto (prova da compressao)
+    def _autoriza_fluxo(self, u, fluxo: str) -> tuple[bool, str]:
+        """Quem pode baixar trecho DESTE fluxo: operacao/admin, o cliente dono da camera, ou a bancada.
+
+        Mesma regra da lista de cameras: cliente so' alcanca camera da propria empresa. Aqui so' se
+        decide sim/nao — nenhum endereco de camera, porta ou credencial entra na resposta.
+        """
+        if self._local():
+            return True, ""
+        if not u:
+            return False, "entre no sistema"
+        if u["papel"] in PAPEL_ADMIN:
+            return True, ""
+        with conexao() as c:
+            cam = c.execute("SELECT * FROM cameras WHERE fluxo_id=? ORDER BY id LIMIT 1", (fluxo,)).fetchone()
+        if cam and pode_ver_camera(u, cam):
+            return True, ""
+        return False, "esta camera nao e' do seu cliente"
+
+    def _trecho_por_camera(self, cam_id: str, u, somente_estado: bool = False) -> None:
+        """Mesma coisa, mas o app do cliente pede pela CAMERA (`/api/cameras/<id>/trecho`).
+
+        O cliente nunca recebe o id do fluxo (`vivo-cam-01`): ele fala pela camera que ele ja' ve, e
+        quem resolve camera -> fluxo e' o servidor. Assim o payload do cliente segue sem nome interno.
+        """
+        with conexao() as c:
+            cam = c.execute("SELECT * FROM cameras WHERE id=? OR fluxo_id=? ORDER BY id LIMIT 1",
+                            (cam_id, cam_id)).fetchone()
+        if not cam:
+            return self._json(404, {"erro": f"camera {cam_id} nao existe neste lado"})
+        if not self._local():
+            if not u:
+                return self._json(401, {"erro": "entre no sistema"})
+            if u["papel"] not in PAPEL_ADMIN and not pode_ver_camera(u, cam):
+                return self._json(403, {"erro": "esta camera nao e' do seu cliente"})
+        if somente_estado:
+            return self._json(200, trecho_modulo.estado(cam["fluxo_id"]), {"Cache-Control": "no-store"})
+        return self._trecho(cam["fluxo_id"], u)
+
+    def _trecho(self, fluxo: str, u) -> None:
+        """Grava N segundos do fluxo COMO CHEGOU e entrega o arquivo com os numeros nos cabeçalhos.
+
+        `X-Lecsor-*` deixa o proprio curl provar o tamanho antes de baixar o corpo: quem quiser
+        conferir o Mbps do Admin nao precisa nem abrir o video.
+        """
+        ok, motivo = self._autoriza_fluxo(u, fluxo)
+        if not ok:
+            return self._json(401 if not u else 403, {"erro": motivo, "fluxo_id": fluxo})
+        pedido = (parse_qs(urlparse(self.path).query).get("segundos") or [None])[0]
+        # fora de 10..60 e' recusado em voz alta: pedir 1 hora e receber 60 s calado seria mentir
+        if pedido not in (None, ""):
+            try:
+                n = int(float(pedido))
+            except (TypeError, ValueError):
+                return self._json(422, {"erro": f"segundos invalido ({pedido!r}): use "
+                                               f"{trecho_modulo.SEGUNDOS_MIN} a {trecho_modulo.SEGUNDOS_MAX}"})
+            if not (trecho_modulo.SEGUNDOS_MIN <= n <= trecho_modulo.SEGUNDOS_MAX):
+                return self._json(422, {"erro": f"segundos fora do permitido ({n}): use "
+                                               f"{trecho_modulo.SEGUNDOS_MIN} a {trecho_modulo.SEGUNDOS_MAX}"})
+        segundos = trecho_modulo.limitar_segundos(pedido)
+        r = trecho_modulo.gravar(fluxo, segundos=segundos, quem=(u["email"] if u else "bancada"))
+        if r.get("erro"):
+            return self._json(int(r.get("codigo") or 500), {"erro": r["erro"], "fluxo_id": fluxo},
+                              {"Cache-Control": "no-store"})
+        caminho = Path(r["arquivo"])
+        if not caminho.exists():
+            return self._json(500, {"erro": "o trecho foi gravado mas o arquivo sumiu (TTL ou limpeza)"})
+        auditar(u, "baixar_trecho",
+                f"{r['fluxo_id']} {r['segundos_pedidos']}s {r['mb']}MB {r['kbps_medidos']}kbps id={r['id']}",
+                self.client_address[0])
+        self.send_response(200)
+        self.send_header("Content-Type", "video/mp4")
+        self.send_header("Content-Length", str(r["bytes"]))
+        self.send_header("Content-Disposition", f'attachment; filename="{r["nome"]}"')
+        self.send_header("X-Lecsor-Trecho-Id", str(r["id"]))
+        self.send_header("X-Lecsor-Bytes", str(r["bytes"]))
+        self.send_header("X-Lecsor-Duracao-S", str(r["duracao_s"]))
+        self.send_header("X-Lecsor-Kbps-Medidos", str(r["kbps_medidos"]))
+        self.send_header("X-Lecsor-Sha256", r["sha256"])
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        with caminho.open("rb") as fh:
+            for bloco in iter(lambda: fh.read(1 << 20), b""):
+                self.wfile.write(bloco)
+
+    def _trechos(self, rota: str, u) -> None:
+        """`/api/trechos` (lista do que ja' foi gravado) e `/api/trechos/<id>/atestado` (a prova)."""
+        if rota.endswith("/atestado"):
+            alvo = rota[len("/api/trechos/"):-len("/atestado")].strip("/")
+            if not alvo.isdigit():
+                return self._json(422, {"erro": "id do trecho invalido (use o numero)"})
+            with conexao() as c:
+                t = c.execute("SELECT fluxo_id FROM trechos WHERE id=?", (int(alvo),)).fetchone()
+            if not t:
+                return self._json(404, {"erro": f"trecho {alvo} nao existe"})
+            ok, motivo = self._autoriza_fluxo(u, t["fluxo_id"])
+            if not ok:
+                return self._json(401 if not u else 403, {"erro": motivo})
+            return self._json(200, trecho_modulo.atestado(int(alvo)), {"Cache-Control": "no-store"})
+        if not (self._pode_operar(u) or self._local()):
+            return self._json(403, {"erro": "so operacao e administrador listam os trechos gravados"})
+        fluxo = (parse_qs(urlparse(self.path).query).get("fluxo") or [None])[0]
+        return self._json(200, {"trechos": trecho_modulo.listar(fluxo), "ttl_s": trecho_modulo.TTL_S,
+                                "teto_por_janela": trecho_modulo.TETO_POR_JANELA,
+                                "janela_s": trecho_modulo.JANELA_S},
+                          {"Cache-Control": "no-store"})
+
     def _chave_analytics(self) -> bool:
         """A ingestao de analise exige a chave do agente (variavel de ambiente no servidor).
         Sem chave configurada, a porta fica fechada — nao existe caminho sem credencial."""
@@ -609,6 +718,26 @@ class Handler(SimpleHTTPRequestHandler):
                                     "papel": u["papel"], "local": self._local()})
         if rota == "/api/fluxos":
             return self._json(200, fluxos())
+        # ---- trecho de 1 minuto: a prova de que a compressao informada e' real (dono, 15/11/2026)
+        # O cliente baixa 60 s do video COMO ELE CHEGA aqui (`-c copy`, sem reencodar) e o atestado
+        # poe o medido ao lado do declarado pelo PC de captura. Nada de endereco de camera no corpo.
+        if rota.startswith("/api/fluxos/") and rota.endswith("/trecho/estado"):
+            fluxo = unquote(rota[len("/api/fluxos/"):-len("/trecho/estado")]).strip("/")
+            ok, motivo = self._autoriza_fluxo(u, fluxo)
+            if not ok:
+                return self._json(401 if not u else 403, {"erro": motivo, "fluxo_id": fluxo})
+            return self._json(200, trecho_modulo.estado(fluxo), {"Cache-Control": "no-store"})
+        if rota.startswith("/api/fluxos/") and rota.endswith("/trecho"):
+            fluxo = unquote(rota[len("/api/fluxos/"):-len("/trecho")]).strip("/")
+            return self._trecho(fluxo, u)
+        if rota.startswith("/api/cameras/") and rota.endswith("/trecho/estado"):
+            cam = unquote(rota[len("/api/cameras/"):-len("/trecho/estado")]).strip("/")
+            return self._trecho_por_camera(cam, u, somente_estado=True)
+        if rota.startswith("/api/cameras/") and rota.endswith("/trecho"):
+            cam = unquote(rota[len("/api/cameras/"):-len("/trecho")]).strip("/")
+            return self._trecho_por_camera(cam, u)
+        if rota.startswith("/api/trechos"):
+            return self._trechos(rota, u)
         if rota in ("/api/envio/destino", "/api/envios/destino"):
             # Para onde vao os fluxos DESTA maquina (PC de captura -> lado terra). So operacao ve:
             # e' endereco de servico interno e o navegador do cliente nunca recebe esse dado.
