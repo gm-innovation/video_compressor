@@ -1,6 +1,6 @@
 # Sinais de radar → vídeo comprimido (bordo → terra) — plano
 
-**Status:** decisões do dono incorporadas (16/11/2026): fonte plugável por embarcação; modos **PPI e quadro cru**, os dois; taxas **1 imagem por volta e 30 fps**, as duas; PPI **1.024×1.024**; roda onde a embarcação definir — **aguardando "aprovado"**; nada implementado
+**Status:** decisões do dono incorporadas (16/11/2026): fonte plugável por embarcação; modos **PPI e quadro cru**, os dois; taxas **1 imagem por volta e 30 fps**, as duas; PPI **1.024×1.024**; roda onde a embarcação definir — **aprovado em 16/11/2026; Fases 1 e 2 implementadas e provadas**
 
 ## Pedido do dono (16/11/2026, verbatim)
 
@@ -93,6 +93,20 @@ que pode servir de banco de provas antes do hardware real.
   (`simh`: RIU TCP 47001 + NMEA TCP 47002) antes do hardware real.
 - **Fase 6 — P2:** **seleção por embarcação** na tela: fonte, modo de imagem (PPI/cru, ambos) e taxa
   (por volta/30 fps), gravada na configuração daquela embarcação — como o alvo por câmera da 0.4.0.
+
+## Estado da implementação (16/11/2026)
+
+- `ground/radar_drq.py`: lê `.drq` em sequência (nada de carregar 2,36 GiB), monta PPI e quadro cru em
+  1.024×1.024, nas taxas 1 imagem/volta e 30 fps, grava PNG (zlib+struct, sem Pillow) e codifica mp4 no
+  ffmpeg do produto, medindo kbps do arquivo.
+- Medido no arquivo do dono (168.639 quadros = 60 s de gravação): **PPI/volta: 26 imagens em 8,7 s**;
+  **PPI/30 fps: 1.795 imagens (59,8 s de vídeo) em 84 s** (dominado pela codificação). Janela de
+  amplitude medida: 1.512..4.092 (12 bits baixos de cada amostra).
+- Desenho da PPI (declarado, não escondido): cada direção recebe a última radial daquela direção na volta
+  (353 direções desenhadas de 6.719 radiais por volta) — o JSON de cada imagem traz `radiais_da_volta` e
+  `radiais_desenhadas`. Na taxa 30 fps a tela é mantida entre imagens (persistência de uma volta).
+- Prova executável: `python tests/test-radar-drq-para-video.py` → `RADAR_DRQ_OK` (formato, duas taxas,
+  dois modos, mp4 com kbps medido e o arquivo real do dono).
 
 ## Incógnitas declaradas (não medidas)
 
