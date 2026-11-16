@@ -1,6 +1,9 @@
 # Teste cego do Mbps: o download entrega o VÍDEO; a conferência do tamanho é feita à mão
 
-**Status:** aguardando aprovação (plano para o dono confirmar/corrigir)
+**Status:** **aprovado ("prossiga", 16/11/2026) — implementado na 0.3.0** (commit `415716a`; VPS no ar)
+**Resultado medido:** bancada `test-trecho-1-minuto`/`test-declarado`/`suite`/plug-and-play **rc=0**; VPS admin 10 s do
+`vivo-cam-01` = **1.842.916 B / 9,7 s**, cabeçalhos só `Bytes`/`Duracao-S`/`Sha256`/`Trecho-Id` (**sem Kbps**);
+atestado **admin 200** (medido 1.519,9 kbps) × **cliente 403**; cliente baixou **sem Kbps**; build **`BUILD_rc=0`** (4 instaladores 0.3.0).
 **Autor:** Hermes (a pedido de Alexandre) · **Data:** 16/11/2026 09:07 — **substitui** o plano das 08:59
 (`2026-11-16_085931-teste-cego-sem-comparativo-mbps.md`), que tinha ido longe demais.
 **Pedido (verbatim, corrigindo o plano anterior):** *"não, o teste cego é apenas para o mbps, baixamos o
