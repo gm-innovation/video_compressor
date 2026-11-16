@@ -1,6 +1,6 @@
 # Sinais de radar → vídeo comprimido (bordo → terra) — plano
 
-**Status:** decisões A e B do dono incorporadas (16/11/2026: fonte plugável por embarcação; modos PPI e quadro cru, ambos, com 1 imagem por volta e 30 fps) — **aguardando "aprovado"**; nada implementado
+**Status:** decisões do dono incorporadas (16/11/2026): fonte plugável por embarcação; modos **PPI e quadro cru**, os dois; taxas **1 imagem por volta e 30 fps**, as duas; PPI **1.024×1.024**; roda onde a embarcação definir — **aguardando "aprovado"**; nada implementado
 
 ## Pedido do dono (16/11/2026, verbatim)
 
@@ -71,12 +71,13 @@ que pode servir de banco de provas antes do hardware real.
 - Consequência de projeto: fonte, modo de imagem e taxa são **três seleções por embarcação**, do mesmo jeito
   que o alvo de bitrate é por câmera — e o alvo de bitrate continua por fluxo, com os níveis já da 0.4.0.
 
-## Ainda em aberto (parâmetro explícito até medir)
+## Fechado pelo dono (16/11/2026, segunda rodada)
 
-- **Resolução/tamanho da imagem** da PPI (sugestão a confirmar: 1.024×1.024, que é o número de amostras por
-  radial) e se ela leva a marca/carta do clone.
-- **Onde roda** (mesmo PC de captura ou máquina própria do radar): como cada embarcação define a sua infra,
-  o produto precisa aceitar os dois — a decisão fica por embarcação, na configuração.
+- **Resolução da PPI: 1.024×1.024** — o número de amostras por radial (medido no arquivo: `+188 = 1024`).
+- **Taxa padrão de fábrica: os DOIS** (1 imagem por volta e 30 fps), escolhidos por embarcação — mesma regra
+  da fonte e do modo de imagem.
+- **Onde roda:** aceita os dois (mesmo PC de captura ou máquina própria do radar), decidido por embarcação
+  na configuração — é o que "cada embarcação pode ter a sua própria infra" exige.
 
 ## Fases (com prioridade)
 
