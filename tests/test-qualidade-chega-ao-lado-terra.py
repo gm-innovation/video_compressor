@@ -183,7 +183,7 @@ def main() -> int:
         exigir(bool(fluxo) and fluxo.get("passa") is False,
                "0.95 esta ABAIXO do piso aceito e a tela diz isso (passa=%s)" % (fluxo or {}).get("passa"))
 
-        # a sugestao do proximo alvo: alvo atual 1500k -> 2300k (1,5x arredondado na centena)
+        # a sugestao do proximo alvo tem de ser um DEGRAU da lista fechada (o servidor recusa o resto)
         captura = Sessao(base)
         s, j = captura.pedir("/api/entrar", {"email": "admin@lecsor.test", "senha": SENHA})
         exigir(s == 200 and j.get("ok"), "admin autenticou (http %s)" % s)
@@ -194,17 +194,28 @@ def main() -> int:
         fluxo = next((f for f in j.get("fluxos", []) if f["fluxo_id"] == FLUXO), None)
         exigir(bool(fluxo) and fluxo.get("alvo_atual") == "1500k",
                "a qualidade mostra o alvo atual da camera: %r" % (fluxo or {}).get("alvo_atual"))
-        exigir(bool(fluxo) and fluxo.get("alvo_sugerido") == "2300k",
-               "com SSIM abaixo do piso a tela sugere o proximo alvo: %r" % (fluxo or {}).get("alvo_sugerido"))
+        exigir(bool(fluxo) and fluxo.get("alvo_sugerido") == "",
+               "no TETO da lista (1500k) nao se sugere degrau nenhum: %r" % (fluxo or {}).get("alvo_sugerido"))
+
+        # abaixo do teto a sugestao e' o PROXIMO degrau aceito (nunca um numero que o servidor recusaria)
+        s, j = captura.pedir("/api/cameras/%s/alvo" % FLUXO, {"alvo": "800k"})
+        exigir(s == 200 and j.get("alvo") == "800k", "nivel 800k da lista aceito (http %s)" % s)
+        s, j = operacao.pedir("/api/qualidade")
+        fluxo = next((f for f in j.get("fluxos", []) if f["fluxo_id"] == FLUXO), None)
+        exigir(bool(fluxo) and fluxo.get("alvo_sugerido") == "1000k",
+               "a sugestao e' o proximo degrau da lista (800k -> 1000k): %r" % (fluxo or {}).get("alvo_sugerido"))
 
         s, j = captura.pedir("/api/cameras/%s/alvo" % FLUXO, {"alvo": "nao-e-numero"})
         exigir(s == 422, "alvo invalido e' recusado (http %s)" % s)
         s, j = captura.pedir("/api/cameras/%s/alvo" % FLUXO, {"alvo": "2300"})
-        exigir(s == 200 and j.get("alvo") == "2300k", "alvo gravado por numero vira kbps: %r" % j.get("alvo"))
+        exigir(s == 422 and j.get("alvos") == ["1500k", "1200k", "1000k", "800k", "500k", "300k"],
+               "texto livre de antes (2300) e' recusado e a resposta traz a lista: %r" % j.get("alvos"))
+        s, j = captura.pedir("/api/cameras/%s/alvo" % FLUXO, {"alvo": "1000k"})
+        exigir(s == 200 and j.get("alvo") == "1000k", "nivel da lista gravado (http %s): %r" % (s, j.get("alvo")))
         con = sqlite3.connect(banco)
         gravado = con.execute("SELECT alvo FROM cameras WHERE id=?", (FLUXO,)).fetchone()
         con.close()
-        exigir(bool(gravado) and gravado[0] == "2300k", "o alvo ficou no cadastro da camera: %r"
+        exigir(bool(gravado) and gravado[0] == "1000k", "o alvo ficou no cadastro da camera: %r"
                % (gravado[0] if gravado else None))
 
         # ------------------------------------------------- o cliente nunca ve a metrica da operacao

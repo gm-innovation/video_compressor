@@ -2,7 +2,7 @@
    relatorios e cadastros. Fala somente com a API do produto. */
 const S = {
   usuario: null, embarcacoes: [], cameras: [], embarcacaoId: null,
-  tela: 'visualizar', layout: 3, auto: true, pagina: 1, selecionadas: new Set(), ia: false,
+  tela: 'visualizar', layout: 3, auto: true, pagina: 1, selecionadas: new Set(), ia: false, destaque: [],
   podeCamera: false, trechoEmCurso: false,
   eventos: [], contagens: [], relatorios: null, timer: null,
   analises: { agentes: [], contagens: [], eventos: [] }, agentesPorCamera: {}
@@ -191,6 +191,14 @@ function desenharVisualizar() {
     bT.title = 'Baixa 60 s do vídeo como ele chega no lado terra, sem reencodar, para conferir o tamanho';
     bT.onclick = (ev) => { ev.stopPropagation(); baixarTrecho(c, bT); };
     ctrlT.appendChild(bT);
+    // ver ESTA câmera em destaque (1 clique) — o duplo clique na janela faz o mesmo
+    const bD = document.createElement('button');
+    bD.className = 'botao-trecho';
+    bD.textContent = 'Destaque';
+    bD.title = 'Ver esta câmera em destaque (tela cheia)';
+    bD.onclick = (ev) => { ev.stopPropagation(); abrirDestaque([c.id]); };
+    ctrlT.appendChild(bD);
+    jan.ondblclick = (ev) => { ev.stopPropagation(); abrirDestaque([c.id]); };
     jan.appendChild(ctrlT);
     const linhaT = document.createElement('div'); linhaT.className = 'trecho-linha'; linhaT.style.display = 'none';
     jan.appendChild(linhaT);
@@ -225,6 +233,66 @@ async function energia(cameraId, ligar) {
    pelo servidor em -c copy (bits que chegaram, sem reencodar) e a tela mostra os MB subindo. */
 function janelaDa(cameraId) {
   return document.querySelector('.janela[data-cam="' + String(cameraId).replace(/"/g, '\\"') + '"]');
+}
+
+/* ------------------------------------------------------------------ destaque (1 a 4 câmeras)
+   Ver uma câmera em tela cheia, ou 2 a 4 em destaque, sem mexer na grade do palco. Cada janela do
+   destaque abre a SUA propria sessão (`destaque-<id>`), então o mesmo fluxo pode estar na grade e no
+   destaque ao mesmo tempo. Nada aqui muda banda, resolução ou o que o servidor envia — isso é a
+   seleção de qualidade por câmera, que é da operação. */
+function cameraPorId(id) { return S.cameras.find((c) => c.id === id) || null; }
+
+function abrirDestaque(ids) {
+  const lista = (ids || []).map(cameraPorId).filter(Boolean).slice(0, 4);
+  if (!lista.length) { alert('selecione de 1 a 4 câmeras para destacar'); return; }
+  fecharDestaque(true);
+  const caixa = document.createElement('div');
+  caixa.className = 'destaque'; caixa.id = 'destaque';
+  const topo = document.createElement('div'); topo.className = 'destaque-topo';
+  const titulo = document.createElement('span'); titulo.className = 'destaque-titulo';
+  titulo.textContent = lista.length === 1
+    ? 'Em destaque: ' + lista[0].rotulo
+    : lista.length + ' câmeras em destaque: ' + lista.map((c) => c.rotulo).join(' · ');
+  topo.appendChild(titulo);
+  const bCheia = document.createElement('button'); bCheia.className = 'pil'; bCheia.textContent = 'Tela cheia do destaque';
+  bCheia.onclick = () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else if (caixa.requestFullscreen) caixa.requestFullscreen();
+  };
+  const bVoltar = document.createElement('button'); bVoltar.className = 'pil'; bVoltar.textContent = 'Voltar à grade';
+  bVoltar.onclick = () => fecharDestaque();
+  topo.appendChild(bCheia); topo.appendChild(bVoltar);
+  caixa.appendChild(topo);
+  const grade = document.createElement('div');
+  grade.className = 'grade-vms g' + (lista.length === 1 ? '1' : lista.length === 2 ? '2' : lista.length === 3 ? '3' : '4');
+  caixa.appendChild(grade);
+  for (const c of lista) {
+    const jan = document.createElement('div');
+    jan.className = 'janela'; jan.dataset.camDestaque = c.id;
+    const v = document.createElement('video');
+    v.id = 'vdestaque-' + c.id; v.muted = true; v.autoplay = true; v.playsInline = true;
+    jan.appendChild(v);
+    const rot = document.createElement('div'); rot.className = 'rotulo-cam';
+    rot.textContent = c.rotulo;
+    jan.appendChild(rot);
+    grade.appendChild(jan);
+    window.Video.ligar('destaque-' + c.id, c.id, v);
+  }
+  document.body.appendChild(caixa);
+  S.destaque = lista.map((c) => c.id);
+}
+
+function fecharDestaque(silencioso) {
+  const antigo = document.getElementById('destaque');
+  if (antigo) {
+    for (const jan of Array.from(antigo.querySelectorAll('.janela'))) {
+      window.Video.parar('destaque-' + jan.dataset.camDestaque);
+    }
+    if (document.fullscreenElement === antigo) document.exitFullscreen();
+    antigo.remove();
+  }
+  S.destaque = [];
+  return !silencioso;
 }
 
 function linhaTrecho(jan, texto) {
@@ -595,6 +663,15 @@ $('btn-ia').addEventListener('click', () => {
   $('palco').querySelectorAll('.selo-ia').forEach((s) => s.remove());
   S.cameras.forEach((c) => desenharCaixas(c.id));
   atualizarSeloIA();
+});
+$('btn-destaque').addEventListener('click', () => {
+  // o que estiver selecionado (a seleção nasce com todas); se não houver seleção, as da página
+  const ids = Array.from(S.selecionadas);
+  const alvos = ids.length ? ids : camerasDaPagina().map((c) => c.id);
+  if (alvos.length > 4) {
+    if (!confirm('Destacar apenas as 4 primeiras de ' + alvos.length + ' selecionadas?')) return;
+  }
+  abrirDestaque(alvos.slice(0, 4));
 });
 $('btn-cheia').addEventListener('click', () => {
   const alvo = $('palco');

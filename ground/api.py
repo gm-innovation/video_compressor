@@ -328,6 +328,9 @@ def fluxos() -> dict:
         for cam in c.execute("SELECT * FROM cameras WHERE ativo=1 ORDER BY id").fetchall():
             p = mt.get(cam["fluxo_id"], {})
             itens.append({"id": cam["id"], "fluxo_id": cam["fluxo_id"], "rotulo": cam["rotulo"],
+                          # o alvo vai aqui porque /api/fluxos e' a tela do PC DE CAPTURA (o dono escolhe
+                          # a qualidade olhando a propria imagem); nao e' rota do app do cliente
+                          "alvo": cam["alvo"] or "",
                           "embarcacao_id": cam["embarcacao_id"], "no_ar": bool(p.get("ready")),
                           "tracks": p.get("tracks", []), "leitores": len(p.get("readers", []))})
     return {"fluxos": itens, "atualizado_em": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -513,6 +516,39 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _pode_operar(self, u) -> bool:
         return bool(u) and u["papel"] in ("admin", "operador")
+
+    # Niveis que a tela pode escolher POR CAMERA (pedido do dono, 16/11/2026): lista FECHADA. Qualquer
+    # outro numero e' recusado com a lista na mensagem — alvo voltou a ser escolha, nao texto livre.
+    ALVOS_DE_QUALIDADE = ("1500k", "1200k", "1000k", "800k", "500k", "300k")
+
+    def _reabrir_para_aplicar(self, cam) -> dict:
+        """Reabre o envio DAQUELA camera para o ajuste novo valer NO AR (nao so' na lista).
+
+        Gravar o alvo nao mudava o video que estava no ar (o ffmpeg ja' tinha subido com o alvo antigo):
+        a tela parecia que mudou, o kbps continuava o mesmo. Aqui a camera e' desligada e religada com o
+        ajuste novo — so' ela, por ~2 s. Camera por endereco (RTSP) nao pode ser reaberta daqui (precisa
+        da credencial pelo "Enviar video"): nesse caso dizemos em voz alta que vale no proximo envio.
+        """
+        if str(cam["ip"] or "").strip():
+            return {"aplicado": False,
+                    "motivo": "camera por endereco (RTSP): o alvo vale quando o Enviar video subir de novo"}
+        try:
+            with conexao() as c:
+                viva = c.execute("""SELECT id FROM ingestoes WHERE fluxo_id=? AND
+                                    estado IN ('no_ar','no ar','iniciando') ORDER BY id DESC LIMIT 1""",
+                                 (cam["fluxo_id"],)).fetchone()
+        except Exception as e:
+            return {"aplicado": False, "motivo": f"nao consegui ler o estado do envio ({type(e).__name__})"}
+        if not viva:
+            return {"aplicado": False, "motivo": "a camera nao estava no ar: o alvo vale quando ela subir"}
+        try:
+            ing_desligar_camera(cam["id"])
+            r = ing_ligar_camera(cam["id"])
+        except Exception as e:
+            return {"aplicado": False, "motivo": f"{type(e).__name__}: {e}"}
+        if isinstance(r, dict) and r.get("erro"):
+            return {"aplicado": False, "motivo": str(r["erro"])}
+        return {"aplicado": True, "envio": (r or {}).get("id"), "fluxo_id": cam["fluxo_id"]}
 
     def _enviar_arquivo(self, caminho: Path, baixar: bool = True) -> None:
         if not caminho.exists() or not caminho.is_file():
@@ -935,15 +971,18 @@ class Handler(SimpleHTTPRequestHandler):
                 atual = str(alvos.get(l["fluxo_id"]) or envios.get(l["fluxo_id"]) or "")
                 sugerido = ""
                 if not passa and atual:
+                    # A sugestao tem de ser um degrau da lista FECHADA de qualidade (senao a tela sugere
+                    # um numero que o servidor recusa). E' sempre o degrau SEGUINTE: subir um nivel por
+                    # vez e' como o dono compara na tela: 300k -> 500k -> 800k -> 1000k -> 1200k -> 1500k.
                     try:
                         kbps = int(re.sub(r"[^0-9]", "", atual) or 0)
-                        if kbps:
-                            # 1,5x arredondado PARA CIMA na centena (1500k -> 2300k): subir menos que
-                            # isso quase nunca muda o numero na tela e o dono fica sem referencia
-                            alvo_num = min(int(kbps * 1.5), 8000)
-                            sugerido = f"{(alvo_num + 99) // 100 * 100}k"
                     except ValueError:
-                        sugerido = ""
+                        kbps = 0
+                    acima = [n for n in ("300k", "500k", "800k", "1000k", "1200k", "1500k")
+                             if int(n[:-1]) > kbps]
+                    if acima:
+                        sugerido = min(acima, key=lambda n: int(n[:-1]))
+                    # no teto (1500k) nao ha' degrau acima: nao se sugere nada — o caminho ali e' a fonte
                 itens.append({"fluxo_id": l["fluxo_id"], "ssim": l["ssim"], "ajuste": l["ajuste"],
                               "resolucao": l["resolucao"], "fps": l["fps"], "medido_em": l["medido_em"],
                               "idade_s": idade, "passa": bool(passa), "alvo_atual": atual,
@@ -1593,25 +1632,108 @@ class Handler(SimpleHTTPRequestHandler):
             auditar(u, "publicar_cadastro_cameras", f"{len(enviadas)} ok / {len(falhas)} falha",
                     self.client_address[0])
             return self._json(200, {"ok": not falhas, "publicadas": enviadas, "falharam": falhas})
+        if rota.startswith("/api/cameras/") and rota.endswith("/remover"):
+            # Tirar da operacao a camera que nao e' mais usada: para o envio dela, apaga o cadastro
+            # AQUI e publica a remocao no lado terra — senao a camera fica para sempre no app do
+            # cliente (desativar escondia, mas o cadastro continuava). Trechos e auditoria ficam.
+            if not (u and u["papel"] in PAPEL_ADMIN):
+                return self._json(403, {"erro": "so a operacao remove camera: entre como operador ou admin"})
+            cid = rota[len("/api/cameras/"):-len("/remover")]
+            with conexao() as c:
+                cam = c.execute("SELECT * FROM cameras WHERE id=?", (cid,)).fetchone()
+            if not cam:
+                return self._json(404, {"erro": "camera inexistente"})
+            parado = ing_desligar_camera(cid)
+            with conexao() as c:
+                c.execute("DELETE FROM cameras WHERE id=?", (cid,))
+            lado = {"ok": False, "motivo": "nao tentei"}
+            try:
+                import repasse
+                lado = repasse.publicar_cadastro({"id": cam["id"], "fluxo_id": cam["fluxo_id"],
+                                                  "rotulo": cam["rotulo"], "ativo": 0,
+                                                  "embarcacao_id": cam["embarcacao_id"]}, remover=True)
+            except Exception as e:
+                lado = {"ok": False, "motivo": f"{type(e).__name__}: {e}"}
+            auditar(u, "remover_camera", f"{cid} ({cam['fluxo_id']})", self.client_address[0])
+            return self._json(200, {"ok": True, "id": cid, "fluxo_id": cam["fluxo_id"],
+                                    "envio_parado": bool((parado or {}).get("ok")),
+                                    "lado_terra": lado, "trechos_preservados": True})
+        if rota.startswith("/api/cameras/") and rota.endswith("/editar"):
+            # Editar a camera EM OPERACAO, campo a campo. `POST /api/cameras` e' INSERT OR REPLACE
+            # (recria a linha e zera `ativo`): serve para criar, nao para editar. Aqui muda SO' o que
+            # veio no corpo, sem resetar `ativo`, `alvo` nem o que o cliente ja' ve.
+            if not (u and u["papel"] in PAPEL_ADMIN):
+                return self._json(403, {"erro": "so a operacao edita camera: entre como operador ou admin"})
+            cid = rota[len("/api/cameras/"):-len("/editar")]
+            d = self._corpo()
+            campos, mudados = {}, []
+            with conexao() as c:
+                cam = c.execute("SELECT * FROM cameras WHERE id=?", (cid,)).fetchone()
+                if not cam:
+                    return self._json(404, {"erro": "camera inexistente"})
+                for chave in ("rotulo", "embarcacao_id", "ip", "porta", "protocolo", "canal", "fluxo_id"):
+                    if chave not in d:
+                        continue
+                    valor = str(d.get(chave) or "").strip()
+                    if chave == "rotulo" and not valor:
+                        return self._json(422, {"erro": "rotulo nao pode ficar vazio"})
+                    if chave == "ip" and valor and not re.match(r"^[0-9a-zA-Z.:\-]{3,64}$", valor):
+                        return self._json(422, {"erro": "ip invalido"})
+                    if chave == "porta" and valor and not (valor.isdigit() and 1 <= int(valor) <= 65535):
+                        return self._json(422, {"erro": "porta invalida"})
+                    if chave == "fluxo_id":
+                        valor = re.sub(r"[^a-zA-Z0-9_\-]", "-", valor)
+                    if valor != str(cam[chave] or ""):
+                        campos[chave] = valor
+                        mudados.append(chave)
+                if not mudados:
+                    return self._json(200, {"ok": True, "id": cid, "mudou": [],
+                                            "observacao": "nada a mudar"})
+                if campos.get("embarcacao_id") and not c.execute(
+                        "SELECT 1 FROM embarcacoes WHERE id=?", (campos["embarcacao_id"],)).fetchone():
+                    return self._json(422, {"erro": "embarcacao_id inexistente"})
+                c.execute("UPDATE cameras SET " + ", ".join(f"{k}=?" for k in campos) + " WHERE id=?",
+                          (*campos.values(), cid))
+                cam = c.execute("SELECT * FROM cameras WHERE id=?", (cid,)).fetchone()
+            # mexer na FONTE (endereco/porta/canal/fluxo) so' vale no ar se reabrir; rotulo nao mexe no video
+            fonte_mudou = any(k in mudados for k in ("ip", "porta", "protocolo", "canal", "fluxo_id"))
+            aplicado = (self._reabrir_para_aplicar(cam) if fonte_mudou
+                        else {"aplicado": False, "motivo": "nao mexe na fonte: o video em curso segue"})
+            auditar(u, "editar_camera", f"{cid} " + ",".join(mudados), self.client_address[0])
+            try:
+                import repasse
+                repasse.publicar_cadastro({"id": cam["id"], "fluxo_id": cam["fluxo_id"],
+                                           "rotulo": cam["rotulo"], "ativo": cam["ativo"],
+                                           "embarcacao_id": cam["embarcacao_id"]})
+            except Exception:
+                pass
+            return self._json(200, {"ok": True, "id": cid, "mudou": mudados, **aplicado})
         if rota.startswith("/api/cameras/") and rota.endswith("/alvo"):
             # Alvo de bitrate POR CAMERA: e' o ajuste que o dono escolhe olhando a imagem (ou o que a
-            # sugestao da tela propõe quando o SSIM fica abaixo do piso). Sem isso as duas cameras
-            # usavam o mesmo alvo e a mais detalhada era a que "perdia qualidade".
-            if not (u and u["papel"] in PAPEL_ADMIN) and not self._local():
+            # sugestao da tela propõe quando o SSIM fica abaixo do piso). A lista e' FECHADA
+            # (`ALVOS_DE_QUALIDADE`): 1500k/1200k/1000k/800k/500k/300k, e a escolha vale NO AR (a
+            # camera e' reaberta com o alvo novo). Abaixo do piso o sistema so' avisa, nao recusa.
+            # sem excecao de "chamada local": o app do CLIENTE pode estar na mesma maquina do lado
+            # terra (correcao do dono: "operacao e admin sao iguais") e nao pode escolher qualidade
+            if not (u and u["papel"] in PAPEL_ADMIN):
                 return self._json(403, {"erro": "so a operacao define o alvo da camera"})
             cid = rota[len("/api/cameras/"):-len("/alvo")]
             alvo = str(self._corpo().get("alvo") or "").strip()
-            if alvo and not re.match(r"^[0-9]{2,6}k?$", alvo):
-                return self._json(422, {"erro": "alvo invalido: use um numero de kbps (ex.: 2000k)"})
-            if alvo and not alvo.endswith("k"):
-                alvo += "k"
+            if alvo and alvo not in self.ALVOS_DE_QUALIDADE:
+                return self._json(422, {"erro": "alvo fora da lista de qualidade (so avisa, nao recusa: "
+                                               "abaixo do piso o sistema mede e avisa)",
+                                        "alvos": list(self.ALVOS_DE_QUALIDADE)})
             with conexao() as c:
                 cam = c.execute("SELECT * FROM cameras WHERE id=?", (cid,)).fetchone()
                 if not cam:
                     return self._json(404, {"erro": "camera inexistente"})
                 c.execute("UPDATE cameras SET alvo=? WHERE id=?", (alvo, cid))
-            auditar(u, "definir_alvo_camera", f"{cid} alvo={alvo or 'padrao'}", self.client_address[0])
-            return self._json(200, {"id": cid, "alvo": alvo})
+            aplicado = (self._reabrir_para_aplicar(cam) if alvo
+                        else {"aplicado": False, "motivo": "sem alvo: a camera volta ao padrao da tela"})
+            auditar(u, "definir_alvo_camera", f"{cid} alvo={alvo or 'padrao'} ({aplicado.get('motivo', '')})",
+                    self.client_address[0])
+            return self._json(200, {"id": cid, "alvo": alvo, "alvos": list(self.ALVOS_DE_QUALIDADE),
+                                    **aplicado})
         if rota.startswith("/api/cameras/") and rota.endswith("/ativo"):
             if not (u and u["papel"] in PAPEL_ADMIN):
                 return self._json(401, {"erro": "entre no sistema"})
@@ -1740,6 +1862,13 @@ class Handler(SimpleHTTPRequestHandler):
         cid = re.sub(r"[^a-zA-Z0-9_\-]", "-", str(d.get("id") or "").strip()) or fluxo
         rotulo = (str(d.get("rotulo") or fluxo).strip() or fluxo)[:120]
         ativo = 0 if str(d.get("ativo", 1)).strip().lower() in ("0", "false", "nao", "não") else 1
+        # REMOCAO: o bordo avisa que a camera saiu de operacao (o dono removeu na tela) e o lado terra
+        # apaga o cadastro — desativar escondia, mas a camera continuava para sempre na lista do cliente.
+        if str(d.get("remover", "")).strip().lower() in ("1", "true", "sim", "s"):
+            with conexao() as c:
+                c.execute("DELETE FROM cameras WHERE id=? OR fluxo_id=?", (cid, fluxo))
+            auditar(None, "camera_removida_pelo_bordo", f"{cid} ({fluxo})", self.client_address[0])
+            return self._json(200, {"ok": True, "id": cid, "fluxo_id": fluxo, "removido": True})
         emb = str(d.get("embarcacao_id") or os.environ.get("LECSOR_EMBARCACAO_BORDO") or "").strip()
         with conexao() as c:
             if not emb:

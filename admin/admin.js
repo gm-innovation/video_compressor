@@ -427,35 +427,90 @@ function telaCameras(t) {
     { rotulo: 'Encoder', valor: (l) => { const e = (l.viva && l.viva.encoder) || {}; return [e.codec, e.resolucao, e.fps ? e.fps + ' fps' : '', e.bitrate].filter(Boolean).join(' · '); } },
     { rotulo: 'Qualidade (SSIM)', valor: textoQualidade },
     { rotulo: 'Declarado pelo PC de captura', valor: textoDeclarado },
-    { rotulo: 'Alvo (só desta câmera)', valor: (l) => {
+    { rotulo: 'Qualidade enviada (só desta câmera)', valor: (l) => {
+        /* Selecao FECHADA de taxa por camera (dono, 16/11/2026): 1500k/1200k/1000k/800k/500k/300k.
+           Escolher aqui vale NO AR: o servidor reabre o envio SÓ desta câmera (~2 s) com a taxa nova.
+           Abaixo do piso de qualidade o sistema só AVISA (não recusa) — a decisão é da operação. */
         const c = porId[l.id] || {};
         const caixa = document.createElement('div');
         caixa.style.display = 'flex'; caixa.style.gap = '.4rem'; caixa.style.alignItems = 'center';
-        const txt = document.createElement('span');
-        txt.textContent = c.alvo || 'padrão da tela';
-        caixa.appendChild(txt);
+        const sel = document.createElement('select');
+        sel.className = 'mini';
+        sel.title = 'Taxa de envio só desta câmera';
+        for (const op of ['', '1500k', '1200k', '1000k', '800k', '500k', '300k']) {
+          sel.appendChild(Object.assign(document.createElement('option'), {
+            value: op, textContent: op ? op.replace('k', ' kbps') : 'padrão da tela',
+            selected: (c.alvo || '') === op }));
+        }
+        // um alvo antigo (ex.: 2500k de antes da lista) continua visível, para não parecer "voltou ao padrão"
+        if (c.alvo && !['', '1500k', '1200k', '1000k', '800k', '500k', '300k'].includes(c.alvo)) {
+          sel.appendChild(Object.assign(document.createElement('option'), { value: c.alvo, textContent: c.alvo + ' (fora da lista)', selected: true }));
+        }
+        caixa.appendChild(sel);
         const sug = qualDe(l);
-        caixa.appendChild(botao('definir', 'mini', async () => {
-          const sugerido = (sug && sug.passa === false && sug.alvo_sugerido) ? sug.alvo_sugerido : '';
-          const novo = prompt('Alvo de bitrate só desta câmera (ex.: 2500k). Vazio volta ao padrão da tela.'
-            + (sugerido ? ' A qualidade está abaixo do piso: o próximo passo sugerido é ' + sugerido + '.' : ''),
-            sugerido || c.alvo || '');
-          if (novo === null) return;
+        const dica = (sug && sug.passa === false) ? ' · abaixo do piso (⚠ ' + fmt(sug.ssim, 4) + ')' : '';
+        caixa.appendChild(botao('aplicar', 'mini', async () => {
           const r = await api('/api/cameras/' + encodeURIComponent(l.id) + '/alvo',
-            { method: 'POST', body: JSON.stringify({ alvo: novo.trim() }) });
-          mostrarRecado(r.ok ? ('alvo de ' + l.rotulo + ': ' + (r.corpo.alvo || 'padrão da tela')
-            + ' — vale no próximo envio desta câmera') : 'recusado: ' + JSON.stringify(r.corpo), !r.ok);
+            { method: 'POST', body: JSON.stringify({ alvo: sel.value }) });
+          const d = r.corpo || {};
+          mostrarRecado(r.ok ? ('qualidade de ' + l.rotulo + ' = ' + (d.alvo || 'padrão da tela')
+            + ' — ' + (d.aplicado ? 'aplicada no ar (envio reaberto)' : (d.motivo || '')) + dica)
+            : 'recusado: ' + JSON.stringify(d), !r.ok);
           if (r.ok) { A.camerasInterno = null; await atualizar(); }
         }));
         return caixa;
       } },
     { rotulo: 'Espectadores', valor: (l) => ((l.viva && l.viva.leitores) || 0) },
-    { rotulo: 'Ação', valor: (l) => botao(l.ativo ? 'desativar' : 'ativar', 'mini', async () => {
-        if (l.ativo && !confirm('Desativar "' + l.rotulo + '"? Ela sai da tela do cliente; o histórico fica guardado.')) return;
-        const r = await api('/api/cameras/' + encodeURIComponent(l.id) + '/ativo', { method: 'POST', body: JSON.stringify({ ativo: !l.ativo }) });
-        mostrarRecado(r.ok ? (l.ativo ? 'câmera desativada — o cliente não vê mais' : 'câmera ativada de novo') : 'recusado: ' + JSON.stringify(r.corpo), !r.ok);
-        if (r.ok) { A.camerasInterno = null; await atualizar(); }
-      }) }], linhas, 'nenhuma câmera cadastrada'));
+    { rotulo: 'Ação', valor: (l) => {
+        const c = porId[l.id] || {};
+        const cx = document.createElement('div');
+        cx.style.display = 'flex'; cx.style.gap = '.4rem'; cx.style.flexWrap = 'wrap';
+        cx.appendChild(botao(l.ativo ? 'desativar' : 'ativar', 'mini', async () => {
+          if (l.ativo && !confirm('Desativar "' + l.rotulo + '"? Ela sai da tela do cliente; o histórico fica guardado.')) return;
+          const r = await api('/api/cameras/' + encodeURIComponent(l.id) + '/ativo', { method: 'POST', body: JSON.stringify({ ativo: !l.ativo }) });
+          mostrarRecado(r.ok ? (l.ativo ? 'câmera desativada — o cliente não vê mais' : 'câmera ativada de novo') : 'recusado: ' + JSON.stringify(r.corpo), !r.ok);
+          if (r.ok) { A.camerasInterno = null; await atualizar(); }
+        }));
+        /* Editar EM OPERAÇÃO: muda só o que você digitar. Não recria a linha (isso zerava `ativo` e o
+           alvo escolhido) e não toca no vídeo quando é só o rótulo. */
+        cx.appendChild(botao('editar', 'mini', async () => {
+          const rot = prompt('Rótulo desta câmera (Enter mantém "' + l.rotulo + '"):', l.rotulo);
+          if (rot === null) return;
+          const end = prompt('Endereço de operação (IP:porta ou só IP). Enter mantém "' + (c.ip || '—') + '".',
+            (c.ip || '') + (c.porta ? ':' + c.porta : ''));
+          if (end === null) return;
+          const corpo = {};
+          if (rot.trim() && rot.trim() !== l.rotulo) corpo.rotulo = rot.trim();
+          if (end.trim()) {
+            const m = end.trim().match(/^([^:]+)(?::(\d+))?$/);
+            if (!m) { mostrarRecado('endereço inválido: use IP ou IP:porta', true); return; }
+            if (m[1] !== (c.ip || '')) corpo.ip = m[1];
+            if (m[2] && m[2] !== String(c.porta || '')) corpo.porta = m[2];
+          }
+          if (!Object.keys(corpo).length) { mostrarRecado('nada a mudar em ' + l.rotulo, true); return; }
+          const r = await api('/api/cameras/' + encodeURIComponent(l.id) + '/editar',
+            { method: 'POST', body: JSON.stringify(corpo) });
+          const d = r.corpo || {};
+          mostrarRecado(r.ok ? ('câmera ' + l.rotulo + ' editada: ' + (d.mudou || []).join(', ')
+            + ' — ' + (d.aplicado ? 'fonte reaberta no ar' : (d.motivo || ''))) : 'recusado: ' + JSON.stringify(d), !r.ok);
+          if (r.ok) { A.camerasInterno = null; await atualizar(); }
+        }));
+        /* Remover: a câmera que não é mais usada. Some daqui E da tela do cliente (o lado terra apaga
+           o cadastro); os trechos e a auditoria ficam. Exige digitar "remover" para não ser engano. */
+        cx.appendChild(botao('remover', 'mini', async () => {
+          const conf = prompt('Remover "' + l.rotulo + '" de vez? Ela sai desta lista e da tela do cliente.\n' +
+            'Os trechos já gravados e a auditoria continuam. Digite remover para confirmar:');
+          if (conf === null) return;
+          if (conf.trim().toLowerCase() !== 'remover') { mostrarRecado('remover cancelado (nada foi apagado)', true); return; }
+          const r = await api('/api/cameras/' + encodeURIComponent(l.id) + '/remover', { method: 'POST', body: JSON.stringify({}) });
+          const d = r.corpo || {};
+          mostrarRecado(r.ok ? ('câmera ' + l.rotulo + ' removida — envio parado: ' + (d.envio_parado ? 'sim' : 'não estava no ar')
+            + ' · lado terra: ' + (d.lado_terra && d.lado_terra.ok ? 'cadastro apagado' : JSON.stringify((d.lado_terra || {}).motivo || '')))
+            : 'recusado: ' + JSON.stringify(d), !r.ok);
+          if (r.ok) { A.camerasInterno = null; await atualizar(); }
+        }));
+        return cx;
+      } }], linhas, 'nenhuma câmera cadastrada'));
   /* Comparar a MESMA cena em vários alvos: é assim que "está perdendo qualidade" vira número. A
      fonte precisa estar livre (a medição abre a câmera), então o envio tem que estar parado. */
   const caixaComp = document.createElement('div'); caixaComp.className = 'caixa-form';

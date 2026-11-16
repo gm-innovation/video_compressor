@@ -112,7 +112,7 @@ def anunciar(fluxo: str, destino: str, rotulo: str | None = None) -> dict:
         return {"ok": False, "erro": str(e)}
 
 
-def publicar_cadastro(camera: dict, destino: str | None = None) -> dict:
+def publicar_cadastro(camera: dict, destino: str | None = None, remover: bool = False) -> dict:
     """Publica o CADASTRO de uma camera desta maquina no lado terra, sem esperar o fluxo subir.
 
     Era o furo do "cadastrei cam-01 e cam-02 no PC de captura e o app do cliente nao mostra nada": a
@@ -131,6 +131,9 @@ def publicar_cadastro(camera: dict, destino: str | None = None) -> dict:
     corpo = {"id": camera.get("id") or fluxo, "fluxo_id": fluxo,
              "rotulo": camera.get("rotulo") or fluxo,
              "ativo": 0 if str(camera.get("ativo", 1)).strip() in ("0", "False", "false") else 1}
+    if remover:
+        # avisa o lado terra que a camera saiu de operacao: ele APAGA o cadastro (nao e' desativar)
+        corpo["remover"] = True
     emb = str(camera.get("embarcacao_id") or os.environ.get("LECSOR_EMBARCACAO") or "").strip()
     if emb:
         corpo["embarcacao_id"] = emb

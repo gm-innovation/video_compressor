@@ -463,6 +463,22 @@ checar(r25.returncode == 0, "test-declarado-chega-ao-lado-terra.py passou" if r2
 
 
 print()
+print("== 26. seleção de QUALIDADE por câmera: 1500k/1200k/1000k/800k/500k/300k, individual ==")
+r26 = subprocess.run([sys.executable, str(RAIZ / "tests" / "test-selecao-de-qualidade.py")],
+                     capture_output=True, text=True, encoding="utf-8", errors="replace")
+checar(r26.returncode == 0, "test-selecao-de-qualidade.py passou" if r26.returncode == 0
+       else f"test-selecao-de-qualidade.py FALHOU: {(r26.stdout or '')[-400:]}")
+
+
+print()
+print("== 27. remover câmera e editar câmera EM OPERAÇÃO (sem perder ativo/alvo/histórico) ==")
+r27 = subprocess.run([sys.executable, str(RAIZ / "tests" / "test-remover-e-editar-camera.py")],
+                     capture_output=True, text=True, encoding="utf-8", errors="replace")
+checar(r27.returncode == 0, "test-remover-e-editar-camera.py passou" if r27.returncode == 0
+       else f"test-remover-e-editar-camera.py FALHOU: {(r27.stdout or '')[-400:]}")
+
+
+print()
 if falhas:
     print(f"FALHOU — {len(falhas)} verificação(ões):")
     for f in falhas:

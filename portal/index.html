@@ -216,7 +216,12 @@ async function fluxos() {
       <div class="janela" data-cam="${esc(f.id)}">
         <div class="rotulo-cam"><span class="pill ${f.no_ar ? 'no-ar' : 'ruim'}" id="estado-${esc(f.id)}">${f.no_ar ? 'no ar' : 'fora do ar'}</span>
           <span class="nome">${esc(f.rotulo)}</span>
-          <span class="sub">${esc(f.fluxo_id)} · ${esc((f.tracks || []).join('/') || 'sem trilha')}${f.apelidos.length ? ' · também visto como ' + esc(f.apelidos.join(', ')) : ''}</span></div>
+          <span class="sub">${esc(f.fluxo_id)} · ${esc((f.tracks || []).join('/') || 'sem trilha')}${f.apelidos.length ? ' · também visto como ' + esc(f.apelidos.join(', ')) : ''}</span>
+          <span class="sub" title="Taxa de envio só desta câmera">qualidade
+            <select class="qualidade" data-cam="${esc(f.id)}" style="font-size:11px;padding:1px 3px;background:#131c2b;color:#e6edf7;border:1px solid #243044;border-radius:6px">
+              ${['', '1500k', '1200k', '1000k', '800k', '500k', '300k'].map((o) => `<option value="${o}"${(f.alvo || '') === o ? ' selected' : ''}>${o ? o.replace('k', ' kbps') : 'padrão da tela'}</option>`).join('')}
+            </select>
+          </span></div>
         <video id="v-${esc(f.id)}" muted playsinline autoplay controls></video>
       </div>`).join('');
     for (const f of fluxos) if (!tocando.has(f.id)) {
@@ -225,6 +230,21 @@ async function fluxos() {
     }
   }
 }
+
+/* Selecao de QUALIDADE por camera (dono, 16/11/2026): a lista e' fechada
+   (1500k/1200k/1000k/800k/500k/300k) e a escolha vale no ar — o servidor reabre o envio so' desta
+   camera. Abaixo do piso de qualidade o sistema so' AVISA, nunca recusa. */
+$('fluxos').addEventListener('change', async (ev) => {
+  const sel = ev.target.closest('select.qualidade');
+  if (!sel) return;
+  const r = await fetch('/api/cameras/' + encodeURIComponent(sel.dataset.cam) + '/alvo',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ alvo: sel.value }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { aviso(j.erro || ('recusado (' + r.status + ')'), true); return; }
+  aviso('qualidade de ' + (j.id || sel.dataset.cam) + ' = ' + (j.alvo || 'padrão da tela')
+    + (j.aplicado ? ' — aplicada no ar (envio reaberto)' : ' — ' + (j.motivo || '')));
+  fluxos();
+});
 
 /* ---- tabelas do projeto ---- */
 const cel = (t) => '<td>' + (t ?? '') + '</td>';
