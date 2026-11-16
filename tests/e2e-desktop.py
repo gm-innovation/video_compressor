@@ -46,6 +46,10 @@ def main() -> int:
             dados = {"url": campos[1] if len(campos) > 1 else ""}
             dados.update(dict(c.split("=", 1) for c in campos[2:] if "=" in c))
             por_nome[campos[0]] = dados
+        # O relatório também traz uma linha de estado do aplicativo (`config\t...`, com a base resolvida e
+        # o estado da captura) — ela NÃO é uma janela: sem este filtro, as checagens de janela abaixo
+        # reprovavam por causa dela. Quem lê essa linha é `tests/test_captura_liberada_no_app.py`.
+        por_nome = {k: v for k, v in por_nome.items() if k in ("cliente", "admin", "bancada")}
         checar("o aplicativo abre as três superfícies", set(por_nome) >= {"cliente", "admin", "bancada"},
                ", ".join(sorted(por_nome)))
         checar("a janela do cliente carrega /app", por_nome.get("cliente", {}).get("url", "").endswith("/app"),

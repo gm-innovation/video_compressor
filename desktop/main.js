@@ -133,6 +133,15 @@ function aplicarEnderecoDaCaptura() {
   }
 }
 aplicarEnderecoDaCaptura();
+// Modo de desenvolvimento/teste: liga as funcoes de captura sem tocar no config gravado — mesmo papel
+// dos overrides LECSOR_SUPERFICIE/LECSOR_PAPEL que o e2e ja usa. A porta pode vir do ambiente para o
+// teste rodar sem disputar a 8765. Ver `tests/test_captura_liberada_no_app.py`.
+if (process.env.LECSOR_CAPTURA_LOCAL === '1') {
+  config.capturaLocal = true;
+  config.servidorLocal = Object.assign({}, config.servidorLocal,
+    { ligado: true, portaApi: Number(process.env.LECSOR_PORTA_API) || (config.servidorLocal || {}).portaApi || 8765 });
+  aplicarEnderecoDaCaptura();
+}
 
 // Cada superficie tem sessao propria (particao propria): entrar como cliente nao pode virar admin.
 const SUPERFICIES = {
@@ -381,7 +390,8 @@ app.whenReady().then(async () => {
     setTimeout(async () => {
       const linhas = [];
       const sonda = `(() => ({ node: typeof require, processo: typeof process, ponte: typeof window.lecsorApp,
-                                endereco: (window.lecsorApp && window.lecsorApp.enderecoDoLadoTerra && window.lecsorApp.enderecoDoLadoTerra()) || null }))()`;
+                                endereco: (window.lecsorApp && window.lecsorApp.enderecoDoLadoTerra && window.lecsorApp.enderecoDoLadoTerra()) || null,
+                                captura: (window.lecsorApp && window.lecsorApp.enderecoDaCaptura && window.lecsorApp.enderecoDaCaptura()) || null }))()`;
       // Prova opcional de ponta a ponta: entra como cliente e conta os videos tocando dentro do app.
       // A credencial vem do ambiente do TESTE (nunca fica no aplicativo nem no repositorio).
       const entrar = process.env.LECSOR_VERIFICAR_ENTRAR || '';
@@ -406,6 +416,21 @@ app.whenReady().then(async () => {
         } catch (e) { /* pagina sem video (ex.: bancada sem login) */ }
         linhas.push(`${nome}\t${j.webContents.getURL()}\ttitulo=${titulo}\tvisivel=${j.isVisible()}\tprova=${prova}`);
       }
+      // O que o aplicativo resolveu de verdade nesta execucao (telas x captura) e se o servidor local
+      // desta maquina esta no ar: e' o que o teste da captura liberada le.
+      const portaCaptura = (config.servidorLocal || {}).portaApi || 8765;
+      // O servidor local sobe junto com o app e pode levar alguns segundos (python + banco): espera
+      // ate' responder, senao o relatorio diria "sem resposta" para um servidor que so' estava subindo.
+      let saude = { status: 0 };
+      for (let i = 0; i < 10; i++) {
+        saude = await buscarJson('http://127.0.0.1:' + portaCaptura + '/api/saude', 2000);
+        if (saude.status === 200) break;
+        await new Promise((ok) => setTimeout(ok, 2000));
+      }
+      linhas.unshift(`config\tbase=${config.base}\tcapturaLocal=${!!config.capturaLocal}` +
+        `\tservidorLocal=${!!(config.servidorLocal && config.servidorLocal.ligado)}` +
+        `\tenderecoCaptura=${process.env.LECSOR_CAPTURA_BASE || '(nenhum)'}` +
+        `\tcaptura_servidor=${saude.status === 200 ? 'ok' : 'sem resposta (' + (saude.erro || saude.status) + ')'}`);
       const relatorio = 'VERIFICACAO\n' + linhas.join('\n') + '\n';
       process.stdout.write(relatorio);
       // No Windows o .exe empacotado nao devolve stdout: grava o mesmo relatorio em arquivo.
