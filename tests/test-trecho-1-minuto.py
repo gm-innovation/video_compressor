@@ -1,18 +1,21 @@
-"""O botao "Baixar 1 minuto" do app do cliente prova que a compressao informada e' REAL.
+"""Teste cego do Mbps: o botao "Baixar 1 minuto" entrega o VIDEO, sem comparativo.
 
 Pedido do dono (15/11/2026): "no app do cliente um botao para baixar um trecho de 1 minuto do video que
-chega na vps/terra. quero comprovar que o tamanho que o admin ou captura esta informando (mbps), para
-ter a prova de que realmente a porcentagem de compressao informada e' real".
+chega na vps/terra. quero comprovar que o tamanho que o admin ou captura esta informando (mbps)".
+
+Correcao do dono (16/11/2026): "nao vamos mais fazer o comparativo mbps quando baixar os videos de
+teste, vamos fazer um teste cego" — o app entrega o ARQUIVO e o TAMANHO dele e' o que se compara a mao
+com o Mbps exibido no admin/captura.
 
 O que este teste exige, com mediamtx + publicador + API rodando DE VERDADE (tudo em porta livre e
 banco temporario):
   1. `/api/fluxos/<fluxo>/trecho` entrega um MP4 do video COMO ELE CHEGA, sem reencodar (`-c copy`);
-  2. o arquivo mede ~o tempo pedido e o kbps que ele prova bate com o bitrate do fluxo no ar;
-  3. o atestado poe o MEDIDO (bytes x 8 / segundos) ao lado do DECLARADO pelo PC de captura, com
-     `bate: true` quando os numeros conferem e `bate: false` quando NAO conferem (e' o caso que o dono
-     quer poder contestar);
-  4. a compressao informada pelo bordo e' RECALCULADA aqui: `compressao_pct_calculada` x
-     `compressao_pct_declarada`, com veredito;
+  2. o cabecalho do download traz SO' fatos do ARQUIVO (id, bytes, duracao, sha256) — NAO vai kbps
+     medido/declarado, compressao nem veredito `bate` no download (teste cego do Mbps);
+  3. o arquivo mede ~o tempo pedido e o kbps que ele prova bate com o bitrate do fluxo no ar (o kbps
+     continua sendo calculado e guardado no servidor, para a operacao);
+  4. o ATESTADO (o comparativo: medido x declarado, compressao recalculada, veredito) e' da OPERACAO —
+     o cliente que baixou o video NAO alcanca o comparativo (403);
   5. `sha256` do arquivo baixado e' o mesmo do atestado (o comprovante e' daquele arquivo);
   6. fluxo de outro cliente -> 403; fluxo fora do ar -> 404; id de trecho invalido -> 404/422;
   7. teto de uso: o quarto trecho do mesmo usuario na janela -> 429 (o botao nao vira gravador).
@@ -246,6 +249,12 @@ paths:
         sha1 = cab.get("X-Lecsor-Sha256") or ""
         exigir(sha1 == hashlib.sha256(corpo).hexdigest(),
                "sha256 do cabecalho e' o do arquivo baixado")
+        # teste cego do Mbps (dono, 16/11/2026): no DOWNLOAD nao vai kbps medido/declarado nem
+        # compressao — quem confere olha o tamanho do arquivo e compara com o Mbps do admin/captura
+        exigir(not cab.get("X-Lecsor-Kbps-Medidos"),
+               "o download NAO entrega kbps no cabecalho (teste cego: o tamanho fala por si)")
+        exigir(not [k for k in cab if "Kbps" in k or "Compressao" in k or "Bate" in k],
+               "nenhum cabecalho de comparativo no download: %s" % [k for k in cab if "Lecsor" in k])
         s, at1 = admin.pedir(f"/api/trechos/{id1}/atestado")
         med = (at1.get("medido_no_arquivo") or {})
         dur = float(med.get("duracao_s") or 0)
@@ -341,6 +350,14 @@ paths:
             s, cabC, corpoC = cliente.baixar(f"/api/fluxos/{FLUXO}/trecho?segundos={SEGUNDOS}")
             exigir(s == 200 and len(corpoC) > 10000,
                    "o cliente baixa o trecho da camera DELE pela rede (http %s, %d bytes)" % (s, len(corpoC)))
+            exigir(not cabC.get("X-Lecsor-Kbps-Medidos"),
+                   "nem o cliente recebe kbps no download (teste cego)")
+            # o COMPARATIVO (atestado) e' da operacao: o cliente que baixou o video nao o alcanca
+            idC = int(cabC.get("X-Lecsor-Trecho-Id") or 0)
+            s, jC = cliente.pedir(f"/api/trechos/{idC}/atestado")
+            exigir(s == 403,
+                   "o cliente NAO alcanca o comparativo do trecho (atestado http %s: %r)"
+                   % (s, (jC or {}).get("erro")))
 
         con = sqlite3.connect(banco)
         cols = [r[1] for r in con.execute("PRAGMA table_info(trechos)")]
@@ -377,7 +394,7 @@ paths:
     if falhas:
         print("FALHOU: %d verificacao(oes) — log em %s" % (len(falhas), tmp / "api.log"))
         return 1
-    print("PASSOU: o trecho de 1 minuto prova o tamanho/bitrate que chega ao lado terra e a compressao informada")
+    print("PASSOU: o download entrega o VIDEO sem comparativo (teste cego do Mbps) e o comparativo do atestado e ' da operacao")
     return 0
 
 

@@ -179,9 +179,10 @@ function desenharVisualizar() {
       'max-height:3.9em;overflow:hidden';
     jan.appendChild(aviso);
     pintarAviso(c, jan);
-    // ---- trecho de 1 minuto: a prova de que o Mbps e a compressão informados são reais.
-    // Baixa 60 s do vídeo COMO ELE CHEGA no lado terra (o servidor grava em -c copy: sem reencodar)
-    // e mostra, no mesmo lugar, o medido no arquivo x o declarado pelo PC de captura.
+    // ---- Baixar 1 minuto: baixa 60 s do vídeo COMO ELE CHEGA no lado terra (o servidor grava em
+    // -c copy, sem reencodar) para conferir o TAMANHO do arquivo. O comparativo de Mbps (declarado
+    // x medido) saiu daqui a pedido do dono (16/11/2026): "vamos fazer um teste cego" — o tamanho
+    // do arquivo se compara à mão com o Mbps que o admin/captura exibe.
     const ctrlT = document.createElement('span');
     ctrlT.className = 'controle-trecho';
     const bT = document.createElement('button');
@@ -189,18 +190,10 @@ function desenharVisualizar() {
     bT.textContent = 'Baixar 1 minuto';
     bT.title = 'Baixa 60 s do vídeo como ele chega no lado terra, sem reencodar, para conferir o tamanho';
     bT.onclick = (ev) => { ev.stopPropagation(); baixarTrecho(c, bT); };
-    const bP = document.createElement('button');
-    bP.className = 'botao-trecho oculto';
-    bP.textContent = 'Comprovante (.json)';
-    bP.onclick = (ev) => { ev.stopPropagation(); baixarComprovante(c); };
-    ctrlT.appendChild(bT); ctrlT.appendChild(bP);
+    ctrlT.appendChild(bT);
     jan.appendChild(ctrlT);
     const linhaT = document.createElement('div'); linhaT.className = 'trecho-linha'; linhaT.style.display = 'none';
-    const provaT = document.createElement('div'); provaT.className = 'trecho-prova'; provaT.style.display = 'none';
-    // o comprovante ocupa parte do video: um clique fecha (ele volta no proximo trecho)
-    provaT.title = 'Clique para fechar o comprovante';
-    provaT.onclick = (ev) => { ev.stopPropagation(); provaT.style.display = 'none'; };
-    jan.appendChild(linhaT); jan.appendChild(provaT);
+    jan.appendChild(linhaT);
     jan.appendChild(marca); jan.appendChild(caixas); jan.appendChild(rot);
     grade.appendChild(jan);
     window.Video.ligar(c.id, c.id, v);
@@ -225,11 +218,11 @@ async function energia(cameraId, ligar) {
   await atualizar();
 }
 
-/* ------------------------------------------------------------------ trecho de 1 minuto (a prova)
-   Baixa 60 s do vídeo COMO ELE CHEGA no lado terra e põe, na mesma janela, o que o ARQUIVO prova
-   (bytes x 8 / segundos) ao lado do que o PC de captura declarou — com veredito "bate/não bate".
-   Sem isso a redução de banda informada é palavra. A gravação é feita pelo servidor em -c copy
-   (bits que chegaram, sem reencodar) e a tela mostra os MB subindo enquanto grava. */
+/* ------------------------------------------------------------------ Baixar 1 minuto (teste cego)
+   Baixa 60 s do vídeo COMO ELE CHEGA no lado terra e mostra só o que é do ARQUIVO: nome, MB e
+   duração. O Mbps do arquivo (MB x 8 / segundos) se compara à mão com o que o admin/captura exibe —
+   nenhum comparativo, veredito ou compressão aparece aqui (dono, 16/11/2026). A gravação é feita
+   pelo servidor em -c copy (bits que chegaram, sem reencodar) e a tela mostra os MB subindo. */
 function janelaDa(cameraId) {
   return document.querySelector('.janela[data-cam="' + String(cameraId).replace(/"/g, '\\"') + '"]');
 }
@@ -265,7 +258,6 @@ async function baixarTrecho(camera, botao) {
       throw new Error(j.erro || ('HTTP ' + r.status));
     }
     const bytes = Number(r.headers.get('X-Lecsor-Bytes') || 0);
-    const kbps = Number(r.headers.get('X-Lecsor-Kbps-Medidos') || 0);
     const dur = Number(r.headers.get('X-Lecsor-Duracao-S') || 0);
     const id = r.headers.get('X-Lecsor-Trecho-Id') || '';
     const cd = r.headers.get('Content-Disposition') || '';
@@ -276,12 +268,10 @@ async function baixarTrecho(camera, botao) {
     a.href = url; a.download = nome;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 120000);
-    camera.trecho = { id, bytes, kbps, duracao: dur, nome, mb: bytes / 1e6 };
+    camera.trecho = { id, bytes, duracao: dur, nome, mb: bytes / 1e6 };
+    // o tamanho do arquivo é o que se compara com o Mbps do admin/captura — nada de comparativo aqui
     linhaTrecho(jan, 'baixado: ' + nome + ' · ' + (bytes / 1e6).toFixed(1) + ' MB em ' + Math.round(dur) +
-      ' s = ' + kbps + ' kbps');
-    const bp = jan && jan.querySelector('.controle-trecho .oculto');
-    if (bp) bp.classList.remove('oculto');
-    await mostrarProva(camera);
+      ' s (confira o tamanho do arquivo com o Mbps do admin)');
   } catch (e) {
     linhaTrecho(jan, 'não foi possível baixar o trecho: ' + (e && e.message ? e.message : e));
   } finally {
@@ -291,58 +281,10 @@ async function baixarTrecho(camera, botao) {
   }
 }
 
-/* Mostra o comprovante na própria janela: medido no arquivo x declarado pelo PC de captura. */
-async function mostrarProva(camera) {
-  const jan = janelaDa(camera.id);
-  if (!jan || !(camera.trecho && camera.trecho.id)) return;
-  const prova = jan.querySelector('.trecho-prova');
-  const d = await api('/api/trechos/' + encodeURIComponent(camera.trecho.id) + '/atestado');
-  const j = d.corpo || {};
-  if (!d.ok) { prova.textContent = 'não foi possível montar o comprovante: ' + (j.erro || d.status); prova.style.display = 'block'; return; }
-  const med = j.medido_no_arquivo || {};
-  const dec = j.declarado_pelo_pc_de_captura || {};
-  const con = j.contas || {};
-  // quando o PC de captura declara, a hora da declaração aparece junto do número: sem o "declarado
-  // quando" o comparativo não diz se o ajuste declarado ainda é o que está no ar.
-  const semDecl = (v) => (v === null || v === undefined);
-  const quando = (iso) => (iso ? ' (declarado em ' + String(iso).replace('T', ' ').slice(0, 19) + ')' : '');
-  const linhas = [
-    j.leitura || '',
-    'medido no arquivo: ' + (med.mb || 0) + ' MB em ' + (med.duracao_s || 0) + ' s = ' + (med.kbps || 0) + ' kbps',
-    'declarado pelo PC de captura: ' + (semDecl(dec.kbps_saida) ? 'não informado' : dec.kbps_saida + ' kbps') +
-      quando(dec.declarado_em) +
-      (dec.alvo ? ' · alvo ' + dec.alvo : '') + (dec.codec ? ' · ' + dec.codec : '') +
-      (dec.resolucao ? ' · ' + dec.resolucao : '') + (semDecl(dec.fps) ? '' : ' · ' + dec.fps + ' fps'),
-    semDecl(dec.kbps_entrada) ? '' : 'entrada declarada: ' + dec.kbps_entrada + ' kbps' +
-      (semDecl(dec.corte_pct) ? '' : ' → corte de ' + dec.corte_pct + '%'),
-    'compressão recalculada aqui: ' + (semDecl(con.compressao_pct_calculada)
-      ? 'não fecha a conta (' + (con.base_do_original || '') + ')' : con.compressao_pct_calculada + '%') +
-      (con.original_estimado_mb ? ' (original estimado ' + con.original_estimado_mb + ' MB)' : ''),
-    semDecl(con.bate) ? '' : 'comparação declarado × medido: ' +
-      (con.bate ? 'dentro da tolerância de ' : 'FORA da tolerância de ') + (con.tolerancia_pct || 15) + '%' +
-      (semDecl(con.diferenca_pct) ? '' : ' (diferença ' + con.diferenca_pct + '%)'),
-    semDecl(dec.ssim) ? '' : 'qualidade declarada: SSIM ' + dec.ssim +
-      (dec.medido_em ? ' (medido em ' + String(dec.medido_em).replace('T', ' ').slice(0, 19) + ')' : ''),
-    'sha256: ' + (med.sha256 || '') + ' (o arquivo baixado é este mesmo)'
-  ];
-  prova.textContent = linhas.filter(Boolean).join('\n');
-  prova.style.display = 'block';
-}
-
-/* Entrega o comprovante em arquivo, para mandar a terceiros junto com o vídeo. */
-async function baixarComprovante(camera) {
-  if (!(camera.trecho && camera.trecho.id)) return;
-  const d = await api('/api/trechos/' + encodeURIComponent(camera.trecho.id) + '/atestado');
-  if (!d.ok) { alert((d.corpo && d.corpo.erro) || 'não foi possível montar o comprovante'); return; }
-  const texto = JSON.stringify(d.corpo, null, 2);
-  const blob = new Blob([texto], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'comprovante-' + (camera.trecho.id || 0) + '-' + String(camera.rotulo || 'camera').replace(/[^\w\-]+/g, '-') + '.json';
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 30000);
-}
+/* O comparativo de Mbps (medido no arquivo x declarado, compressao recalculada, veredito `bate`,
+   sha256) SAIU da tela do cliente a pedido do dono (16/11/2026, teste cego do Mbps): o
+   `/api/trechos/<id>/atestado` continua existindo, mas so' a operacao/admin alcanca. Aqui a tela
+   entrega o ARQUIVO e o tamanho dele e' a prova. */
 
 function pintarAviso(c, jan) {
   const aviso = jan.querySelector('.aviso-cam');

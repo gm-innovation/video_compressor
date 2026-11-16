@@ -587,10 +587,14 @@ class Handler(SimpleHTTPRequestHandler):
         return self._trecho(cam["fluxo_id"], u)
 
     def _trecho(self, fluxo: str, u) -> None:
-        """Grava N segundos do fluxo COMO CHEGOU e entrega o arquivo com os numeros nos cabeçalhos.
+        """Grava N segundos do fluxo COMO CHEGOU e entrega o ARQUIVO — sem comparativo nenhum.
 
-        `X-Lecsor-*` deixa o proprio curl provar o tamanho antes de baixar o corpo: quem quiser
-        conferir o Mbps do Admin nao precisa nem abrir o video.
+        Pedido do dono (16/11/2026): "nao vamos mais fazer o comparativo mbps quando baixar os videos
+        de teste, vamos fazer um teste cego" — o download entrega o video e quem confere olha o
+        TAMANHO do arquivo e compara a mao com o Mbps exibido no admin/captura. Por isso NAO vao no
+        cabecalho kbps medido/declarado, compressao nem veredito `bate`: os `X-Lecsor-*` que ficam sao
+        so' fatos do proprio arquivo (id, bytes, duracao, sha256), para o curl provar o tamanho antes
+        de baixar o corpo.
         """
         ok, motivo = self._autoriza_fluxo(u, fluxo)
         if not ok:
@@ -624,7 +628,6 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("X-Lecsor-Trecho-Id", str(r["id"]))
         self.send_header("X-Lecsor-Bytes", str(r["bytes"]))
         self.send_header("X-Lecsor-Duracao-S", str(r["duracao_s"]))
-        self.send_header("X-Lecsor-Kbps-Medidos", str(r["kbps_medidos"]))
         self.send_header("X-Lecsor-Sha256", r["sha256"])
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
@@ -642,9 +645,13 @@ class Handler(SimpleHTTPRequestHandler):
                 t = c.execute("SELECT fluxo_id FROM trechos WHERE id=?", (int(alvo),)).fetchone()
             if not t:
                 return self._json(404, {"erro": f"trecho {alvo} nao existe"})
-            ok, motivo = self._autoriza_fluxo(u, t["fluxo_id"])
-            if not ok:
-                return self._json(401 if not u else 403, {"erro": motivo})
+            # O ATESTADO E' o comparativo (medido no arquivo x declarado, compressao recalculada): nao
+            # vai para o navegador do cliente — o dono pediu teste cego do Mbps no download. So
+            # operacao/admin, SEM excecao de "chamada local": o app do cliente pode estar na MESMA
+            # maquina do lado terra, e o comparativo nao e' dele (mesma regra do /api/declarado).
+            if not self._pode_operar(u):
+                return self._json(403, {"erro": "o comparativo do trecho e' da operacao — "
+                                               "confira o tamanho do arquivo baixado"})
             return self._json(200, trecho_modulo.atestado(int(alvo)), {"Cache-Control": "no-store"})
         if not (self._pode_operar(u) or self._local()):
             return self._json(403, {"erro": "so operacao e administrador listam os trechos gravados"})

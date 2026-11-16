@@ -447,7 +447,7 @@ checar(r23.returncode == 0, "test-comparacao-3-alvos.py passou" if r23.returncod
 
 
 print()
-print("== 24. o botão 'Baixar 1 minuto' prova o tamanho e a compressão informada ==")
+print("== 24. o botão 'Baixar 1 minuto' entrega o VÍDEO sem comparativo (teste cego do Mbps) ==")
 r24 = subprocess.run([sys.executable, str(RAIZ / "tests" / "test-trecho-1-minuto.py")],
                      capture_output=True, text=True, encoding="utf-8", errors="replace")
 checar(r24.returncode == 0, "test-trecho-1-minuto.py passou" if r24.returncode == 0
