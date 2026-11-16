@@ -1,4 +1,4 @@
-"""Publica as releases 0.2.8 / 0.2.9 / 0.3.0 / 0.4.0 no GitHub com os 4 instaladores cada.
+"""Publica as releases 0.2.8 / 0.2.9 / 0.3.0 / 0.4.0 / 0.4.1 / 0.5.0 no GitHub com os 4 instaladores cada.
 
 O repositorio e' gm-innovation/video_compressor; a ultima release que existia era a v0.2.7.
 O token sai do arquivo normalizado (~/.hermes/vps-deploy/gh-token.txt.norm) e NUNCA e' impresso.
@@ -22,6 +22,25 @@ DIST = pathlib.Path.home() / "lecsor-pipeline-video" / "desktop" / "dist"
 PAPEIS = ("Captura", "Terra", "Admin", "Cliente")
 
 NOTAS = {
+    "0.5.0": (
+        "Instaladores da 0.5.0 (Windows).\n\n"
+        "**O Admin passa a LIBERAR as funcoes de captura dentro dele, sem virar o app de captura.**\n\n"
+        "Pedido do dono: \"deve liberar as funcoes de captura, nao mudar para o app de captura\". Agora existe "
+        "a opcao no menu **Servidor local -> \"Liberar as funcoes de captura nesta maquina (sem trocar de app)\"**: "
+        "sobe o servidor local desta maquina e as rotas de captura (listar as cameras desta maquina, comprimir, "
+        "publicar, repassar) passam a ser dele — **sem** trocar a base, **sem** criar usuario local e **sem** abrir "
+        "a tela de \"primeiro acesso\". O login, as telas e as permissoes continuam os do lado terra.\n\n"
+        "1. **Servidor local responde CORS restrito** nas rotas de captura, so' para as origens declaradas "
+        "(`LECSOR_CORS_ORIGENS`; padrao = lado terra do produto + loopback): e' o que deixa a tela vinda do lado "
+        "terra enxergar as cameras plugadas aqui. Rota de cadastro/login nunca ganha CORS.\n"
+        "2. **Qualidade por camera dentro de \"Enviar video\"** (a tela onde se escolhe a fonte), na lista fechada "
+        "1500k/1200k/1000k/800k/500k/300k, valendo no ar. O painel de teste virou \"Teste de video (bancada)\" para "
+        "acabar com dois lugares com o mesmo nome.\n\n"
+        "Provado na bancada: 20 verificacoes novas (`CAPTURA_NO_ADMIN_OK`), incluindo servidor de verdade "
+        "respondendo CORS a origem declarada e negando a origem nao declarada, e 4 suites de regressao.\n\n"
+        "**A instalacao 0.5.0 que importa e' a do Admin** (e' nele que a captura passa a ser liberada). O lado "
+        "terra tambem precisa da 0.5.0 para servir a tela nova."
+    ),
     "0.4.1": (
         "Instaladores da 0.4.1 (Windows).\n\n"
         "**A tela \"Enviar video\" (com a taxa de envio por camera) volta para dentro do pacote — o PC de "
@@ -119,7 +138,7 @@ def subir_asset(release_id: int, caminho: pathlib.Path) -> str:
 
 
 def main() -> int:
-    for versao in ("0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8"):
+    for versao in ("0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8"):
         s, j = pedir(f"{API}/releases/tags/v{versao}")
         if s == 200:
             rid, existentes = j["id"], {a["name"] for a in j["assets"]}
@@ -128,7 +147,7 @@ def main() -> int:
             s, j = pedir(f"{API}/releases", {"tag_name": f"v{versao}", "name": f"v{versao}",
                                              "body": NOTAS[versao], "draft": False,
                                              "prerelease": False,
-                                             "make_latest": "true" if versao == "0.4.1" else "false"},
+                                             "make_latest": "true" if versao == "0.5.0" else "false"},
                          "POST")
             if s not in (200, 201):
                 print(f"[{versao}] FALHOU criar release: {s} {json.dumps(j)[:300]}")
