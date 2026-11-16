@@ -43,7 +43,10 @@ construir() {
 }
 
 # PC de captura: camaras ligadas nesta maquina, servidor local no ar, repassa para o lado terra.
-construir "LECSOR Captura" admin captura captura 1
+# Superficie BANCADA (rota /): e' a tela "Enviar video", onde o tecnico escolhe a fonte e a taxa
+# de envio de cada camera. Enquanto nascia como "admin", o tecnico via o console do operador e nao
+# a tela de envio (dono, 16/11/2026).
+construir "LECSOR Captura" bancada captura captura 1
 # Lado terra: recebe e mostra (servidor em nuvem ou na rede do cliente).
 construir "LECSOR Terra" cliente terra terra 0
 # Bancada/engenharia e os dois papeis de tela antigos (mesmo pacote, papel do lado terra).

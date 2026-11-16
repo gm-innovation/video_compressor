@@ -209,8 +209,8 @@ shutil.rmtree(tmpdb.parent, ignore_errors=True)
 print("10) o pacote leva as TELAS inteiras (css e video), nao so o servidor")
 checar(any(e.get("from") == "../fronts" and e.get("to") == "servidor/fronts" for e in pkg["build"]["extraResources"]),
        "extraResources leva fronts/ -> servidor/fronts (as telas pedem /fronts/vms.css, /fronts/admin.css, /fronts/video.js)")
-checar(not any(e.get("from") == "../portal" for e in pkg["build"]["extraResources"]),
-       "portal/ saiu do pacote (nenhuma rota da API serve /portal)")
+checar(any(e.get("from") == "../portal" and e.get("to") == "servidor/portal" for e in pkg["build"]["extraResources"]),
+       "extraResources leva portal/ -> servidor/portal (a tela 'Enviar vídeo' com a taxa por câmera é servida na raiz / pela API)")
 checar(all(f in construir for f in ("../fronts/vms.css", "../fronts/admin.css", "../fronts/video.js")),
        "o build PARA se faltar css/js das telas (mesma regra do ffmpeg)")
 for f in ("vms.css", "admin.css", "video.js", "estilo.css"):
@@ -226,7 +226,7 @@ if not pyserv.is_file():
 else:
     pkgdir = Path(tempfile.mkdtemp(prefix="plugplay-pacote-")) / "servidor"
     pkgdir.mkdir(parents=True)
-    for origem in ("ground", "admin", "app", "board", "db", "analytics", "fronts"):
+    for origem in ("ground", "admin", "app", "portal", "board", "db", "analytics", "fronts"):
         shutil.copytree(RAIZ / origem, pkgdir / origem, ignore=shutil.ignore_patterns("__pycache__", "desktop-logs"))
     porta = 18799
     ambiente = dict(os.environ, LECSOR_BANCO=str(pkgdir / "pipeline.db"), LECSOR_BIND="127.0.0.1")
@@ -249,8 +249,11 @@ else:
                    f"/fronts/{arquivo} responde HTTP {st} {ct} com conteudo (era 404: pacote sem fronts/)")
         st, ct, _ = buscar("/api/dispositivos")
         checar(st == 200, f"/api/dispositivos responde 200 no servidor do pacote (HTTP {st})")
+        st, ct, corpo = buscar("/")
+        checar(st == 200 and "Enviar v" in corpo and 'class="qualidade"' in corpo,
+               f"a raiz / do pacote serve a tela 'Enviar vídeo' com a taxa por câmera (HTTP {st})")
         st, ct, _ = buscar("/portal")
-        checar(st != 200, f"/portal nao e servido pela API (HTTP {st}) — portal/ nao pertence ao pacote")
+        checar(st != 200, f"/portal nao e rota da API (a raiz / e' que entrega o portal) — HTTP {st}")
     finally:
         proc.terminate()
         try:

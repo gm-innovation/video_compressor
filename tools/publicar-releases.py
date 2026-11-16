@@ -22,6 +22,22 @@ DIST = pathlib.Path.home() / "lecsor-pipeline-video" / "desktop" / "dist"
 PAPEIS = ("Captura", "Terra", "Admin", "Cliente")
 
 NOTAS = {
+    "0.4.1": (
+        "Instaladores da 0.4.1 (Windows).\n\n"
+        "**A tela \"Enviar video\" (com a taxa de envio por camera) volta para dentro do pacote — o PC de "
+        "captura dos tecnicos passa a abrir exatamente essa tela.**\n\n"
+        "1. O `portal/` (onde mora \"Enviar video para testar\" e o seletor `class=\"qualidade\"` de cada "
+        "camera) tinha saido do pacote na 0.2.1 (commit f7f360d): o servidor serve o site pela RAIZ "
+        "(`ground/api.py` -> `directory=RAIZ/portal`), entao sem ele `/` nao entregava tela nenhuma no PC "
+        "de captura. Agora `portal/` vai em `extraResources` -> `servidor/portal`.\n"
+        "2. O instalador do PC de captura nascia na superficie `admin` (o tecnico via o console do "
+        "operador). Agora nasce na superficie **bancada** (rota `/`), que e' a tela \"Enviar video\", onde "
+        "se escolhe a fonte e a taxa de cada camera.\n\n"
+        "Provado na bancada: servidor do pacote serve `/` = 19.205 B com \"Enviar video\" e "
+        "`class=\"qualidade\"`; `/admin` continua 200. Instaladores 0.4.1 gerados: "
+        "Captura/Terra/Admin/Cliente.\n\n"
+        "**A instalacao 0.4.1 que importa e' a do PC de captura** (a tela de envio e o encoder rodam nele)."
+    ),
     "0.4.0": (
         "Instaladores da 0.4.0 (Windows).\n\n"
         "**Selecao de qualidade por camera, remover/editar em operacao e destaque na tela do cliente.**\n\n"
@@ -103,7 +119,7 @@ def subir_asset(release_id: int, caminho: pathlib.Path) -> str:
 
 
 def main() -> int:
-    for versao in ("0.4.0", "0.3.0", "0.2.9", "0.2.8"):
+    for versao in ("0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8"):
         s, j = pedir(f"{API}/releases/tags/v{versao}")
         if s == 200:
             rid, existentes = j["id"], {a["name"] for a in j["assets"]}
@@ -112,7 +128,7 @@ def main() -> int:
             s, j = pedir(f"{API}/releases", {"tag_name": f"v{versao}", "name": f"v{versao}",
                                              "body": NOTAS[versao], "draft": False,
                                              "prerelease": False,
-                                             "make_latest": "true" if versao == "0.4.0" else "false"},
+                                             "make_latest": "true" if versao == "0.4.1" else "false"},
                          "POST")
             if s not in (200, 201):
                 print(f"[{versao}] FALHOU criar release: {s} {json.dumps(j)[:300]}")
