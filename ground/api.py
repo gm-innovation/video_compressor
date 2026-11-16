@@ -33,6 +33,27 @@ from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# ---- captura vista pelo Admin (dono, 16/11/2026)
+# O Admin (tela servida pelo lado terra) precisa enxergar as cameras DESTA maquina e repassar o fluxo
+# SEM trocar de aplicativo. Para isso o servidor LOCAL responde a origem do lado terra do proprio
+# cliente nas rotas de captura. Fechado por padrao: so' as origens declaradas abaixo (ou a lista de
+# LECSOR_CORS_ORIGENS) recebem o cabecalho; qualquer outra origem fica sem CORS e o navegador bloqueia.
+ROTAS_CAPTURA = ("/api/dispositivos", "/api/envios", "/api/ingestao", "/api/ingestoes",
+                 "/api/compressao", "/api/compressoes", "/api/medicoes", "/api/trecho", "/api/captura")
+ORIGENS_CAPTURA_PADRAO = ("http://187.127.60.250:8085", "http://127.0.0.1:8085",
+                          "http://127.0.0.1:8765", "http://localhost:8765")
+
+
+def origens_captura() -> tuple:
+    bruto = os.environ.get("LECSOR_CORS_ORIGENS")
+    if bruto is None:
+        return ORIGENS_CAPTURA_PADRAO
+    return tuple(o.strip() for o in bruto.split(",") if o.strip())
+
+
+def eh_rota_de_captura(rota: str) -> bool:
+    return any(rota == r or rota.startswith(r + "/") for r in ROTAS_CAPTURA)
 from ingestao import iniciar as ing_iniciar, parar as ing_parar, listar as ing_listar  # noqa: E402
 from ingestao import desligar_camera as ing_desligar_camera, ligar_camera as ing_ligar_camera  # noqa: E402
 from ingestao import capturar as ing_capturar, listar_dispositivos as ing_dispositivos, ao_vivo as ing_ao_vivo
@@ -568,7 +589,10 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_response(codigo)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(b)))
-        for k, v in (cabecalhos or {}).items():
+        # rotas de captura: a origem do lado terra do cliente (declarada) tambem le e age aqui
+        juntos = self._cors(urlparse(self.path).path)
+        juntos.update(cabecalhos or {})
+        for k, v in juntos.items():
             self.send_header(k, v)
         self.end_headers()
         self.wfile.write(b)
@@ -579,6 +603,23 @@ class Handler(SimpleHTTPRequestHandler):
             ck = SimpleCookie(self.headers["Cookie"])
             token = ck["sessao"].value if "sessao" in ck else None
         return usuario_da_sessao(token)
+
+    def _cors(self, rota: str) -> dict:
+        """Cabecalhos de CORS SO' nas rotas de captura e SO' para as origens declaradas.
+
+        E' o que deixa o Admin (pagina servida pelo lado terra) falar com o servidor LOCAL desta
+        maquina para listar as cameras plugadas e repassar o fluxo — sem abrir a captura para
+        qualquer origem: origem nao declarada fica sem cabecalho e o proprio navegador bloqueia.
+        """
+        if not eh_rota_de_captura(rota):
+            return {}
+        origem = self.headers.get("Origin")
+        if not origem or origem not in origens_captura():
+            return {}
+        return {"Access-Control-Allow-Origin": origem, "Vary": "Origin",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+                "Access-Control-Allow-Credentials": "true"}
 
     def _local(self) -> bool:
         return self.client_address[0] in ("127.0.0.1", "::1")
@@ -730,6 +771,18 @@ class Handler(SimpleHTTPRequestHandler):
             return super().handle_one_request()
         except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
             self.close_connection = True
+
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        """Pre-voo do navegador nas rotas de captura (e' assim que o Admin fala com esta maquina)."""
+        rota = urlparse(self.path).path
+        if not eh_rota_de_captura(rota):
+            return self._json(405, {"erro": "metodo nao permitido"})
+        cab = self._cors(rota)
+        self.send_response(204)
+        for k, v in cab.items():
+            self.send_header(k, v)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
         rota = urlparse(self.path).path

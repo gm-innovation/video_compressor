@@ -5,12 +5,37 @@ const $ = (id) => document.getElementById(id);
 const limpar = (el) => { while (el.firstChild) el.removeChild(el.firstChild); };
 const esc = (s) => String(s === null || s === undefined ? '' : s);
 
+/* --------------------------------------------------- captura nesta maquina (dono, 16/11/2026)
+   "deve liberar as funcoes de captura, nao mudar para o app de captura": quando o aplicativo libera
+   as funcoes de captura (menu "Servidor local"), ele avisa por aqui o endereco do servidor LOCAL e
+   SO' as rotas de captura passam a falar com ele — dispositivos desta maquina, ingestao (comprimir,
+   publicar, ao vivo) e envios. Cadastro, usuarios, clientes e cameras continuam no lado terra, que e'
+   quem guarda o cadastro; por isso a tela do Admin segue logada e completa. */
+const BASE_CAPTURA = (() => {
+  try { return (window.lecsorApp && window.lecsorApp.enderecoDaCaptura && window.lecsorApp.enderecoDaCaptura()) || ''; }
+  catch (e) { return ''; }
+})();
+const ROTAS_CAPTURA = /^\/api\/(dispositivos|envios|ingestao|ingestoes|compressao|compressoes|medicoes|trecho|captura)(\/|$)/;
+const ehRotaDeCaptura = (rota) => ROTAS_CAPTURA.test(String(rota));
+const urlDeCaptura = (rota) => (BASE_CAPTURA && ehRotaDeCaptura(rota) ? BASE_CAPTURA + rota : rota);
+
 async function api(rota, opcoes) {
-  const r = await fetch(rota, Object.assign({ credentials: 'same-origin', headers: { 'Content-Type': 'application/json' } }, opcoes));
+  const alvo = urlDeCaptura(rota);
+  // outra origem (o servidor local desta maquina): sem cookie — quem autoriza a captura ali e' o
+  // proprio IP da maquina (a API chama isso de `local`), nunca a sessao do lado terra.
+  const credenciais = alvo === rota ? 'same-origin' : 'omit';
+  const r = await fetch(alvo, Object.assign({ credentials: credenciais, headers: { 'Content-Type': 'application/json' } }, opcoes));
   const texto = await r.text();
   let corpo = null;
   try { corpo = texto ? JSON.parse(texto) : null; } catch (e) { corpo = { bruto: texto }; }
   return { ok: r.ok, status: r.status, corpo };
+}
+
+/// Mesmo roteamento do `api()`, para as chamadas que a tela faz com fetch cru (upload/progresso).
+function fetchCaptura(rota, opcoes) {
+  const alvo = urlDeCaptura(rota);
+  const o = Object.assign({ credentials: alvo === rota ? 'same-origin' : 'omit' }, opcoes || {});
+  return fetch(alvo, o);
 }
 
 /* --------------------------------------------------------- entrada */
@@ -208,7 +233,7 @@ const SUBS = {
   analises: ['Análises de vídeo', 'Contagem e eventos sobem de bordo (Fase 5) — sem agente a bordo a tela fica vazia.'],
   auditoria: ['Auditoria', 'Quem viu qual câmera, quando — e o que foi negado.'],
   marcas: ['Marcas e zonas', 'A linha de contagem e as zonas de risco que o agente de bordo usa, desenhadas aqui.'],
-  envios: ['Enviar vídeo para teste', 'Manda um arquivo ou um link, o sistema codifica, publica em SRT e mede o corte de banda.'],
+  envios: ['Enviar vídeo', 'Escolhe a fonte (arquivo, link ou câmera desta máquina) e a qualidade por câmera: o sistema codifica, publica em SRT e mede o corte de banda.'],
   saude: ['Saúde do sistema', 'Estado da API, do lado terra e das contagens do banco.']
 };
 
@@ -944,18 +969,61 @@ function telaEnvios(t) {
   }
   const guardado = A.envioForm || {};
   const caixa = document.createElement('div'); caixa.className = 'caixa-form';
-  caixa.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Vídeo de teste: comprimir, medir e publicar' }));
+  caixa.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Teste de vídeo (bancada): comprimir, medir e publicar' }));
 
   // Para onde vão os fluxos DESTA máquina (PC de captura -> lado terra). Endereço de serviço interno:
   // a API só entrega para a operação, e o navegador do cliente nunca recebe este dado.
   const linhaDestino = document.createElement('p'); linhaDestino.className = 'nota'; linhaDestino.id = 'env-destino';
   linhaDestino.textContent = 'procurando para onde vão os vídeos desta máquina...';
   caixa.appendChild(linhaDestino);
-  fetch('/api/envios/destino').then((r) => r.json()).then((d) => {
+  fetchCaptura('/api/envios/destino').then((r) => r.json()).then((d) => {
     linhaDestino.textContent = d && d.repassa
       ? `Os vídeos desta máquina sobem, já comprimidos, para ${d.destino}.`
       : 'Nada sai desta máquina: o repasse para o lado terra não está configurado (config.json: destinoSrt).';
   }).catch((e) => { linhaDestino.textContent = 'não consegui falar com o servidor: ' + e.message; });
+
+  /* Qualidade POR CAMERA na propria tela "Enviar video" (pedido do dono, 16/11/2026: "tem que ser em
+     'Enviar video', que e' onde selecionamos a fonte do video"). Lista FECHADA (1500k...300k) — a
+     mesma da tela de cameras; escolher aqui vale no ar: o servidor reabre o envio SO' daquela camera. */
+  const caixaQualidade = document.createElement('div');
+  caixaQualidade.className = 'nota'; caixaQualidade.id = 'env-qualidade-camera';
+  caixaQualidade.textContent = 'qualidade por câmera: procurando as câmeras cadastradas...';
+  caixa.appendChild(caixaQualidade);
+  const LISTA_ALVO = ['', '1500k', '1200k', '1000k', '800k', '500k', '300k'];
+  fetchCaptura('/api/cameras').then((r) => r.json()).then((d) => {
+    const cams = (d && d.cameras) || [];
+    limpar(caixaQualidade);
+    if (!cams.length) {
+      caixaQualidade.textContent = 'qualidade por câmera: nenhuma câmera cadastrada ainda — cadastre em Câmeras.';
+      return;
+    }
+    caixaQualidade.appendChild(Object.assign(document.createElement('b'), { textContent: 'Qualidade por câmera (lista fechada) — vale no ar: ' }));
+    for (const c of cams) {
+      const cx = document.createElement('span');
+      cx.style.display = 'inline-flex'; cx.style.gap = '.35rem'; cx.style.alignItems = 'center';
+      cx.style.marginRight = '.9rem'; cx.style.whiteSpace = 'nowrap';
+      cx.appendChild(Object.assign(document.createElement('span'), { textContent: c.rotulo || c.id }));
+      const sel = document.createElement('select'); sel.className = 'mini';
+      for (const op of LISTA_ALVO) {
+        sel.appendChild(Object.assign(document.createElement('option'), { value: op,
+          textContent: op ? op.replace('k', ' kbps') : 'padrão da tela', selected: (c.alvo || '') === op }));
+      }
+      if (c.alvo && !LISTA_ALVO.includes(c.alvo)) {
+        sel.appendChild(Object.assign(document.createElement('option'), { value: c.alvo, textContent: c.alvo + ' (fora da lista)', selected: true }));
+      }
+      cx.appendChild(sel);
+      cx.appendChild(botao('aplicar', 'mini', async () => {
+        const rr = await api('/api/cameras/' + encodeURIComponent(c.id) + '/alvo', { method: 'POST', body: JSON.stringify({ alvo: sel.value }) });
+        const dd = rr.corpo || {};
+        caixaQualidade.appendChild(recado(rr.ok
+          ? ('qualidade de ' + (c.rotulo || c.id) + ' = ' + (dd.alvo || 'padrão da tela') + ' — ' + (dd.aplicado ? 'aplicada no ar (envio reaberto)' : (dd.motivo || '')))
+          : ('recusado: ' + JSON.stringify(dd)), !rr.ok));
+      }));
+      caixaQualidade.appendChild(cx);
+    }
+  }).catch((e) => {
+    caixaQualidade.textContent = 'qualidade por câmera: não consegui falar com o servidor (' + e.message + ')';
+  });
 
   const linha1 = document.createElement('div'); linha1.className = 'linha-form'; caixa.appendChild(linha1);
   const rm = document.createElement('div'); rm.appendChild(Object.assign(document.createElement('label'), { textContent: 'De onde vem o vídeo' }));
@@ -1046,7 +1114,7 @@ function telaEnvios(t) {
   let semCamera = false;                 // nenhuma camera nesta maquina (nunca finge uma)
   const preencherDispositivos = async () => {
     if (dispositivo.dataset.pronto) return;
-    const r = await fetch('/api/dispositivos');
+    const r = await fetchCaptura('/api/dispositivos');
     if (!r.ok) {
       // Antes voltava calada: com o endereco apontado para o lado terra e sem sessao a API responde
       // erro, a lista ficava vazia e nada dizia o motivo (foi o "nao acha as cameras" no cliente).
@@ -1164,10 +1232,10 @@ function telaEnvios(t) {
   };
 
   const carregar = async () => {
-    const r = await fetch('/api/compressoes');
+    const r = await fetchCaptura('/api/compressoes');
     if (!r.ok) { limpar(lista); lista.appendChild(recado('Sem permissão para ver as compressões.', true)); return; }
     const d = await r.json();
-    const ri = await fetch('/api/ingestoes');
+    const ri = await fetchCaptura('/api/ingestoes');
     const ing = ri.ok ? ((await ri.json()).ingestoes || []) : [];
     ultimos = d.compressoes || [];
     limpar(lista);
@@ -1175,7 +1243,7 @@ function telaEnvios(t) {
   };
   const publicar = async (id) => {
     dizer('publicando no ar…');
-    const r = await fetch('/api/compressao/publicar', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    const r = await fetchCaptura('/api/compressao/publicar', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: id }) });
     const j = await r.json();
     dizer(r.status === 201 ? ('no ar como "' + j.fluxo_id + '"') : ('falhou: ' + (j.erro || r.status)));
@@ -1183,17 +1251,17 @@ function telaEnvios(t) {
     carregar();
   };
   const pararFluxo = async (l) => {
-    const ri = await fetch('/api/ingestoes');
+    const ri = await fetchCaptura('/api/ingestoes');
     const ing = ri.ok ? ((await ri.json()).ingestoes || []) : [];
     const g = ing.filter((x) => x.fluxo_id === l.fluxo_id).pop();
     if (!g) { dizer('não achei o fluxo para parar'); return; }
-    await fetch('/api/ingestao/parar', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    await fetchCaptura('/api/ingestao/parar', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: g.id, remover: false }) });
     dizer('parei "' + l.fluxo_id + '"');
     carregar();
   };
   const remover = async (id) => {
-    await fetch('/api/compressao/remover', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    await fetchCaptura('/api/compressao/remover', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: id }) });
     carregar();
   };
@@ -1209,7 +1277,7 @@ function telaEnvios(t) {
       const tipo = modo.value;
       const nomeFonte = tipo === 'camera' ? ((dispositivo.options[dispositivo.selectedIndex] || {}).textContent || 'webcam do notebook') : 'teste sintético';
       dizer('ligando o envio contínuo de ' + nomeFonte + '… (sem tempo determinado: só para quando você mandar)');
-      fetch('/api/ingestao/ao-vivo', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      fetchCaptura('/api/ingestao/ao-vivo', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tipo: tipo, dispositivo: dispositivo.value, fps: Number(qf) || 30,
           rotulo: r || nomeFonte }) })
         .then(async (x) => ({ s: x.status, j: await x.json() }))
@@ -1226,7 +1294,7 @@ function telaEnvios(t) {
       if (!f) { dizer('escolha o arquivo de vídeo'); return; }
       const q = new URLSearchParams({ nome: f.name, qualidade: b, fps: qf, audio: aud });
       const x = new XMLHttpRequest();
-      x.open('POST', '/api/ingestao/comprimir?' + q.toString());
+      x.open('POST', urlDeCaptura('/api/ingestao/comprimir') + '?' + q.toString());
       x.upload.onprogress = (e) => { if (e.lengthComputable) dizer('enviando o original… ' + Math.round(e.loaded / e.total * 100) + '%'); };
       x.onload = () => {
         let j = {}; try { j = JSON.parse(x.responseText); } catch (e) {}
@@ -1241,7 +1309,7 @@ function telaEnvios(t) {
       const u = (url.value || '').trim();
       if (!/^https?:\/\//.test(u)) { dizer('cole um link http(s) válido'); return; }
       dizer('baixando e comprimindo o link…');
-      fetch('/api/ingestao/comprimir', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      fetchCaptura('/api/ingestao/comprimir', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: u, rotulo: r, qualidade: b, fps: qf, audio: aud }) })
         .then(async (x) => ({ s: x.status, j: await x.json() }))
         .then(({ s, j }) => {

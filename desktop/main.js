@@ -121,6 +121,18 @@ async function caixaServidor(motivo) {
 
 const config = lerConfig();
 if (SUPERFICIE) config.abrirAoIniciar = [SUPERFICIE];
+// Funcoes de captura liberadas nesta maquina: a interface descobre por aqui que as rotas de captura
+// (dispositivos, ingestao, compressao) estao no servidor LOCAL desta maquina, mesmo com a tela vinda
+// do lado terra. Sem isto o Admin aberto no lado terra listava zero cameras.
+function aplicarEnderecoDaCaptura() {
+  const porta = (config.servidorLocal || {}).portaApi || 8765;
+  if (config.capturaLocal && config.servidorLocal && config.servidorLocal.ligado) {
+    process.env.LECSOR_CAPTURA_BASE = `http://127.0.0.1:${porta}`;
+  } else {
+    delete process.env.LECSOR_CAPTURA_BASE;
+  }
+}
+aplicarEnderecoDaCaptura();
 
 // Cada superficie tem sessao propria (particao propria): entrar como cliente nao pode virar admin.
 const SUPERFICIES = {
@@ -214,7 +226,10 @@ function menu() {
           config.servidorLocal = Object.assign({}, config.servidorLocal, { ligado: true, portaApi: porta });
           if (!config.servidorLocal.repo) config.servidorLocal.repo = servidor.repoDe(config);
           if (!config.destinoSrt) config.destinoSrt = (PAPEIS[PAPEL] || {}).destinoSrt || PADRAO.destinoSrt || '';
-          config.base = local;
+          // Com as funcoes de captura liberadas o servidor local sobe PARA A CAPTURA e a tela continua
+          // no lado em que esta (o Admin segue logado no lado terra) — trocar a base para o loopback
+          // aqui era o que abria a tela de "primeiro acesso" num banco local vazio.
+          if (!config.capturaLocal) config.base = local;
           gravarConfig(config);
           if (config.base !== antes) setTimeout(recarregarTelas, 1800);
           caixaServidor('Servidor disparado agora; as telas carregam em alguns segundos.'
@@ -269,6 +284,38 @@ function menu() {
           if (rodando) { servidor.parar(); servidor.subir(config); }
           dialog.showMessageBox({ message: 'Destino do repasse salvo',
             detail: (valor || '(nada \u2014 so esta maquina)') + (rodando ? '\n\nO servidor local foi reiniciado para o novo destino valer.' : '\n\nSuba o servidor local para o repasse valer.') });
+        } },
+      { label: 'Liberar as funcoes de captura nesta maquina (sem trocar de app)', type: 'checkbox',
+        checked: !!config.capturaLocal,
+        click: (item) => {
+          // Pedido do dono (16/11/2026): o Admin tem que PODER capturar sem virar o app de captura —
+          // "deve liberar as funcoes de captura, nao mudar para o app de captura". Aqui sobe o servidor
+          // local desta maquina e as ROTAS DE CAPTURA passam a ser dele; o login, as telas e as
+          // permissoes continuam os do lado em que a instalacao ja estava. Nada de trocar a base, nada
+          // de criar usuario local, nada de tela de "primeiro acesso".
+          const ligar = !!item.checked;
+          config.capturaLocal = ligar;
+          config.servidorLocal = Object.assign({}, config.servidorLocal, { ligado: ligar, portaApi: (config.servidorLocal || {}).portaApi || 8765 });
+          if (ligar) {
+            if (!config.servidorLocal.repo) config.servidorLocal.repo = servidor.repoDe(config);
+            if (!config.destinoSrt) config.destinoSrt = (PAPEIS[PAPEL] || {}).destinoSrt || PADRAO.destinoSrt || '';
+            gravarConfig(config);
+            aplicarEnderecoDaCaptura();
+            const r = servidor.subir(config);
+            if (r.erro) { dialog.showErrorBox('Servidor local NAO subiu', r.erro); item.checked = false; config.capturaLocal = false; gravarConfig(config); aplicarEnderecoDaCaptura(); menu(); return; }
+            menu(); setTimeout(recarregarTelas, 1500);
+            return caixaServidor('Funcoes de captura liberadas NESTA maquina.\n\nAs telas continuam em '
+              + config.base + ' (login e permissoes intactos); quem captura — listar camera desta maquina, '
+              + 'comprimir e repassar — passou a ser o servidor local, em http://127.0.0.1:'
+              + ((config.servidorLocal || {}).portaApi || 8765) + '.');
+          }
+          // Desligar: se este papel nao e' o PC de captura, o servidor local sai do ar junto.
+          const precisa = PAPEL === 'captura' || PAPEL === 'bancada';
+          if (!precisa) { try { servidor.parar(config); } catch (e) {} config.servidorLocal.ligado = false; }
+          gravarConfig(config);
+          aplicarEnderecoDaCaptura();
+          menu(); setTimeout(recarregarTelas, 600);
+          if (!precisa) caixaServidor('Funcoes de captura desligadas; servidor local parado.');
         } },
       { label: 'Papel desta instalacao', submenu: [
         { label: 'Usar como PC de captura (esta maquina)', click: () => {

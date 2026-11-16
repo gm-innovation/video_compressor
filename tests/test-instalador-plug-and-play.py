@@ -170,7 +170,9 @@ checar("python-3.12.7-embed-amd64.zip" in baixador, "fonte do Python é o pacote
 construir = (RAIZ / "desktop" / "construir-instaladores.sh").read_text(encoding="utf-8")
 checar("baixar-servidor.sh" in construir, "o build chama o baixador do servidor")
 checar("--config.extraMetadata.papel" in construir, "o build grava o papel no pacote")
-checar('construir "LECSOR Captura" admin captura captura' in construir, "existe o instalador do PC de captura")
+# O pacote do PC de captura nasce na superficie `bancada` (0.4.1): e' o que abre direto em "Enviar
+# video". A expectativa do teste tinha ficado para tras quando a superficie mudou — corrigida aqui.
+checar('construir "LECSOR Captura" bancada captura captura' in construir, "existe o instalador do PC de captura")
 checar('construir "LECSOR Terra" cliente terra terra' in construir, "existe o instalador do lado terra")
 checar("tools/python/" in (RAIZ / ".gitignore").read_text(encoding="utf-8"), "o Python portátil está fora do Git")
 
@@ -383,7 +385,7 @@ print("== 16. ambiente do pacote (Supabase/token de ingestao) vai no PC de captu
 marc = (RAIZ / "desktop" / "construir-instaladores.sh").read_text(encoding="utf-8")
 checar("ambiente.json" in marc and "leva_ambiente" in marc,
        "o build decide por papel se o ambiente entra no pacote")
-checar('construir "LECSOR Captura" admin captura captura 1' in marc,
+checar('construir "LECSOR Captura" bancada captura captura 1' in marc,
        "o PC de captura LEVA o ambiente (nasce plug & play)")
 checar('construir "LECSOR Admin" admin terra admin 1' in marc,
        "o Admin (console do operador) tambem LEVA o ambiente: usado na maquina das cameras ele "

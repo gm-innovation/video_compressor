@@ -16,6 +16,10 @@
 //     destino do repasse sai de fábrica quando o operador nunca definiu um. É o servidor local que
 //     conhece as câmeras ligadas aqui e é ele que repassa o fluxo; sem isso, subir o servidor numa
 //     instalação apontada para o lado terra não mudava nada (tela remota sem câmera + repasse "(nada)").
+//  5) EXCEÇÃO do item 4, pedida pelo dono (16/11/2026): "deve liberar as funções de captura, não mudar
+//     para o app de captura". Com `capturaLocal` ligado o servidor local sobe PARA A CAPTURA e as
+//     telas continuam vindo de onde já vinham (o Admin segue no lado terra, logado). Trocar a base
+//     para o loopback aí jogava o login num banco local vazio e abria a tela de "primeiro acesso".
 'use strict';
 
 const LOOPBACK = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?(?:\/|$)/i;
@@ -40,6 +44,7 @@ function resolver(PADRAO, PAPEIS, PAPEL, doUsuario) {
   const herdado = !!doUsuario && doUsuario.papel !== PAPEL && !doUsuario.ajuste_manual;
   if (herdado) {
     delete doUsuario.base; delete doUsuario.destinoSrt; delete doUsuario.servidorLocal;
+    delete doUsuario.capturaLocal;          // estado de captura também é do papel, não se herda
   }
   const config = doUsuario
     ? Object.assign({}, fabrica, doUsuario,
@@ -59,7 +64,12 @@ function resolver(PADRAO, PAPEIS, PAPEL, doUsuario) {
     // não sobe para o lado terra — era o "(nada - so esta maquina)" depois de ligar o servidor.
     const destinoProprio = !!doUsuario && Object.prototype.hasOwnProperty.call(doUsuario, 'destinoSrt');
     if (!destinoProprio && !config.destinoSrt) config.destinoSrt = fabrica.destinoSrt || PADRAO.destinoSrt || '';
-    if (config.base !== local) { config.base = local; corrigido = true; }
+    if (config.capturaLocal) {
+      // Servidor local para a CAPTURA, telas no lado que já estava configurado (item 5 acima).
+      if (ehLoopback(config.base)) { config.base = fabrica.base; corrigido = true; }
+    } else if (config.base !== local) {
+      config.base = local; corrigido = true;
+    }
   } else if (ehLoopback(config.base)) {
     // Incoerência papel x endereço: quem NÃO sobe servidor local não escuta em loopback.
     config.base = fabrica.base;
