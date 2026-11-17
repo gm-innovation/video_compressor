@@ -683,11 +683,87 @@ def listar_dispositivos() -> dict:
 def _args_fonte_viva(tipo: str, dispositivo: str | None, resolucao: str, fps: int) -> list[str]:
     if tipo == "sintetica":
         return ["-f", "lavfi", "-i", f"testsrc2=size={resolucao or '1920x1080'}:rate={fps or 30}"]
-    # -video_size EXPLICITO: sem ele a webcam entrega o que quiser e o registro ficava SEM resolucao
-    # (guardava o nome do dispositivo), o que zerava a entrada/compressao na tela.
-    return ["-f", "dshow", "-rtbufsize", "256M", "-framerate", str(fps or 30),
-            "-video_size", _resolucao_valida(resolucao, "1280x720"),
-            "-i", f'video={_normalizar_dispositivo(dispositivo or DISPOSITIVO_PADRAO)}']
+    # -video_size EXPLICITO quando a camera ACEITA o tamanho pedido: sem ele a webcam entrega o que
+    # quiser e o registro ficava SEM resolucao (guardava o nome do dispositivo), o que zerava a
+    # entrada/compressao na tela.
+    #
+    # Defeito medido na bancada (17/11/2026, dono: "resolva isso"): a tela pedia 1920x1080 — o padrao
+    # do produto — e a webcam do notebook so aceita 1280x720, 640x480 e 640x360. O ffmpeg respondia
+    # "Could not set video options" e o envio morria com "a camera nao abriu"; pelo NOME ou pelo
+    # seletor `@device_pnp_...` o erro era o mesmo, logo nao era o seletor. Agora o tamanho sai da
+    # lista REAL da camera (`-list_options`), com o pedido como teto; se a lista nao vier, o tamanho
+    # nao e' forçado (o ffmpeg negocia) em vez de derrubar a captura.
+    disp = _normalizar_dispositivo(dispositivo or DISPOSITIVO_PADRAO)
+    largura, altura = _tamanho_pedido(resolucao, "1280x720")
+    escolhido, fps_ok = _formato_do_dispositivo(disp, largura, altura, fps or 30)
+    base = ["-f", "dshow", "-rtbufsize", "256M"]
+    if escolhido:
+        base += ["-framerate", str(fps_ok), "-video_size", escolhido]
+    return base + ["-i", f"video={disp}"]
+
+
+def _tamanho_pedido(txt: str | None, padrao: str = "1280x720") -> tuple[int, int]:
+    """(largura, altura) pedidos, ou o padrao quando o que veio nao e' uma resolucao."""
+    valido = _resolucao_valida(txt, padrao)
+    l, a = valido.split("x")
+    return int(l), int(a)
+
+
+# Formatos suportados por dispositivo, lidos UMA vez (`-list_options`). A camera nao muda de
+# capacidade durante a sessao e a consulta custa ~1 s; sem cache, cada envio pagaria esse tempo.
+_FORMATOS: dict[str, list[tuple[int, int, float]]] = {}
+
+
+def _formatos_do_dispositivo(disp: str) -> list[tuple[int, int, float]]:
+    """Tamanhos e taxas que a CAMERA aceita, lidos do proprio ffmpeg.
+
+    Formato de cada ponto: (largura, altura, fps). Lista vazia = nao deu para perguntar (sem
+    ffmpeg, sem camera, driver mudo) — o chamador decide nao forçar tamanho nesse caso.
+    """
+    if disp in _FORMATOS:
+        return _FORMATOS[disp]
+    formatos: list[tuple[int, int, float]] = []
+    try:
+        r = subprocess.run([caminho_ffmpeg(), "-hide_banner", "-f", "dshow", "-list_options", "true",
+                            "-i", f"video={disp}"],
+                           capture_output=True, text=True, timeout=30, errors="replace")
+        for linha in ((r.stderr or "") + (r.stdout or "")).splitlines():
+            m = re.search(r"pixel_format=(\S+)\s+min s=(\d+)x(\d+) fps=([\d.]+)\s+max s=(\d+)x(\d+) fps=([\d.]+)", linha)
+            if not m:
+                continue
+            fps_min, fps_max = float(m.group(4)), float(m.group(7))
+            for larg, alt in {(int(m.group(2)), int(m.group(3))), (int(m.group(5)), int(m.group(6)))}:
+                for taxa in (fps_min, fps_max):
+                    if (larg, alt, taxa) not in formatos:
+                        formatos.append((larg, alt, taxa))
+    except Exception:
+        formatos = []
+    _FORMATOS[disp] = formatos
+    return formatos
+
+
+def _formato_do_dispositivo(disp: str, largura: int, altura: int,
+                            fps: int) -> tuple[str | None, int]:
+    """Melhor tamanho/taxa que a camera aceita para o que foi PEDIDO.
+
+    Regra: o maior tamanho suportado que nao passe do pedido; se nenhum couber, o menor disponivel
+    (camera que so' faz 1080p tem de entregar 1080p, nao falhar). A taxa fica na mais proxima do
+    pedido naquele tamanho, preferindo nao descer. Sem lista: (None, fps) = deixa o ffmpeg negociar.
+    """
+    formatos = _formatos_do_dispositivo(disp)
+    if not formatos:
+        return None, fps
+    cabem = [f for f in formatos if f[0] * f[1] <= largura * altura]
+    if cabem:
+        alvo = max(f[0] * f[1] for f in cabem)
+        escolhidos = [f for f in cabem if f[0] * f[1] == alvo]
+    else:
+        alvo = min(f[0] * f[1] for f in formatos)
+        escolhidos = [f for f in formatos if f[0] * f[1] == alvo]
+    maiores = [f for f in escolhidos if f[2] >= fps]
+    taxa = min(maiores, key=lambda f: f[2])[2] if maiores else max(f[2] for f in escolhidos)
+    larg, alt = escolhidos[0][0], escolhidos[0][1]
+    return f"{larg}x{alt}", int(round(taxa))
 
 
 def _resolucao_valida(txt: str | None, padrao: str = "1280x720") -> str:

@@ -19,6 +19,16 @@ sistema comprime na máquina e o vídeo comprimido sobe para o lado terra (`dest
 ## Instaladores prontos (Windows x64) — PLUG & PLAY desde a 0.2.0
 Na página de releases: https://github.com/gm-innovation/video_compressor/releases
 
+### 0.6.1 — **a transmissão ao vivo pela câmera do PC de captura funciona**
+- **`LECSOR-0.6.1-x64.exe`** — mesmo aplicativo único da 0.6.0, com a captura corrigida.
+- O defeito: o envio pedia `1920x1080` (o padrão) e a webcam do PC só aceita 1280x720/640x480/640x360 →
+  o ffmpeg respondia `Could not set video options` e a tela dizia "a camera nao abriu". Agora o produto
+  lê a lista **real** da câmera (`-list_options`) e pede o maior tamanho suportado que caiba no pedido;
+  se a lista não vier, **não fixa** tamanho (o ffmpeg negocia) em vez de derrubar a captura.
+- O **seletor PnP não era o culpado** — ele abre a câmera normalmente (o teste é que passava errado).
+- Provado de ponta a ponta com a webcam real: `no_ar` em 1280x720 a 30 fps, 1596 kbps, o cliente exibindo
+  o vídeo e a qualidade (SSIM 0,9803) publicada no lado terra. Regressão: `tests/test-camera-tamanho-suportado.py`.
+
 ### 0.6.0 — **UM aplicativo só** (a tela é a do papel do usuário)
 - **`LECSOR-0.6.0-x64.exe`** — o aplicativo. Ele abre a tela de **entrada** (`/entrada`), entra e manda
   cada um para a **sua** tela: **cliente** → `/app`, **operação/administrador** → `/admin`, **técnico**

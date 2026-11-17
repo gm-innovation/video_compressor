@@ -163,7 +163,20 @@ checar(resolvido.get("servidor", {}).get("ligado") is False,
        "configuracao.js: servidor local desligado de fabrica no pacote unico")
 
 pkg = json.loads(ler("desktop/package.json") or "{}")
-checar(pkg.get("version") == "0.6.0", f"package.json: versao {pkg.get('version')} (o pacote unico e' a 0.6.0)")
+
+
+def _versao_ok(v: str, minimo: str) -> bool:
+    """A versao do pacote e' >= minimo? (a REGRA e' 'da 0.6.0 em diante e' um app so'', nao um numero
+    fixo: prender o teste a uma versao faz ele virar vermelho em toda publicacao — foi o que aconteceu
+    ao subir a 0.6.1)."""
+    try:
+        return [int(x) for x in str(v).split(".")] >= [int(x) for x in minimo.split(".")]
+    except ValueError:
+        return False
+
+
+checar(_versao_ok(pkg.get("version"), "0.6.0"),
+       f"package.json: versao {pkg.get('version')} (>= 0.6.0 = UM aplicativo so', LECSOR-<versao>-x64.exe)")
 extras = [e.get("to") for e in (pkg.get("build", {}).get("extraResources") or [])]
 checar("servidor/entrada" in extras, "package.json: a pasta entrada vai dentro do pacote")
 

@@ -20,6 +20,8 @@ TOKEN = (os.environ.get("GITHUB_TOKEN_FOR_RELEASES") or os.environ.get("GH_TOKEN
          or pathlib.Path.home().joinpath(".hermes/vps-deploy/gh-token.txt.norm").read_text().strip())
 DIST = pathlib.Path.home() / "lecsor-pipeline-video" / "desktop" / "dist"
 PAPEIS = ("Captura", "Terra", "Admin", "Cliente")
+# Ordem de publicacao: o PRIMEIRO e' o `latest` do GitHub. Nova versao entra na frente.
+VERSOES_PUBLICADAS = ("0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
 
 
 def instaladores(versao: str) -> list:
@@ -34,6 +36,29 @@ def instaladores(versao: str) -> list:
     return [DIST / papel.lower() / f"LECSOR-{papel}-{versao}-x64.exe" for papel in PAPEIS]
 
 NOTAS = {
+    "0.6.1": (
+        "**Transmissao ao vivo pela camera do PC de captura: o envio pedia um TAMANHO que a camera nao "
+        "aceita.**\n\n"
+        "Defeito relatado pelo dono (17/11/2026: \"resolva isso entao\"): a tela dizia *no ar*, mas a linha "
+        "do envio ficava em **erro** (\"a camera nao abriu\") e o cliente nao recebia imagem. Causa medida na "
+        "bancada: o produto pedia `-video_size 1920x1080` (o padrao) e a webcam do notebook so' anuncia "
+        "1280x720, 640x480 e 640x360. O ffmpeg responde `Could not set video options` + `Error opening input "
+        "file video=<dispositivo>` — mensagem que aponta para camera/driver quebrado, e nao para o tamanho.\n\n"
+        "O envio passa a perguntar a' propria camera (`-list_options true`, com cache) e pedir o **maior "
+        "tamanho suportado que nao passe do pedido** (o menor disponivel, se nenhum couber); quando a lista "
+        "nao vem, **nao fixa tamanho** e deixa o ffmpeg negociar, em vez de derrubar a captura.\n\n"
+        "Correcao de diagnostico: o **seletor PnP nao era o culpado** (o teste com shell MSYS comia as barras "
+        "invertidas do `@device_pnp_...`; com a lista de argumentos correta ele abre a 30 fps). O seletor "
+        "continua sendo o que permite duas cameras de mesmo nome conviverem.\n\n"
+        "Provado com a webcam real, app de ponta a ponta: ingestao `no_ar` em **1280x720 a 30 fps** e "
+        "**1596 kbps**, mediamtx `online` com **0 quadros em erro**, a **tela do cliente exibindo o video ao "
+        "vivo**, SSIM 0,9803 publicado no lado terra. Regressao nova: `tests/test-camera-tamanho-suportado.py` "
+        "(22 verificacoes).\n\n"
+        "**Atualizacao:** instale por cima (o banco e os cadastros ficam). Nada a configurar.\n\n"
+        "**Correcao de prova desatualizada:** `tests/test-login-supabase-adocao.py` (exigia a adocao de "
+        "identidade de fora, removida na 0.6.0) virou `tests/test-login-supabase-nao-adota.py`, que prova o "
+        "contrario: credencial do Supabase sem cadastro local toma **403** e nenhuma linha nasce."
+    ),
     "0.6.0": (
         "**UM aplicativo so': a tela que abre e' a do PAPEL de quem entra.**\n\n"
         "Pedido do dono: \"vamos empacotar em um app apenas, o tipo de app e' definido pela role do "
@@ -176,7 +201,7 @@ def subir_asset(release_id: int, caminho: pathlib.Path) -> str:
 
 
 def main() -> int:
-    for versao in ("0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8"):
+    for versao in VERSOES_PUBLICADAS:
         s, j = pedir(f"{API}/releases/tags/v{versao}")
         if s == 200:
             rid, existentes = j["id"], {a["name"] for a in j["assets"]}
@@ -185,7 +210,7 @@ def main() -> int:
             s, j = pedir(f"{API}/releases", {"tag_name": f"v{versao}", "name": f"v{versao}",
                                              "body": NOTAS[versao], "draft": False,
                                              "prerelease": False,
-                                             "make_latest": "true" if versao == "0.6.0" else "false"},
+                                             "make_latest": "true" if versao == VERSOES_PUBLICADAS[0] else "false"},
                          "POST")
             if s not in (200, 201):
                 print(f"[{versao}] FALHOU criar release: {s} {json.dumps(j)[:300]}")
