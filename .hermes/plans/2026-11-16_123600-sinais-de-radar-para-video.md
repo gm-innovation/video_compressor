@@ -120,6 +120,12 @@ que pode servir de banco de provas antes do hardware real.
   alvo) e o botão "Transmitir o radar ao vivo". `tests/test-radar-por-embarcacao.py` (24 verificações,
   exit 0): coluna criada em banco antigo, opções fechadas, pedido torto recusado (modo/taxa/alvo/fonte/
   embarcação), config POR EMBARCAÇÃO mantida em paralelo, envio usando o gravado e a sobreposição na hora.
+  **Prova de TELA** (`tests/e2e-radar-na-tela.py`, Chromium de verdade, 12 verificações, verde em 8 rodadas
+  seguidas): a opção de radar aparece na captura, a linha só existe nesse modo, o botão vira "Transmitir o
+  radar ao vivo", a tela recusa fonte que não é sinal, grava e confirma, e ao recarregar o gravado volta
+  preenchido. Essa prova achou DOIS defeitos reais, corrigidos na causa: (1) leitura atrasada apagava o
+  recado do operador; (2) o redesenho automático da tela perdia o que ele tinha escolhido (a linha é
+  remontada já com o que estava na tela, sem esperar a rede).
 
 ## Estado da implementação (16/11/2026)
 
