@@ -53,9 +53,10 @@ NOTAS = {
         "Supabase dublado e servidor de verdade), o teste do app unico com 32 verificacoes, a migracao do "
         "papel tecnico num banco de verdade (4 usuarios, 432 sessoes e 12.796 linhas de auditoria "
         "preservadas) e as suites de regressao.\n\n"
-        "**Falta do lado do painel:** desligar o cadastro publico no Supabase (Authentication -> Sign In / "
-        "Providers -> Email -> desmarcar \"Allow new users to sign up\") e conferir com "
-        "`python tools/conferir-signup.py`.\n\n"
+        "**Provado na fonte (17/11/2026):** o cadastro publico esta DESLIGADO no Supabase do produto "
+        "(`disable_signup: True`) — tentativa de cadastro de fora devolve 422 `signup_disabled` \"Signups not "
+        "allowed for this instance\", e um usuario criado pelo administrador entra normalmente (200 com token). "
+        "Quem confere a qualquer momento: `python tools/conferir-signup.py` (rc=0 = fechado).\n\n"
         "**Migracao:** desinstale os pacotes antigos e instale este (o aplicativo unico tem identidade "
         "propria e convive com os antigos). O lado terra tambem precisa desta versao."
     ),
