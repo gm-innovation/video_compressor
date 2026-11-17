@@ -302,6 +302,12 @@ def main() -> int:
             seg = con.execute("SELECT segundos_max FROM transmissoes ORDER BY rowid DESC LIMIT 1").fetchone()[0]
             con.close()
             checar("o tempo gravado na tela vale para o proximo pedido (300 s)", seg == 300, f"{seg}")
+            # a tela "Gravacoes" deixou de ser um lugar vazio: ela le' o historico do lado terra
+            pag_a.click('[data-tela="gravacoes"]')
+            pag_a.wait_for_selector("#palco table", timeout=15000)
+            texto_grav = pag_a.inner_text("#palco")
+            checar("a tela Gravações mostra o que ficou gravado (ou diz que não há)",
+                   "grava" in texto_grav.lower(), texto_grav[:120])
 
             checar("nenhum erro de script na tela", not erros, "; ".join(erros[:2]))
             pag_a.screenshot(path=str(tmp / "tela-transmissao.png"), full_page=True)

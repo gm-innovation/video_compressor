@@ -143,6 +143,10 @@ nada hoje manda ordem de terra para a máquina de captura.
   ffprobe reais**: gravação com faixa h264 de ~3,5 s lida pelo ffprobe), `tests/e2e-transmissao-na-tela.py`
   (navegador real).
 
+- **Fase 6 (provar sem regredir) — FEITO:** suíte completa `python -m unittest discover -s tests -p 'suite.py' -t .`
+  → **`Ran 1 test in 518,464s` / OK / rc=0** (todo `tests/test-*.py` do projeto verde, radar e webcam inclusos);
+  prova de tela em navegador real (`e2e-transmissao-na-tela.py`) → **23 checagens, rc=0**.
+
 ### Defeitos REAIS que as provas pegaram (todos corrigidos na causa)
 
 1. `_json` não retorna → um cliente **encerrava a sessão de outro**; agora `_transmissao_da_tela` devolve
