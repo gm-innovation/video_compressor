@@ -163,6 +163,13 @@ def inicializar(semear_demo: bool = False) -> None:
                            ("alvo", "TEXT DEFAULT ''")):
             if nome not in colunas:
                 c.execute(f"ALTER TABLE cameras ADD COLUMN {nome} {tipo}")
+        # RADAR por embarcacao (Fase 6): instalacao que ATUALIZA ganha as colunas aqui, sem passo
+        # manual no cliente — a config da embarcacao (fonte, modo, taxa, alvo) mora nestas colunas.
+        colunas_emb = {r["name"] for r in c.execute("PRAGMA table_info(embarcacoes)")}
+        for nome, tipo in (("radar_fonte", "TEXT DEFAULT ''"), ("radar_modo", "TEXT DEFAULT 'ppi'"),
+                           ("radar_taxa", "TEXT DEFAULT '30fps'"), ("radar_alvo", "TEXT DEFAULT ''")):
+            if nome not in colunas_emb:
+                c.execute(f"ALTER TABLE embarcacoes ADD COLUMN {nome} {tipo}")
         # Papel `tecnico` (bordo) precisa do CHECK novo. SQLite nao altera CHECK no lugar: o
         # `db/migracao-tecnico.sql` recria a tabela preservando as linhas, e roda aqui para a
         # instalacao que ATUALIZA se consertar sozinha (o dono nao faz passo manual no cliente).
@@ -554,6 +561,55 @@ class Handler(SimpleHTTPRequestHandler):
     # outro numero e' recusado com a lista na mensagem — alvo voltou a ser escolha, nao texto livre.
     ALVOS_DE_QUALIDADE = ("1500k", "1200k", "1000k", "800k", "500k", "300k")
 
+    # RADAR por embarcacao (Fase 6, 17/11/2026): cada embarcacao pode ter o SEU radar — fonte, modo de
+    # imagem e taxa ficam gravados nela, como o alvo por camera da 0.4.0. Listas FECHADAS, pelo mesmo
+    # motivo: a tela escolhe entre opcoes medidas, nao digita numero.
+    MODOS_DE_RADAR = ("ppi", "cru")
+    TAXAS_DE_RADAR = ("30fps", "volta")
+
+    def _radar_da_embarcacao(self, embarcacao_id: str) -> dict:
+        """Config de radar gravada na embarcacao (vazia se nada gravado). Nunca devolve segredo."""
+        vazio = {"embarcacao_id": embarcacao_id, "fonte": "", "modo": "", "taxa": "", "alvo": ""}
+        if not embarcacao_id:
+            return vazio
+        try:
+            with conexao() as c:
+                r = c.execute("SELECT radar_fonte, radar_modo, radar_taxa, radar_alvo FROM embarcacoes"
+                              " WHERE id=?", (embarcacao_id,)).fetchone()
+        except Exception:
+            return vazio
+        if not r:
+            return vazio
+        return {"embarcacao_id": embarcacao_id, "fonte": r["radar_fonte"] or "",
+                "modo": r["radar_modo"] or "", "taxa": r["radar_taxa"] or "", "alvo": r["radar_alvo"] or ""}
+
+    def _validar_radar(self, d: dict) -> tuple:
+        """Valida o pedido de radar por embarcacao. Devolve (erro, valores)."""
+        embarcacao_id = str(d.get("embarcacao_id") or "").strip()
+        fonte = str(d.get("fonte") or "").strip()
+        modo = str(d.get("modo") or "").strip()
+        taxa = str(d.get("taxa") or "").strip()
+        alvo = str(d.get("alvo") or "").strip()
+        if not embarcacao_id:
+            return "informe a embarcacao (e' por embarcacao que a configuracao e' gravada)", None
+        if not fonte:
+            return "informe a fonte do radar: um arquivo de sinal (.drq) ou tcp://host:porta", None
+        if fonte.lower().startswith("tcp://"):
+            import radar_drq as _rd
+            try:
+                _rd.partir_fonte_tcp(fonte)
+            except ValueError as e:
+                return f"fonte de radar invalida: {e}", None
+        elif not fonte.lower().endswith(".drq"):
+            return "a fonte do radar por arquivo tem de ser um .drq (ou tcp://host:porta)", None
+        if modo not in self.MODOS_DE_RADAR:
+            return f"modo de imagem invalido: use {' ou '.join(self.MODOS_DE_RADAR)}", None
+        if taxa not in self.TAXAS_DE_RADAR:
+            return f"taxa invalida: use {' ou '.join(self.TAXAS_DE_RADAR)}", None
+        if alvo and alvo not in self.ALVOS_DE_QUALIDADE:
+            return "alvo fora da lista: " + ", ".join(self.ALVOS_DE_QUALIDADE), None
+        return None, {"embarcacao_id": embarcacao_id, "fonte": fonte, "modo": modo, "taxa": taxa, "alvo": alvo}
+
     def _reabrir_para_aplicar(self, cam) -> dict:
         """Reabre o envio DAQUELA camera para o ajuste novo valer NO AR (nao so' na lista).
 
@@ -830,6 +886,29 @@ class Handler(SimpleHTTPRequestHandler):
                                     "papel": u["papel"], "local": self._local()})
         if rota == "/api/fluxos":
             return self._json(200, fluxos())
+        if rota == "/api/embarcacoes/radar":
+            # RADAR por embarcacao (Fase 6): a tela de captura LE o que ficou gravado nesta embarcacao
+            # (fonte, modo de imagem, taxa, alvo) e o que pode escolher. Quem captura precisa ler;
+            # gravar e' da operacao/administrador.
+            if not (self._pode_operar(u) or self._local()
+                    or (u and u["papel"] == "tecnico")):
+                return self._json(403, {"erro": "so a operacao, o administrador e o tecnico do bordo veem o radar"})
+            q = parse_qs(urlparse(self.path).query)
+            embarcacao_id = (q.get("embarcacao_id") or [""])[0].strip()
+            embarcacoes = []
+            try:
+                with conexao() as c:
+                    embarcacoes = [{"id": r["id"], "nome": r["nome"]} for r in
+                                   c.execute("SELECT id, nome FROM embarcacoes ORDER BY nome")]
+            except Exception:
+                pass
+            if not embarcacao_id and embarcacoes:
+                embarcacao_id = embarcacoes[0]["id"]
+            return self._json(200, {"radar": self._radar_da_embarcacao(embarcacao_id),
+                                    "embarcacoes": embarcacoes,
+                                    "modos": list(self.MODOS_DE_RADAR), "taxas": list(self.TAXAS_DE_RADAR),
+                                    "alvos": list(self.ALVOS_DE_QUALIDADE)},
+                              {"Cache-Control": "no-store"})
         # ---- trecho de 1 minuto: a prova de que a compressao informada e' real (dono, 15/11/2026)
         # O cliente baixa 60 s do video COMO ELE CHEGA aqui (`-c copy`, sem reencodar) e o atestado
         # poe o medido ao lado do declarado pelo PC de captura. Nada de endereco de camera no corpo.
@@ -1420,19 +1499,71 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(422, r)
             auditar(u, "envio_video", f"arquivo {nome} ({gravados} bytes) -> {r['fluxo_id']}", self.client_address[0])
             return self._json(201, {"ok": True, "bytes": gravados, **r}, {"Cache-Control": "no-store"})
+        if rota == "/api/embarcacoes/radar":
+            # GRAVA a config de radar daquela embarcacao (como o alvo por camera da 0.4.0). Fica no
+            # banco do PC de captura e passa a ser o PADRAO dos proximos envios daquela embarcacao.
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so a operacao e o administrador gravam a config do radar"})
+            d = self._corpo()
+            erro, valores = self._validar_radar(d)
+            if erro:
+                return self._json(422, {"erro": erro, "modos": list(self.MODOS_DE_RADAR),
+                                        "taxas": list(self.TAXAS_DE_RADAR),
+                                        "alvos": list(self.ALVOS_DE_QUALIDADE)})
+            with conexao() as c:
+                existe = c.execute("SELECT id FROM embarcacoes WHERE id=?", (valores["embarcacao_id"],)).fetchone()
+                if not existe:
+                    return self._json(404, {"erro": f"embarcacao {valores['embarcacao_id']} nao existe"})
+                c.execute("UPDATE embarcacoes SET radar_fonte=?, radar_modo=?, radar_taxa=?, radar_alvo=?"
+                          " WHERE id=?", (valores["fonte"], valores["modo"], valores["taxa"],
+                                          valores["alvo"], valores["embarcacao_id"]))
+            auditar(u, "config_radar", f"{valores['embarcacao_id']} ({valores['modo']}/{valores['taxa']})",
+                    self.client_address[0])
+            return self._json(200, {"ok": True, "radar": self._radar_da_embarcacao(valores["embarcacao_id"])},
+                              {"Cache-Control": "no-store"})
         if rota in ("/api/ingestao/ao-vivo", "/api/envios/ao-vivo"):
             # STREAMING CONTINUO de uma fonte viva (webcam do notebook / fonte sintetica):
             # sem duracao determinada, igual a operacao — so para quando mandarem parar.
             if not (self._pode_operar(u) or self._local()):
                 return self._json(403, {"erro": "so operacao e administrador transmitem ao vivo"})
             d = self._corpo()
-            r = ing_ao_vivo(tipo=str(d.get("tipo") or "camera"),
+            tipo = str(d.get("tipo") or "camera")
+            embarcacao_id = str(d.get("embarcacao_id") or "").strip() or "bancada"
+            radar = {"fonte": str(d.get("fonte") or "").strip(), "modo": str(d.get("modo") or "").strip(),
+                     "taxa": str(d.get("taxa") or "").strip(), "alvo": str(d.get("bitrate") or "").strip()}
+            if tipo == "radar":
+                # Fase 6: o que ficou GRAVADO naquela embarcacao e' o padrao — a tela so' precisa
+                # mandar o que o operador mudou agora.
+                cfg = self._radar_da_embarcacao(embarcacao_id)
+                for chave in ("fonte", "modo", "taxa", "alvo"):
+                    if not radar[chave] and cfg.get(chave):
+                        radar[chave] = cfg[chave]
+                if not radar["fonte"]:
+                    return self._json(422, {"erro": "escolha a fonte do radar (arquivo .drq ou "
+                                                   "tcp://host:porta) ou grave a config da embarcacao",
+                                            "radar": cfg})
+                # nome legivel quando a tela nao manda um: quem opera ve "Radar de <embarcacao>" na
+                # lista de envios, nao um fluxo sem nome.
+                if not str(d.get("rotulo") or "").strip():
+                    d["rotulo"] = f"Radar de {embarcacao_id}"
+            r = ing_ao_vivo(tipo=tipo,
                             dispositivo=(str(d.get("dispositivo") or "").strip() or None),
                             resolucao=str(d.get("resolucao") or "1920x1080"), fps=int(d.get("fps") or 30),
                             rotulo=str(d.get("rotulo") or ""), fluxo_id=(str(d.get("fluxo_id") or "").strip() or None),
-                            bitrate=str(d.get("bitrate") or "auto"))
+                            bitrate=(radar["alvo"] or str(d.get("bitrate") or "auto")),
+                            embarcacao_id=embarcacao_id,
+                            # RADAR (Fase 3/5): o sinal de radar entra na cadeia como uma camera — a fonte
+                            # e' o arquivo .drq ou o radar pela rede, e o desenho (PPI/cru, 1 imagem por
+                            # volta ou 30 fps) roda no servidor, que empurra os quadros crus no ffmpeg.
+                            radar_fonte=(radar["fonte"] or None),
+                            radar_modo=(radar["modo"] or "ppi"), radar_taxa=(radar["taxa"] or "30fps"))
             if "erro" in r:
                 return self._json(422, r)
+            # a resposta leva o nome do envio: a tela avisa "NO AR: <nome>" sem ter de adivinhar.
+            if tipo == "radar":
+                r.setdefault("rotulo", str(d.get("rotulo") or ""))
+                r.setdefault("modo", radar["modo"] or "ppi")
+                r.setdefault("taxa", radar["taxa"] or "30fps")
             auditar(u, "transmitir_ao_vivo", f"{r['fluxo_id']} ({r['alvo']})", self.client_address[0])
             return self._json(201, r, {"Cache-Control": "no-store"})
         if rota in ("/api/ingestao/capturar", "/api/envios/capturar"):

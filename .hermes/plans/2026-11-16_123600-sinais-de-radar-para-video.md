@@ -94,6 +94,33 @@ que pode servir de banco de provas antes do hardware real.
 - **Fase 6 — P2:** **seleção por embarcação** na tela: fonte, modo de imagem (PPI/cru, ambos) e taxa
   (por volta/30 fps), gravada na configuração daquela embarcação — como o alvo por câmera da 0.4.0.
 
+## Estado por fase (17/11/2026) — fases 3 a 6
+
+- **Fase 3 — FEITA E PROVADA.** `tests/test-radar-na-cadeia.py` (277 linhas, 29 verificações, exit 0):
+  radar na MESMA cadeia da câmera (SRT → mediamtx → lado terra), `tracks: ['H264']`, caminho online por
+  `srtConn`, **1.151 kbps medidos com alvo 1200k**; alvo obedecido; tamanho do quadro 1.048.576 B
+  (1024×1024 cinza); cadência real PPI/30 fps ≈ 25–29 q/s; "por volta" = 1 imagem por volta; SSIM não é
+  medido no radar (é SINAL, não vídeo) e o log diz isso em voz alta; parada limpa; pedido inválido recusado.
+- **Fase 4 — TESTE ESCRITO E VERDE.** `tests/test-radar-banda-1-minuto.py` (140 linhas, exit 0): 1 min de
+  radar cru (PPI 1024×1024 cinza @30 fps) pesa **251,7 Mbps** na fonte; codificado com o ajuste do produto
+  (`veryfast` + `zerolatency` + `-bf 0` + `-g 30`), cada alvo fecha dentro de 12% do pedido, cresce com o
+  alvo e respeita o piso de ≥73% de economia.
+- **Fase 5 — FEITA E PROVADA.** Fonte do radar agora é PLUGÁVEL (decisão A do dono): arquivo `.drq` **ou**
+  `tcp://host:porta` (`es_fonte_tcp`/`partir_fonte_tcp`/`quadros_ao_vivo_tcp`/`gerador_da_fonte` em
+  `radar_drq.py`; bancada `ground/radar_tcp.py`, 114 linhas, serve o `.drq` no formato de fio medido —
+  2.240 B/quadro, `tipo=3`). `tests/test-radar-ao-vivo-tcp.py` (322 linhas, exit 0): radar entra pela rede
+  no lugar do arquivo na mesma cadeia; radar fora do ar **não** vira "no ar" mentiroso e o recado fala do
+  radar (não de câmera); parada limpa; a placa do dono (arquivo) segue funcionando.
+- **Fase 6 — BACKEND + TELA FEITOS, TESTE VERDE.** `ground/api.py`: `ALVOS_DE_QUALIDADE`, `MODOS_DE_RADAR`
+  (`ppi`/`cru`), `TAXAS_DE_RADAR` (`30fps`/`volta`), `_radar_da_embarcacao` e `_validar_radar`, rotas
+  **GET/POST `/api/embarcacoes/radar`** (por embarcação; nunca devolve segredo) e o envio ao vivo que usa o
+  que ficou GRAVADO como padrão (a tela só manda o que mudou). Banco: colunas `radar_fonte/radar_modo/
+  radar_taxa/radar_alvo` em `embarcacoes` — a instalação que ATUALIZA ganha as colunas sozinha. Tela:
+  `admin/admin.js` com a opção "radar da embarcação", a linha de escolha (embarcação, fonte, imagem, taxa,
+  alvo) e o botão "Transmitir o radar ao vivo". `tests/test-radar-por-embarcacao.py` (24 verificações,
+  exit 0): coluna criada em banco antigo, opções fechadas, pedido torto recusado (modo/taxa/alvo/fonte/
+  embarcação), config POR EMBARCAÇÃO mantida em paralelo, envio usando o gravado e a sobreposição na hora.
+
 ## Estado da implementação (16/11/2026)
 
 - `ground/radar_drq.py`: lê `.drq` em sequência (nada de carregar 2,36 GiB), monta PPI e quadro cru em

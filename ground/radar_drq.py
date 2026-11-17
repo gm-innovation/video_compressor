@@ -32,9 +32,11 @@ import argparse
 import datetime
 import json
 import os
+import socket
 import struct
 import subprocess
 import sys
+import time
 import zlib
 from pathlib import Path
 
@@ -312,6 +314,300 @@ def gravar_pngs(quadros, destino: Path) -> int:
     for nome, px, _ in quadros:
         (destino / nome).write_bytes(png_cinza(PPI, PPI, bytes(px)))
     return len(quadros)
+
+
+# ------------------------------------------------ fluxo continuo (Fase 3: radar como camera)
+def _info_do_quadro(r, volta, vistos, girado, decorrido, parcial=False) -> dict:
+    return {"hora": r["hora"].isoformat(sep=" ")[:23], "az_graus": r["az"], "az_fino": r["az_fino"],
+            "volta_parcial": parcial, "girado": girado, "radiais_da_volta": len(volta),
+            "radiais_desenhadas": len(vistos), "quadros": len(volta), "segundos": round(decorrido, 3)}
+
+
+def quadros_ao_vivo(caminho, modo: str = "ppi", taxa: str = "30fps", fps: int = 30,
+                    repetir: bool = True, segundos=None, max_voltas=None):
+    """Fluxo CONTINUO de quadros, um por vez, para o radar entrar na cadeia como uma "camera".
+
+    Mesma regra do `quadros_do_arquivo` (PPI ou quadro cru; 1 imagem por volta ou 30 fps) e as mesmas
+    medidas, mas em fluxo: devolve (pixels, info) a cada quadro, sem guardar a gravacao na memoria, e
+    relê o arquivo do comeco quando ele termina (`repetir=True`) — o envio so' para quando o dono
+    mandar, como o envio ao vivo de camera.
+
+    O ritmo e' do GERADOR, medido no relogio de parede: no modo 30 fps ele dorme o que sobra de cada
+    quadro (1/fps) — se o desenho for mais lento que o alvo, o fluxo anda mais devagar e o numero na
+    tela mostra isso; em 'volta' sai uma imagem por volta, no ritmo em que o arquivo e' lido.
+
+    Quadros crus: 1 byte por pixel (tons de cinza), 1.024x1.024 — vai direto no `-f rawvideo` do
+    ffmpeg (o produto NAO guarda PNG no caminho ao vivo).
+    """
+    if modo not in MODOS:
+        raise ValueError(f"modo invalido: {modo} (use {' ou '.join(MODOS)})")
+    if taxa not in TAXAS:
+        raise ValueError(f"taxa invalida: {taxa} (use {' ou '.join(TAXAS)})")
+    voltas = 0
+    while True:
+        cab = ler_cabecalho(caminho)
+        menor, maior = janela_de_amplitude(caminho)
+        faixa = max(1, maior - menor)
+        cinza = tabela_cinza(menor, faixa)
+        cru = modo == "cru"
+        with open(caminho, "rb") as f:
+            f.seek(CABECALHO)
+            ultimo = None
+            for i0 in range(min(cab["quadros"], 5000)):
+                ultimo = ler_quadro_seguido(f, i0)
+                if ultimo:
+                    break
+            if ultimo is None:
+                raise ValueError("o arquivo nao tem quadro de sinal (tipo=3)")
+            t0 = ultimo["hora"]
+            volta = [ultimo]
+            vistos = {direcao_de(ultimo): ultimo}
+            az_anterior = ultimo["az_fino"]
+            girado = 0
+            proximo = 0.0
+            decorrido = 0.0
+            r = ultimo
+            tela = bytearray(PPI * PPI) if (taxa == "30fps" and not cru) else None
+            pintadas = set()
+            fim = False
+
+            def monta(parcial=False):
+                if cru:
+                    return bytes(desenhar_cru(volta, cinza))
+                if tela is None:
+                    return bytes(desenhar_ppi(volta, cinza))
+                return bytes(tela)
+
+            for i in range(min(cab["quadros"], 4_000_000)):
+                lido = ler_quadro_seguido(f, i)
+                if not lido:
+                    continue
+                r = lido
+                decorrido = (r["hora"] - t0).total_seconds()
+                if segundos is not None and decorrido > segundos:
+                    fim = True
+                    break
+                direcao = direcao_de(r)
+                girado += (r["az_fino"] - az_anterior) % DIRECOES
+                fechou = r["az_fino"] + 100 < az_anterior
+                az_anterior = r["az_fino"]
+                voltou = fechou or girado >= DIRECOES
+                vistos[direcao] = r
+                volta.append(r)
+                if taxa == "volta":
+                    if voltou:
+                        px = monta()
+                        info = _info_do_quadro(r, volta, vistos, girado, decorrido)
+                        volta = []
+                        vistos = {}
+                        girado = 0
+                        voltas += 1
+                        yield px, info
+                        if max_voltas and voltas >= max_voltas:
+                            fim = True
+                            break
+                else:
+                    if voltou:
+                        if tela is not None:
+                            for k in range(len(tela)):
+                                tela[k] = 0
+                        pintadas = set()
+                        girado = 0
+                    if tela is not None and direcao not in pintadas:
+                        pintar_radial(tela, r, cinza)
+                        pintadas.add(direcao)
+                    if decorrido >= proximo:
+                        marca = time.monotonic()          # o quadro e' medido: dorme so' o que sobra
+                        yield monta(), _info_do_quadro(r, volta, vistos, girado, decorrido)
+                        if max_voltas and len(volta) >= max_voltas:
+                            fim = True
+                            break
+                        proximo = decorrido + 1 / max(1, int(fps))
+                        sobra = (1.0 / max(1, int(fps))) - (time.monotonic() - marca)
+                        if sobra > 0:
+                            # ritmo de PAREDE: o proximo quadro sai em 1/fps mesmo que a leitura do
+                            # arquivo seja instantanea (senao o fluxo correria a 2.800 quadros/s e o
+                            # codificador receberia tudo de uma vez, sem parecer um radar ao vivo)
+                            time.sleep(sobra)
+            if taxa == "volta" and not fim and girado >= 1024:
+                yield monta(), _info_do_quadro(r, volta, vistos, girado, decorrido, parcial=True)
+        if not repetir or fim:
+            return
+
+
+# ------------------------------------------------ fonte AO VIVO por TCP (Fase 5: radar da embarcacao)
+def es_fonte_tcp(fonte: str) -> bool:
+    """A fonte e' um radar por TCP (`tcp://host:porta`) em vez de um arquivo `.drq`?"""
+    return str(fonte or "").strip().lower().startswith("tcp://")
+
+
+def partir_fonte_tcp(fonte: str) -> tuple:
+    """Aceita `tcp://host:porta` (ou `host:porta`) e devolve (host, porta)."""
+    bruto = str(fonte or "").strip()
+    if bruto.lower().startswith("tcp://"):
+        bruto = bruto[6:]
+    bruto = bruto.split("/", 1)[0]
+    if ":" not in bruto:
+        raise ValueError(f"fonte TCP sem porta: {fonte!r} (use tcp://host:porta)")
+    host, _, porta = bruto.rpartition(":")
+    if not porta.isdigit() or not (0 < int(porta) < 65536):
+        raise ValueError(f"porta invalida na fonte TCP: {fonte!r} (use tcp://host:porta)")
+    return (host or "127.0.0.1"), int(porta)
+
+
+def quadros_ao_vivo_tcp(host: str, porta: int, modo: str = "ppi", taxa: str = "30fps", fps: int = 30,
+                        segundos=None, max_quadros=None, timeout: float = 15.0, repetir: bool = True):
+    """Sinal de radar AO VIVO, por TCP, no MESMO formato de quadro medido no `.drq` (2.240 B, tipo=3).
+
+    Diferenca do `quadros_ao_vivo` (arquivo): nao ha arquivo para ler nem para repetir — o radar manda
+    o fluxo continuo e o desenhador consome. O resto e' identico de proposito (mesma janela de
+    amplitude, mesmos modos, mesmas taxas, mesmo ritmo de parede), porque a imagem tem de sair igual
+    venha ela de arquivo ou do radar.
+
+    O que NAO esta' medido, e por isso NAO e' inventado aqui (ver plano, "Incognitas declaradas"):
+    o protocolo de fio do radar original e a placa de aquisicao analogica do cliente. O clone do
+    SeaDarQ fala RIU por linhas ASCII (comandos + `[TRIG]`, sem as amostras) e este conector fala o
+    formato de QUADRO medido no arquivo do dono — que e' o que a bancada reproduz com
+    `ground/radar_tcp.py`, e o que qualquer infra de cliente que entregue esse formato entrega.
+    """
+    if modo not in MODOS:
+        raise ValueError(f"modo invalido: {modo} (use {' ou '.join(MODOS)})")
+    if taxa not in TAXAS:
+        raise ValueError(f"taxa invalida: {taxa} (use {' ou '.join(TAXAS)})")
+    cru = modo == "cru"
+    sock = socket.create_connection((host, int(porta)), timeout=timeout)
+    sock.settimeout(timeout)
+    buf = bytearray()
+    i = 0
+
+    def proximo():
+        nonlocal buf, i
+        while len(buf) < QUADRO:
+            pedaco = sock.recv(65536)
+            if not pedaco:
+                return None
+            buf.extend(pedaco)
+        q = bytes(buf[:QUADRO])
+        del buf[:QUADRO]
+        r = montar_quadro(q, i)
+        i += 1
+        return r
+
+    try:
+        # Janela de contraste da FONTE: no arquivo ela e' medida no proprio arquivo
+        # (`janela_de_amplitude`); aqui saem das primeiras radiais que o radar manda — sem isso a PPI
+        # sairia preta (a tabela de cinza precisa da faixa real daquela fonte).
+        inicio = []
+        while len(inicio) < 200:
+            r = proximo()
+            if r is None:
+                raise ConnectionError(f"o radar em {host}:{porta} nao mandou quadro de sinal "
+                                      f"(chegaram {len(inicio)}) — a fonte caiu ou nao fala o formato medido")
+            inicio.append(r)
+        menor = 4095
+        maior = 0
+        for r in inicio:
+            for v in r["amostras"]:
+                a = v & 0x0FFF
+                if a < menor:
+                    menor = a
+                if a > maior:
+                    maior = a
+        if maior <= menor:
+            maior = menor + 1
+        cinza = tabela_cinza(menor, maior - menor)
+
+        tela = bytearray(PPI * PPI) if (taxa == "30fps" and not cru) else None
+        pintadas = set()
+        volta = []
+        vistos = {}
+        girado = 0
+        az_anterior = None
+        t0 = None
+        quadros_enviados = 0
+
+        def monta(parcial=False):
+            if cru:
+                return bytes(desenhar_cru(volta, cinza))
+            if tela is None:
+                return bytes(desenhar_ppi(volta, cinza))
+            return bytes(tela)
+
+        pendente = inicio
+        while True:
+            if pendente:
+                r = pendente.pop(0)
+            else:
+                r = proximo()
+            if r is None:
+                return
+            if t0 is None:
+                t0 = r["hora"]
+            decorrido = (r["hora"] - t0).total_seconds()
+            if segundos is not None and decorrido > segundos:
+                return
+            direcao = direcao_de(r)
+            if az_anterior is not None:
+                girado += (r["az_fino"] - az_anterior) % DIRECOES
+                fechou = r["az_fino"] + 100 < az_anterior
+            else:
+                fechou = False
+            az_anterior = r["az_fino"]
+            voltou = fechou or girado >= DIRECOES
+            vistos[direcao] = r
+            volta.append(r)
+            if taxa == "volta":
+                if voltou:
+                    px = monta()
+                    info = _info_do_quadro(r, volta, vistos, girado, decorrido)
+                    volta = []
+                    vistos = {}
+                    girado = 0
+                    quadros_enviados += 1
+                    yield px, info
+                    if max_quadros and quadros_enviados >= max_quadros:
+                        return
+            else:
+                if voltou:
+                    if tela is not None:
+                        for k in range(len(tela)):
+                            tela[k] = 0
+                    pintadas = set()
+                    girado = 0
+                if tela is not None and direcao not in pintadas:
+                    pintar_radial(tela, r, cinza)
+                    pintadas.add(direcao)
+                if decorrido >= (quadros_enviados / max(1, int(fps))):
+                    marca = time.monotonic()
+                    px = monta()
+                    info = _info_do_quadro(r, volta, vistos, girado, decorrido)
+                    quadros_enviados += 1
+                    yield px, info
+                    if max_quadros and quadros_enviados >= max_quadros:
+                        return
+                    sobra = (1.0 / max(1, int(fps))) - (time.monotonic() - marca)
+                    if sobra > 0:
+                        time.sleep(sobra)
+    finally:
+        try:
+            sock.close()
+        except Exception:
+            pass
+
+
+def gerador_da_fonte(fonte, modo: str = "ppi", taxa: str = "30fps", fps: int = 30, repetir: bool = True,
+                     segundos=None, max_quadros=None, timeout: float = 15.0):
+    """Escolhe o conector pela FONTE: arquivo `.drq` ou radar por TCP — mesma saida nos dois.
+
+    E' o que faz a fonte ser plugavel por embarcacao (decisao A do dono): o resto da cadeia (desenho,
+    encode, SRT, mediamtx) nao sabe de onde o sinal veio.
+    """
+    if es_fonte_tcp(fonte):
+        host, porta = partir_fonte_tcp(fonte)
+        return quadros_ao_vivo_tcp(host, porta, modo=modo, taxa=taxa, fps=fps, segundos=segundos,
+                                   max_quadros=max_quadros, timeout=timeout, repetir=repetir)
+    return quadros_ao_vivo(fonte, modo, taxa, fps, repetir=repetir, segundos=segundos,
+                           max_voltas=max_quadros)
 
 
 # ------------------------------------------------------------------ codificacao (ffmpeg do produto)

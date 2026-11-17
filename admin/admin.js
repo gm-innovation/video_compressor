@@ -1,6 +1,6 @@
 /* Admin do projeto e do sistema: acompanhamento (§6) + administracao (clientes, embarcacoes,
    cameras, usuarios, analises, auditoria, saude). Le e escreve tudo pela API do produto. */
-const A = { usuario: null, resumo: null, clientes: [], usuarios: [], verificarCredencial: false, sistema: null, cameras: [], embarcacoes: [], tela: 'painel', timer: null, marca: null };
+const A = { usuario: null, resumo: null, clientes: [], usuarios: [], verificarCredencial: false, sistema: null, cameras: [], embarcacoes: [], tela: 'painel', timer: null, marca: null, radarForm: null, radarAviso: null };
 const $ = (id) => document.getElementById(id);
 const limpar = (el) => { while (el.firstChild) el.removeChild(el.firstChild); };
 const esc = (s) => String(s === null || s === undefined ? '' : s);
@@ -15,7 +15,7 @@ const BASE_CAPTURA = (() => {
   try { return (window.lecsorApp && window.lecsorApp.enderecoDaCaptura && window.lecsorApp.enderecoDaCaptura()) || ''; }
   catch (e) { return ''; }
 })();
-const ROTAS_CAPTURA = /^\/api\/(dispositivos|envios|ingestao|ingestoes|compressao|compressoes|medicoes|trecho|captura)(\/|$)/;
+const ROTAS_CAPTURA = /^\/api\/(dispositivos|envios|ingestao|ingestoes|compressao|compressoes|medicoes|trecho|captura|embarcacoes)(\/|$)/;
 const ehRotaDeCaptura = (rota) => ROTAS_CAPTURA.test(String(rota));
 const urlDeCaptura = (rota) => (BASE_CAPTURA && ehRotaDeCaptura(rota) ? BASE_CAPTURA + rota : rota);
 
@@ -1066,7 +1066,8 @@ function telaEnvios(t) {
   const modo = document.createElement('select'); modo.id = 'env-modo';
   for (const [v, r] of [['arquivo', 'arquivo do computador'], ['url', 'link (http ou YouTube)'],
                         ['camera', 'câmera ligada nesta máquina (ao vivo)'],
-                        ['sintetica', 'teste sintético (sem câmera nenhuma)']]) {
+                        ['sintetica', 'teste sintético (sem câmera nenhuma)'],
+                        ['radar', 'radar da embarcação (sinal .drq ou pela rede)']]) {
     const o = document.createElement('option'); o.value = v; o.textContent = r; modo.appendChild(o);
   }
   rm.appendChild(modo); linha1.appendChild(rm);
@@ -1115,6 +1116,124 @@ function telaEnvios(t) {
 
   const linha3 = document.createElement('div'); linha3.className = 'linha-form'; caixa.appendChild(linha3);
   const btnComprimir = botao('1) Comprimir e medir', 'principal', () => {});
+  btnComprimir.id = 'env-comprimir';
+
+  // ---- RADAR da embarcação (Fase 6, 17/11/2026) ------------------------------------------------
+  // Cada embarcação pode ter o SEU radar (fonte, modo de imagem e taxa), como o alvo por câmera:
+  // a escolha fica GRAVADA na embarcação e passa a ser o padrão dos próximos envios dela.
+  const linhaRadar = document.createElement('div'); linhaRadar.className = 'linha-form';
+  linhaRadar.id = 'env-radar'; caixa.appendChild(linhaRadar);
+  const rEmb = document.createElement('div');
+  rEmb.appendChild(Object.assign(document.createElement('label'), { textContent: 'Embarcação do radar' }));
+  const radarEmbarcacao = document.createElement('select'); radarEmbarcacao.id = 'env-radar-embarcacao';
+  rEmb.appendChild(radarEmbarcacao); linhaRadar.appendChild(rEmb);
+  const radarFonte = campo(linhaRadar, 'env-radar-fonte', 'Fonte do sinal (.drq ou tcp://host:porta)', '');
+  const rModo = document.createElement('div');
+  rModo.appendChild(Object.assign(document.createElement('label'), { textContent: 'Imagem do radar' }));
+  const radarModo = document.createElement('select'); radarModo.id = 'env-radar-modo';
+  for (const [v, r] of [['ppi', 'PPI (imagem de radar)'], ['cru', 'cru (radiais desdobrados)']]) {
+    const o = document.createElement('option'); o.value = v; o.textContent = r; radarModo.appendChild(o);
+  }
+  rModo.appendChild(radarModo); linhaRadar.appendChild(rModo);
+  const rTaxa = document.createElement('div');
+  rTaxa.appendChild(Object.assign(document.createElement('label'), { textContent: 'Taxa do radar' }));
+  const radarTaxa = document.createElement('select'); radarTaxa.id = 'env-radar-taxa';
+  for (const [v, r] of [['30fps', '30 imagens por segundo'], ['volta', '1 imagem por volta']]) {
+    const o = document.createElement('option'); o.value = v; o.textContent = r; radarTaxa.appendChild(o);
+  }
+  rTaxa.appendChild(radarTaxa); linhaRadar.appendChild(rTaxa);
+  const rAlvoRadar = document.createElement('div');
+  rAlvoRadar.appendChild(Object.assign(document.createElement('label'), { textContent: 'Alvo do radar (banda)' }));
+  const radarAlvo = document.createElement('select'); radarAlvo.id = 'env-radar-alvo';
+  for (const v of ['1500k', '1200k', '1000k', '800k', '500k', '300k']) {
+    const o = document.createElement('option'); o.value = v; o.textContent = v; radarAlvo.appendChild(o);
+  }
+  rAlvoRadar.appendChild(radarAlvo); linhaRadar.appendChild(rAlvoRadar);
+  const rGravar = document.createElement('div');
+  const btnGravarRadar = botao('Gravar na embarcação', '', () => {});
+  const radarAviso = document.createElement('div'); radarAviso.className = 'nota'; radarAviso.id = 'env-radar-aviso';
+  rGravar.appendChild(btnGravarRadar); rGravar.appendChild(radarAviso); linhaRadar.appendChild(rGravar);
+  // O recado fica guardado junto com o formulario: a tela se redesenha sozinha e o cartao novo tem de
+  // mostrar de novo o que o operador acabou de ver ("gravado"/"recusado") em vez de apagar com uma leitura.
+  const mostrarAvisoRadar = (texto, acao) => {
+    radarAviso.textContent = texto;
+    A.radarAviso = { texto: texto, em: Date.now(), acao: !!acao };
+  };
+  const avisoDoOperadorRecente = () =>
+    !!(A.radarAviso && A.radarAviso.acao && (Date.now() - A.radarAviso.em) < 10000);
+  if (A.radarAviso) radarAviso.textContent = A.radarAviso.texto;
+
+  let radarAcao = 0;                     // numero da acao do operador (leitura velha nao apaga recado novo)
+  const lerRadarDaEmbarcacao = async () => {
+    // CORRIDA REAL (17/11/2026, vista na prova de tela): a leitura inicial do radar podia chegar DEPOIS do
+    // operador gravar/errar e sobrescrever o aviso dele ("gravado"/"recusado" virava "ainda nao tem radar
+    // gravado"). Cada leitura tira um numero e so' escreve se NINGUEM agiu no meio.
+    const meu = radarAcao;
+    try {
+      const q = radarEmbarcacao.value ? ('?embarcacao_id=' + encodeURIComponent(radarEmbarcacao.value)) : '';
+      const r = await fetchCaptura('/api/embarcacoes/radar' + q);
+      const j = await r.json();
+      if (radarAcao !== meu) return;      // o operador agiu enquanto isto voltava: nao apago o recado dele
+      if (!r.ok) { radarAviso.textContent = j.erro || ('erro ' + r.status); return; }
+      // REDESENHO NO MEIO DA DIGITACAO (17/11/2026): o que o operador JA' escolheu/digitou no radar nao
+      // pode sumir quando a tela se redesenha sozinha — o que esta' na tela (A.radarForm) vence o gravado.
+      const guardado = A.radarForm;
+      if (radarEmbarcacao.dataset.preenchido !== '1') {
+        radarEmbarcacao.innerHTML = '';
+        for (const e of (j.embarcacoes || [])) {
+          const o = document.createElement('option'); o.value = e.id; o.textContent = e.nome || e.id;
+          radarEmbarcacao.appendChild(o);
+        }
+        radarEmbarcacao.dataset.preenchido = '1';
+        if (j.radar && j.radar.embarcacao_id) radarEmbarcacao.value = j.radar.embarcacao_id;
+      }
+      if (guardado && guardado.embarcacao_id) radarEmbarcacao.value = guardado.embarcacao_id;
+      const cfg = j.radar || {};
+      radarFonte.value = guardado ? guardado.fonte : (cfg.fonte || '');
+      radarModo.value = guardado ? guardado.modo : (cfg.modo || 'ppi');
+      radarTaxa.value = guardado ? guardado.taxa : (cfg.taxa || '30fps');
+      radarAlvo.value = guardado ? guardado.alvo : (cfg.alvo || '1500k');
+      const aviso = cfg.fonte
+        ? ('gravado nesta embarcação: ' + cfg.modo + ' / ' + cfg.taxa + (cfg.alvo ? ' / ' + cfg.alvo : ''))
+        : 'esta embarcação ainda não tem radar gravado';
+      // nao apago o recado do operador com uma leitura que chegou depois da acao dele
+      if (!avisoDoOperadorRecente()) mostrarAvisoRadar(aviso, false);
+    } catch (e) {
+      radarAviso.textContent = 'não consegui ler a config do radar (' + e.message + ')';
+    }
+  };
+  btnGravarRadar.onclick = async () => {
+    radarAcao += 1;                      // marca a acao: leitura que voltar atrasada nao apaga este recado
+    guardarRadarNaTela();                // o que foi gravado tambem fica guardado na tela (redesenho nao perde)
+    const corpo = { embarcacao_id: radarEmbarcacao.value, fonte: radarFonte.value.trim(),
+      modo: radarModo.value, taxa: radarTaxa.value, alvo: radarAlvo.value };
+    const r = await fetchCaptura('/api/embarcacoes/radar', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
+    const j = await r.json();
+    mostrarAvisoRadar(r.ok
+      ? ('gravado: ' + j.radar.modo + ' / ' + j.radar.taxa + (j.radar.alvo ? ' / ' + j.radar.alvo : ''))
+      : ('recusado: ' + (j.erro || r.status) + (j.modos ? ' · opções: ' + j.modos.join(', ') : '')), true);
+  };
+  const guardarRadarNaTela = () => {
+    A.radarForm = { embarcacao_id: radarEmbarcacao.value, fonte: radarFonte.value,
+                    modo: radarModo.value, taxa: radarTaxa.value, alvo: radarAlvo.value };
+  };
+  for (const el of [radarFonte, radarModo, radarTaxa, radarAlvo]) {
+    el.addEventListener('input', guardarRadarNaTela);
+    el.addEventListener('change', guardarRadarNaTela);
+  }
+  // O que o operador ja' tinha digitado/gravado volta JUNTO com a linha (na hora, sem esperar o servidor):
+  // entre a montagem e a leitura que volta da rede havia uma janela em que os campos ficavam vazios — e um
+  // clique nessa janela gravava "informe a fonte do radar" (corrida vista na prova de tela, 17/11/2026).
+  if (A.radarForm) {
+    radarFonte.value = A.radarForm.fonte || '';
+    radarModo.value = A.radarForm.modo || 'ppi';
+    radarTaxa.value = A.radarForm.taxa || '30fps';
+    radarAlvo.value = A.radarForm.alvo || '1500k';
+  }
+  radarEmbarcacao.onchange = () => { A.radarForm = null; lerRadarDaEmbarcacao(); };
+  lerRadarDaEmbarcacao();
+
   linha3.appendChild(btnComprimir);
   const btnPublicar = botao('2) Publicar no ar (a última compressão)', '', () => {});
   linha3.appendChild(btnPublicar);
@@ -1206,13 +1325,15 @@ function telaEnvios(t) {
   const trocarModo = () => {
     const ehArquivo = modo.value === 'arquivo';
     const ehLink = modo.value === 'url';
-    const ehViva = modo.value === 'camera' || modo.value === 'sintetica';
+    const ehViva = modo.value === 'camera' || modo.value === 'sintetica' || modo.value === 'radar';
+    const ehRadar = modo.value === 'radar';
     arquivo.parentElement.style.display = ehArquivo ? '' : 'none';
     url.parentElement.style.display = ehLink ? '' : 'none';
     rv.style.display = modo.value === 'camera' ? '' : 'none';
+    linhaRadar.style.display = ehRadar ? '' : 'none';
     rs.style.display = 'none';            // fonte viva: envio CONTÍNUO, sem tempo determinado
     // streaming não tem "comprimir e medir" nem "publicar depois": é ao vivo, direto
-    btnComprimir.textContent = ehViva ? 'Transmitir ao vivo (contínuo)' : '1) Comprimir e medir';
+    btnComprimir.textContent = ehRadar ? 'Transmitir o radar ao vivo' : (ehViva ? 'Transmitir ao vivo (contínuo)' : '1) Comprimir e medir');
     btnComprimir.disabled = (modo.value === 'camera' && semCamera);
     btnPublicar.style.display = ehViva ? 'none' : '';
     if (modo.value === 'camera') preencherDispositivos();
@@ -1309,6 +1430,25 @@ function telaEnvios(t) {
 
   btnComprimir.onclick = () => {
     const r = (rotulo.value || '').trim(), b = qualidade.value, qf = fps.value, aud = audio.value;
+    if (modo.value === 'radar') {
+      // RADAR (Fase 3/5/6): a fonte do sinal (.drq ou tcp://host:porta), o modo de imagem e a taxa vêm
+      // da tela (o que ficou gravado na embarcação já aparece preenchido); o servidor desenha e sobe
+      // pela MESMA cadeia da câmera.
+      const emb = radarEmbarcacao.value;
+      dizer('ligando o radar ao vivo… (envio contínuo: só para quando você mandar)');
+      fetchCaptura('/api/ingestao/ao-vivo', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tipo: 'radar', fonte: radarFonte.value.trim(), modo: radarModo.value,
+          taxa: radarTaxa.value, bitrate: radarAlvo.value, embarcacao_id: emb,
+          rotulo: r || ('Radar de ' + emb) }) })
+        .then(async (x) => ({ s: x.status, j: await x.json() }))
+        .then(({ s, j }) => {
+          if (s !== 201) { dizer('não deu para transmitir o radar: ' + (j.erro || s)); return; }
+          dizer('NO AR: "' + (j.rotulo || 'radar') + '" (' + radarModo.value + '/' + radarTaxa.value +
+            ', alvo ' + j.alvo + '). Acompanhe em Tempo real e Produção; para parar, use "parar" na linha abaixo.');
+          carregar();
+        });
+      return;
+    }
     if (modo.value === 'camera' || modo.value === 'sintetica') {
       const tipo = modo.value;
       const nomeFonte = tipo === 'camera' ? ((dispositivo.options[dispositivo.selectedIndex] || {}).textContent || 'webcam do notebook') : 'teste sintético';

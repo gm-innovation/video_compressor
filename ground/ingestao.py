@@ -161,9 +161,11 @@ def _comando(fonte: str, fluxo_id: str, bitrate: str, codec: str, repetir: bool,
              dispositivo: str | None = None, resolucao: str = "1920x1080") -> list[str]:
     destino = (f"srt://{srt_host}:{srt_port}?mode=caller&latency=200&pkt_size=1316&streamid=publish:{fluxo_id}")
     cmd = [caminho_ffmpeg(), "-hide_banner", "-nostdin", "-loglevel", "warning"]
-    if tipo in ("camera", "sintetica"):
+    if tipo in ("camera", "sintetica", "radar"):
         # FONTE VIVA: a webcam (ou o gerador) entrega no tempo real — nada de -re nem de laço,
         # o envio e' CONTINUO, igual a operacao. Sem -t: so para quando o dono mandar parar.
+        # RADAR entra aqui desde a Fase 3 (17/11/2026): os quadros do radar chegam por `pipe:0`,
+        # gerados pelo `radar_drq.quadros_ao_vivo` — mesma cadeia (SRT -> mediamtx -> lado terra).
         cmd += _args_fonte_viva(tipo, dispositivo, resolucao, fps)
     else:
         cmd += ["-re"]
@@ -199,18 +201,50 @@ def alvo_automatico(entrada_kbps: float | None, fator: float = 0.5, piso: int = 
     return f"{max(piso, min(teto, round(entrada_kbps * fator / 50.0) * 50))}k"
 
 
+def _alimentar_radar(proc, caminho: str, modo: str, taxa: str, fps: int, fluxo_id: str) -> None:
+    """Empurra os quadros do radar no `pipe:0` do ffmpeg, sem parar (Fase 3, 17/11/2026).
+
+    O radar nao e' um dispositivo que o ffmpeg abre: quem le o sinal e desenha a imagem e' o Python
+    (`radar_drq.gerador_da_fonte`, que escolhe entre o arquivo `.drq` e o radar por TCP), que devolve
+    um quadro cru por vez. Aqui esses quadros vao para o stdin do ffmpeg — a partir dai e' a MESMA
+    cadeia da camera (encode -> SRT -> mediamtx -> terra).
+
+    Para sozinho e calado quando o ffmpeg fecha (envio parado pelo dono): `BrokenPipeError` nao e'
+    erro do radar, e' o fim normal do fluxo — quem cuida do estado e' o `_bombear`.
+    """
+    import radar_drq
+    quadros = 0
+    try:
+        for px, _info in radar_drq.gerador_da_fonte(caminho, modo, taxa, fps, repetir=True):
+            proc.stdin.write(px)
+            quadros += 1
+    except (BrokenPipeError, OSError):
+        pass
+    except Exception as e:
+        print(f"[radar] {fluxo_id}: o desenho parou ({type(e).__name__}: {e})", flush=True)
+    finally:
+        try:
+            proc.stdin.close()
+        except Exception:
+            pass
+        print(f"[radar] {fluxo_id}: {quadros} quadro(s) enviados ao ffmpeg ({modo}/{taxa})", flush=True)
+
+
 def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: str = "auto",
             codec: str = "libx264", repetir: bool = True, tipo: str | None = None, audio: bool = False,
             embarcacao_id: str = "psv-exemplo", srt_host: str = "127.0.0.1", srt_port: int = 8890,
             registrar_camera: bool = True, abrir_log: bool = True, fps: int = 30,
             guardar_arquivo: bool = False, copiar: bool = False,
-            dispositivo: str | None = None, resolucao: str = "1920x1080") -> dict:
+            dispositivo: str | None = None, resolucao: str = "1920x1080",
+            radar_modo: str = "ppi", radar_taxa: str = "30fps") -> dict:
     """Sobe a ingestao. Devolve o registro (com id) para a tela acompanhar."""
     garantir_schema()
     ENVIOS.mkdir(parents=True, exist_ok=True); LOG_DIR.mkdir(parents=True, exist_ok=True)
     if tipo is None:
         tipo = "arquivo" if re.match(r"^[a-zA-Z]:[\\/]|^/|^\.{1,2}[\\/]", fonte) or Path(fonte).exists() else "url"
-    if tipo == "arquivo":
+    if tipo == "radar" and str(fonte).lower().startswith("tcp://"):
+        pass                                    # radar AO VIVO pela rede: nao ha arquivo para resolver
+    elif tipo in ("arquivo", "radar"):
         p = Path(fonte)
         if not p.exists():
             return {"erro": f"arquivo nao encontrado: {fonte}"}
@@ -236,7 +270,16 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
         # guarda o seletor unico: a coluna `fonte` e' a identidade da camera (duas cameras de
         # mesmo nome passam a ter linhas distintas e uma nao bloqueia a outra)
         dispositivo = _normalizar_dispositivo(dispositivo)
-    if tipo in ("camera", "sintetica"):
+    if tipo == "radar":
+        # Fonte viva "de sinal": o radar nao tem resolucao de camera nem negociacao — a imagem e' a
+        # PPI/quadro cru 1.024x1.024 do desenhador e vai para o ffmpeg por `pipe:0`. O alvo padrao e'
+        # o mesmo das cameras (1500k) e muda pela tela como o das cameras (Fase 3, 17/11/2026).
+        s = {"resolucao": "1024x1024", "fps": float(fps or 30), "bitrate_kbps": None,
+             "dispositivo": f"radar:{radar_modo}/{radar_taxa}"}
+        repetir = False
+        if not bitrate or bitrate == "auto":
+            bitrate = "1500k"
+    elif tipo in ("camera", "sintetica"):
         # fonte viva: nao ha arquivo para sondar. A resolucao vem do pedido e o alvo e' fixo
         # (o numero medido passa a ser o do envio CONTINUO, lido do -progress do ffmpeg).
         s = {"resolucao": _resolucao_valida(resolucao, "1920x1080" if tipo == "sintetica" else "1280x720"),
@@ -262,7 +305,12 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
                    dispositivo=dispositivo, resolucao=resolucao)
     log = LOG_DIR / f"{fluxo_id}-{int(time.time())}.log"
     saida = open(log, "ab", buffering=0) if abrir_log else subprocess.DEVNULL
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=saida, cwd=str(RAIZ))
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE if tipo == "radar" else None,
+                            stdout=subprocess.PIPE, stderr=saida, cwd=str(RAIZ))
+    if tipo == "radar":
+        # o radar NAO tem dispositivo para abrir: os quadros sao gerados e empurrados no `pipe:0`
+        threading.Thread(target=_alimentar_radar,
+                         args=(proc, fonte, radar_modo, radar_taxa, fps, fluxo_id), daemon=True).start()
     with conexao() as c:
         cur = c.execute("""INSERT INTO ingestoes (fluxo_id, camera_id, rotulo, fonte, tipo, repetir, codec,
               bitrate_alvo, resolucao, fps_nativo, bitrate_entrada_kbps, estado, pid, log, srt_host,
@@ -270,7 +318,9 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (fluxo_id, camera_id, rotulo or slug,
              origem_pagina or (f"dshow:{dispositivo or DISPOSITIVO_PADRAO}" if tipo == "camera"
-                               else (f"lavfi:testsrc2:{resolucao}" if tipo == "sintetica" else fonte)),
+                               else (f"lavfi:testsrc2:{resolucao}" if tipo == "sintetica"
+                                     else (f"radar:{fonte}:{radar_modo}:{radar_taxa}" if tipo == "radar"
+                                           else fonte))),
              tipo, 1 if repetir else 0, codec, bitrate,
              s.get("resolucao"), s.get("fps"), s.get("bitrate_kbps"), "iniciando", proc.pid, str(log),
              srt_host, agora(), agora()))
@@ -285,7 +335,7 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
                       (camera_id, embarcacao_id, rotulo or slug, fluxo_id, "envio"))
             # o alvo escolhido no envio fica GRAVADO na camera: e' assim que duas cameras com cenas
             # diferentes passam a ter alvos diferentes (e a tela consegue comparar os dois numeros)
-            if tipo in ("camera", "sintetica"):
+            if tipo in ("camera", "sintetica", "radar"):
                 try:
                     c.execute("UPDATE cameras SET alvo=? WHERE id=?", (str(bitrate), camera_id))
                 except sqlite3.OperationalError:
@@ -343,6 +393,11 @@ def _motivo_da_falha(codigo: int, log: Path, r: dict) -> str | None:
         return ("a camera nao abriu: pode estar em uso por outro envio ou desconectada — "
                 "mande parar o outro envio e ligue de novo")
     if "nothing was encoded" in baixo or "no filtered frames" in baixo:
+        # o radar nao e' camera: sem quadro do sinal, o recado certo fala do RADAR (fonte/rede), nao
+        # de "camera ocupada" — o dono tem de saber onde procurar.
+        if (r.get("tipo") or "") == "radar":
+            return ("o radar nao entregou nenhum quadro: confira a fonte do sinal "
+                    "(arquivo .drq ou a rede ate' o radar) e se o radar esta ligado")
         return "a fonte nao entregou nenhum quadro (camera ocupada ou desconectada)"
     if "no such file" in baixo or "not found" in baixo:
         return "fonte nao encontrada"
@@ -683,6 +738,12 @@ def listar_dispositivos() -> dict:
 def _args_fonte_viva(tipo: str, dispositivo: str | None, resolucao: str, fps: int) -> list[str]:
     if tipo == "sintetica":
         return ["-f", "lavfi", "-i", f"testsrc2=size={resolucao or '1920x1080'}:rate={fps or 30}"]
+    if tipo == "radar":
+        # Os quadros do radar chegam CRUS por `pipe:0` (1 byte por pixel, tons de cinza, 1.024x1.024 =
+        # o numero de amostras por radial). Nada de dshow, nada de tamanho pedido: o radar nao negocia
+        # resolucao como uma camera — quem manda o tamanho e' o desenhador (PPI 1.024x1.024).
+        return ["-f", "rawvideo", "-pix_fmt", "gray", "-s", "1024x1024",
+                "-framerate", str(fps or 30), "-i", "pipe:0"]
     # -video_size EXPLICITO quando a camera ACEITA o tamanho pedido: sem ele a webcam entrega o que
     # quiser e o registro ficava SEM resolucao (guardava o nome do dispositivo), o que zerava a
     # entrada/compressao na tela.
@@ -836,14 +897,39 @@ def gravar_alvo_da_camera(camera_id: str | None, alvo: str | None) -> bool:
 
 def ao_vivo(*, tipo: str = "camera", dispositivo: str | None = None, resolucao: str = "1920x1080",
             fps: int = 30, rotulo: str | None = None, fluxo_id: str | None = None, bitrate: str = "auto",
-            embarcacao_id: str = "bancada", srt_host: str = "127.0.0.1", srt_port: int = 8890) -> dict:
-    """""Envio CONTINUO de uma fonte viva (webcam do notebook ou fonte sintetica), igual a operacao.
+            embarcacao_id: str = "bancada", srt_host: str = "127.0.0.1", srt_port: int = 8890,
+            radar_fonte: str | None = None, radar_modo: str = "ppi", radar_taxa: str = "30fps") -> dict:
+    """Envio CONTINUO de uma fonte viva (webcam do notebook ou fonte sintetica), igual a operacao.
 
     Sem duracao determinada e sem laço de arquivo: o ffmpeg le a camera e publica em SRT ate
     alguem parar. A imagem e a REAL da webcam (nao ha clipe, nao ha tela preta sintetizada).
+
+    RADAR (`tipo="radar"`, Fase 3 de 17/11/2026): a fonte e' um arquivo `.drq` com sinal de radar, e o
+    sinal NAO e' video — o Python le o sinal e desenha a imagem (PPI ou quadro cru, 1 imagem por volta
+    ou 30 fps) e empurra no ffmpeg. Dai para a frente e' a MESMA cadeia da camera: o radar aparece como
+    mais uma camera, com alvo de bitrate escolhido na tela.
     """
-    if tipo not in ("camera", "sintetica"):
-        return {"erro": "fonte ao vivo invalida: use 'camera' (webcam) ou 'sintetica'"}
+    if tipo not in ("camera", "sintetica", "radar"):
+        return {"erro": "fonte ao vivo invalida: use 'camera' (webcam), 'sintetica' ou 'radar' (.drq)"}
+    if tipo == "radar":
+        # A fonte do radar e' PLUGAVEL (decisao A do dono): arquivo `.drq` ou o radar da embarcacao por
+        # TCP (`tcp://host:porta`). O que NAO esta' medido (protocolo de fio do radar original, placa de
+        # aquisicao) segue declarado no plano — aqui so' entra o formato de quadro medido.
+        fonte_radar = str(radar_fonte or "").strip()
+        if not fonte_radar:
+            return {"erro": "escolha a fonte do radar: um arquivo de sinal (.drq) ou tcp://host:porta"}
+        if not fonte_radar.lower().startswith("tcp://") and not Path(fonte_radar).exists():
+            return {"erro": f"arquivo de sinal do radar nao encontrado: {fonte_radar!r}"}
+        if fonte_radar.lower().startswith("tcp://"):
+            try:
+                import radar_drq as _rd
+                _rd.partir_fonte_tcp(fonte_radar)      # valida o endereco antes de subir o envio
+            except ValueError as e:
+                return {"erro": f"fonte de radar invalida: {e}"}
+        if radar_modo not in ("ppi", "cru"):
+            return {"erro": "modo de imagem do radar invalido: use 'ppi' (imagem de radar) ou 'cru'"}
+        if radar_taxa not in ("volta", "30fps"):
+            return {"erro": "taxa do radar invalida: use 'volta' (1 imagem por volta) ou '30fps'"}
     if tipo == "camera" and not (dispositivo or "").strip():
         disp = listar_dispositivos()
         dispositivo = disp.get("padrao_seletor") or disp.get("padrao") or DISPOSITIVO_PADRAO
@@ -851,7 +937,8 @@ def ao_vivo(*, tipo: str = "camera", dispositivo: str | None = None, resolucao: 
         # identidade pelo seletor unico (@device_pnp_...), nunca pelo nome amigavel: e' o que
         # permite DUAS cameras USB iguais conviverem (a 2a deixava de ser recusada como duplicata)
         dispositivo = _normalizar_dispositivo(dispositivo)
-    nome = (rotulo or "").strip() or ("webcam do notebook" if tipo == "camera" else "teste sintetico")
+    nome = (rotulo or "").strip() or ("webcam do notebook" if tipo == "camera"
+                                      else ("radar (sinal de arquivo)" if tipo == "radar" else "teste sintetico"))
     # a webcam do Windows (dshow) so abre UMA vez: dois envios da mesma camera brigam pelo dispositivo
     # e o segundo fica com quadro preto. Melhor recusar com recado claro do que pintar tela preta.
     if tipo == "camera":
@@ -875,31 +962,37 @@ def ao_vivo(*, tipo: str = "camera", dispositivo: str | None = None, resolucao: 
     # o SSIM mostrado era de um ajuste que nao era o que ia para a rede.
     alvo_vivo = str(bitrate or "auto").strip()
     if alvo_vivo in ("", "auto"):
-        alvo_vivo = alvo_da_camera(ident) or ("1500k" if tipo == "camera" else "2500k")
+        alvo_vivo = alvo_da_camera(ident) or ("1500k" if tipo in ("camera", "radar") else "2500k")
     # Mede a QUALIDADE (SSIM) do MESMO ajuste antes de entrar no ar: a fonte ainda esta livre e a
     # tela mostra o numero com a hora. Se a medicao falhar, o envio segue — qualidade e informacao,
-    # nao pode impedir a operacao.
-    try:
-        import qualidade as _qualidade  # import tardio: qualidade tambem usa a ingestao
-        # a fonte VAI junto: a medicao roda ANTES de o ffmpeg subir (a camera precisa estar livre), e
-        # nesse instante o fluxo ainda nao existe em `ingestoes` — sem isto a medicao do envio ao vivo
-        # respondia "fluxo nao encontrado" e o SSIM nunca aparecia para quem envia pela tela.
-        dados_medicao = {"tipo": tipo, "resolucao": resolucao, "fps": fps, "bitrate_alvo": alvo_vivo,
-                         "fonte": (f"dshow:{dispositivo}" if tipo == "camera"
-                                   else f"lavfi:testsrc2:{resolucao}"),
-                         "srt_host": srt_host, "srt_port": srt_port}
-        m = _qualidade.medir_se_preciso(ident, validade_s=600, segundos=8, bitrate=alvo_vivo,
-                                        dados=dados_medicao)
-        if m.get("ok") and m.get("ssim") is not None:
-            extra = " (medicao reaproveitada)" if m.get("pulado") else f" em {m.get('segundos')}s ajuste {m.get('ajuste')}"
-            print(f"[qualidade] {ident}: SSIM {m.get('ssim')}{extra}", flush=True)
-        else:
-            print(f"[qualidade] {ident}: nao medida: {m.get('erro')}", flush=True)
-    except Exception as e:
-        print(f"[qualidade] {ident}: nao medida ({type(e).__name__}: {e})", flush=True)
-    return iniciar(f"live:{tipo}", rotulo=nome, fluxo_id=ident,
-                   bitrate=alvo_vivo, tipo=tipo, repetir=False, dispositivo=dispositivo, resolucao=resolucao,
-                   fps=fps, embarcacao_id=embarcacao_id, srt_host=srt_host, srt_port=srt_port)
+    # nao pode impedir a operacao. RADAR nao passa por aqui: a fonte e' SINAL, nao video, e a
+    # comparacao de quadros (SSIM) nao tem o que comparar — dizer que mediu seria mentira.
+    if tipo == "radar":
+        print(f"[qualidade] {ident}: radar nao mede SSIM (a fonte e' sinal, nao video)", flush=True)
+    else:
+        try:
+            import qualidade as _qualidade  # import tardio: qualidade tambem usa a ingestao
+            # a fonte VAI junto: a medicao roda ANTES de o ffmpeg subir (a camera precisa estar livre), e
+            # nesse instante o fluxo ainda nao existe em `ingestoes` — sem isto a medicao do envio ao vivo
+            # respondia "fluxo nao encontrado" e o SSIM nunca aparecia para quem envia pela tela.
+            dados_medicao = {"tipo": tipo, "resolucao": resolucao, "fps": fps, "bitrate_alvo": alvo_vivo,
+                             "fonte": (f"dshow:{dispositivo}" if tipo == "camera"
+                                       else f"lavfi:testsrc2:{resolucao}"),
+                             "srt_host": srt_host, "srt_port": srt_port}
+            m = _qualidade.medir_se_preciso(ident, validade_s=600, segundos=8, bitrate=alvo_vivo,
+                                            dados=dados_medicao)
+            if m.get("ok") and m.get("ssim") is not None:
+                extra = " (medicao reaproveitada)" if m.get("pulado") else f" em {m.get('segundos')}s ajuste {m.get('ajuste')}"
+                print(f"[qualidade] {ident}: SSIM {m.get('ssim')}{extra}", flush=True)
+            else:
+                print(f"[qualidade] {ident}: nao medida: {m.get('erro')}", flush=True)
+        except Exception as e:
+            print(f"[qualidade] {ident}: nao medida ({type(e).__name__}: {e})", flush=True)
+    return iniciar((radar_fonte if tipo == "radar" else f"live:{tipo}"), rotulo=nome, fluxo_id=ident,
+                   bitrate=alvo_vivo, tipo=tipo, repetir=False,
+                   dispositivo=dispositivo, resolucao=("1024x1024" if tipo == "radar" else resolucao),
+                   fps=fps, embarcacao_id=embarcacao_id, srt_host=srt_host, srt_port=srt_port,
+                   radar_modo=radar_modo, radar_taxa=radar_taxa)
 
 
 def liberar_camera(dispositivo: str | None = None, espera: float = 1.5) -> dict:

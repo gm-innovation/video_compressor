@@ -12,7 +12,14 @@ CREATE TABLE IF NOT EXISTS embarcacoes (
   cliente_id TEXT NOT NULL REFERENCES clientes(id),
   nome       TEXT NOT NULL,
   imo        TEXT DEFAULT '',
-  estado     TEXT NOT NULL DEFAULT 'em operacao'
+  estado     TEXT NOT NULL DEFAULT 'em operacao',
+  -- RADAR desta embarcacao (Fase 6, 17/11/2026): cada embarcacao pode ter o SEU radar. A fonte e' um
+  -- arquivo de sinal (.drq) ou o radar pela rede (tcp://host:porta); o modo e a taxa sao os do dono
+  -- (PPI/cru, 1 imagem por volta/30 fps) e o alvo sai da lista fechada de qualidade.
+  radar_fonte TEXT DEFAULT '',
+  radar_modo  TEXT DEFAULT 'ppi',
+  radar_taxa  TEXT DEFAULT '30fps',
+  radar_alvo  TEXT DEFAULT ''
 );
 
 -- camera do produto: aponta para o fluxo que o lado terra publica. NAO guarda segredo de camera.
