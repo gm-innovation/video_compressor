@@ -1,6 +1,6 @@
 /* Admin do projeto e do sistema: acompanhamento (§6) + administracao (clientes, embarcacoes,
    cameras, usuarios, analises, auditoria, saude). Le e escreve tudo pela API do produto. */
-const A = { usuario: null, resumo: null, clientes: [], usuarios: [], sistema: null, cameras: [], embarcacoes: [], tela: 'painel', timer: null, marca: null };
+const A = { usuario: null, resumo: null, clientes: [], usuarios: [], verificarCredencial: false, sistema: null, cameras: [], embarcacoes: [], tela: 'painel', timer: null, marca: null };
 const $ = (id) => document.getElementById(id);
 const limpar = (el) => { while (el.firstChild) el.removeChild(el.firstChild); };
 const esc = (s) => String(s === null || s === undefined ? '' : s);
@@ -73,12 +73,18 @@ async function entrar(ev) {
   const d = await api('/api/entrar', { method: 'POST', body: JSON.stringify({ email: $('email').value, senha: $('senha').value }) });
   if (!d.ok) { const e = $('entrada-erro'); e.textContent = (d.corpo && d.corpo.erro) || 'não foi possível entrar'; e.classList.remove('oculto'); return; }
   if (d.corpo.papel === 'cliente') { const e = $('entrada-erro'); e.textContent = 'esta conta é de cliente: use a tela do cliente (/app)'; e.classList.remove('oculto'); return; }
+  if (d.corpo.papel === 'tecnico') { const e = $('entrada-erro'); e.textContent = 'esta conta é de técnico de captura: use a tela "Enviar vídeo" (/ — bancada)'; e.classList.remove('oculto'); return; }
   await abrir();
 }
 
 async function abrir() {
   const eu = await api('/api/eu');
-  if (!eu.corpo || !eu.corpo.autenticado || eu.corpo.papel === 'cliente') return conferirPrimeiroAcesso();
+  // Cliente e tecnico NAO tem console aqui: vao para a tela do proprio papel (o app unico ja manda
+  // cada um para a sua — ver `entrada/entrada.js`). Papel que nao entra no console nao deve ver a
+  // tela de "primeiro acesso", que convida a cadastrar administrador.
+  if (!eu.corpo || !eu.corpo.autenticado) return conferirPrimeiroAcesso();
+  if (eu.corpo.papel === 'cliente') { window.location.replace('/app'); return; }
+  if (eu.corpo.papel === 'tecnico') { window.location.replace('/'); return; }
   A.usuario = eu.corpo;
   $('entrada').classList.add('oculto'); $('sistema').classList.remove('oculto');
   $('conta-email').textContent = eu.corpo.email;
@@ -124,7 +130,8 @@ async function atualizar() {
   const cm = await api('/api/cameras'); A.cameras = (cm.corpo && cm.corpo.cameras) || [];
   if (A.usuario && A.usuario.papel === 'admin') {
     const cl = await api('/api/clientes'); A.clientes = (cl.corpo && cl.corpo.clientes) || [];
-    const us = await api('/api/usuarios'); A.usuarios = (us.corpo && us.corpo.usuarios) || [];
+    const us = await api('/api/usuarios' + (A.verificarCredencial ? '?credencial=1' : ''));
+    A.usuarios = (us.corpo && us.corpo.usuarios) || [];
     const si = await api('/api/sistema'); if (si.ok) A.sistema = si.corpo.sistema;
   } else {
     const cl = await api('/api/clientes'); A.clientes = (cl.corpo && cl.corpo.clientes) || [];
@@ -229,7 +236,7 @@ const SUBS = {
   cameras: ['Câmeras', 'Câmera do produto aponta para um fluxo publicado; nunca guarda credencial de câmera.'],
   tempo: ['Tempo real', 'Como está a compressão, a velocidade de envio e a banda consumida e economizada, atualizando a cada 2 segundos.'],
   producao: ['Produção', 'Cards por embarcação e câmera: enviando/parado, média de compressão, banda utilizada e economizada, horas de streaming e disponibilidade — com filtro de período.'],
-  usuarios: ['Usuários', 'Papéis: cliente (vê a própria empresa), operador e administrador.'],
+  usuarios: ['Usuários', 'Só o administrador cadastra. Papéis: cliente (vê a própria empresa), operador, administrador e técnico (captura a bordo).'],
   analises: ['Análises de vídeo', 'Contagem e eventos sobem de bordo (Fase 5) — sem agente a bordo a tela fica vazia.'],
   auditoria: ['Auditoria', 'Quem viu qual câmera, quando — e o que foi negado.'],
   marcas: ['Marcas e zonas', 'A linha de contagem e as zonas de risco que o agente de bordo usa, desenhadas aqui.'],
@@ -670,27 +677,56 @@ function telaUsuarios(t) {
   if (A.usuario.papel !== 'admin') { t.appendChild(recado('Somente o administrador do sistema vê e cria usuários.', true)); return; }
   const caixa = document.createElement('div'); caixa.className = 'caixa-form';
   caixa.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Novo usuário' }));
+  // Quem cria usuário é o administrador — não existe cadastro pelo próprio usuário (dono, 17/11/2026).
+  caixa.appendChild(recado('Quem cadastra usuários é o administrador. Não existe cadastro pelo próprio usuário: '
+    + 'quem não estiver aqui não entra. "técnico" é a conta de quem captura a bordo (vê "Enviar vídeo" na bancada).', false));
   const linha = document.createElement('div'); linha.className = 'linha-form'; caixa.appendChild(linha);
   const email = campo(linha, 'u-email', 'E-mail', '');
   const nome = campo(linha, 'u-nome', 'Nome', '');
-  const papel = campo(linha, 'u-papel', 'Papel (cliente | operador | admin)', 'cliente');
+  const papel = campo(linha, 'u-papel', 'Papel (cliente | operador | admin | tecnico)', 'cliente');
   const cli = campo(linha, 'u-cliente', 'Cliente (só para papel cliente)', '');
   const onde = document.createElement('div'); caixa.appendChild(onde);
   caixa.appendChild(botao('Criar usuário', 'marca', async () => {
     const r = await api('/api/usuarios', { method: 'POST', body: JSON.stringify({ email: email.value.trim(), nome: nome.value,
       papel: papel.value.trim(), cliente_id: cli.value.trim() || null }) });
     await atualizar();
-    if (r.ok) mostrarRecado('usuário criado: ' + r.corpo.email, false, r.corpo.senha_inicial);
+    if (r.ok) mostrarRecado('usuário criado: ' + r.corpo.email
+      + (r.corpo.supabase && r.corpo.supabase !== 'ok' && r.corpo.supabase !== 'atualizado'
+        ? ' — ATENÇÃO: a credencial não subiu para o Supabase (' + r.corpo.supabase + '); use "redefinir senha" quando a rede voltar'
+        : ''), false, r.corpo.senha_inicial);
     else mostrarRecado('recusado: ' + JSON.stringify(r.corpo), true);
   }));
+  // A credencial do login é a do Supabase: quem não tem lá não consegue entrar, mesmo com senha
+  // local. "verificar" pergunta ao Supabase UMA vez (é rede: só quando o operador pede).
+  const verificar = botao('verificar credenciais no Supabase', 'mini', async () => {
+    const r = await api('/api/usuarios?credencial=1');
+    if (r.ok && r.corpo) { A.usuarios = r.corpo.usuarios || A.usuarios; A.verificarCredencial = true; }
+    else mostrarRecado('não deu para verificar agora: ' + JSON.stringify(r.corpo || {}), true);
+    atualizar();
+  });
+  onde.appendChild(verificar);
   t.appendChild(caixa);
   t.appendChild(tabela([{ rotulo: 'E-mail', campo: 'email' }, { rotulo: 'Nome', campo: 'nome' }, { rotulo: 'Papel', campo: 'papel' },
     { rotulo: 'Cliente', campo: 'cliente_id' }, { rotulo: 'Ativo', valor: (l) => (l.ativo ? 'sim' : 'não') },
+    { rotulo: 'Credencial', valor: (l) => (l.supabase === true ? 'ok' : l.supabase === false ? 'NÃO (não entra)' : 'não verificado') },
     { rotulo: 'Sessões', campo: 'sessoes' }, { rotulo: 'Criado', campo: 'criado_em' },
-    { rotulo: 'Ação', valor: (l) => botao(l.ativo ? 'desativar' : 'ativar', 'mini', async () => {
-        const r = await api('/api/usuarios/' + encodeURIComponent(l.id) + '/ativo', { method: 'POST', body: JSON.stringify({ ativo: !l.ativo }) });
-        if (!r.ok) alert(JSON.stringify(r.corpo)); await atualizar();
-      }) }], A.usuarios, 'nenhum usuário'));
+    { rotulo: 'Ação', valor: (l) => {
+        const c = document.createElement('span');
+        c.appendChild(botao(l.ativo ? 'desativar' : 'ativar', 'mini', async () => {
+          const r = await api('/api/usuarios/' + encodeURIComponent(l.id) + '/ativo', { method: 'POST', body: JSON.stringify({ ativo: !l.ativo }) });
+          if (!r.ok) alert(JSON.stringify(r.corpo)); await atualizar();
+        }));
+        c.appendChild(botao('redefinir senha', 'mini', async () => {
+          const r = await api('/api/usuarios/' + encodeURIComponent(l.id) + '/senha', { method: 'POST', body: JSON.stringify({}) });
+          if (!r.ok) return mostrarRecado('recusado: ' + JSON.stringify(r.corpo), true);
+          mostrarRecado('senha nova de ' + r.corpo.email, false, r.corpo.senha_nova);
+          if (String(r.corpo.supabase || '').startsWith('falhou') || r.corpo.supabase === 'sem_chave_servico') {
+            mostrarRecado('ATENÇÃO: a senha nova não subiu para o Supabase (' + r.corpo.supabase + ') — nesta rede o login do usuário pode falhar', true);
+          }
+          await atualizar();
+        }));
+        return c;
+      } }], A.usuarios, 'nenhum usuário'));
 }
 
 function telaAnalises(t) {

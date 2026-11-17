@@ -42,17 +42,14 @@ construir() {
   rm -f ../ground/ambiente.json
 }
 
-# PC de captura: camaras ligadas nesta maquina, servidor local no ar, repassa para o lado terra.
-# Superficie BANCADA (rota /): e' a tela "Enviar video", onde o tecnico escolhe a fonte e a taxa
-# de envio de cada camera. Enquanto nascia como "admin", o tecnico via o console do operador e nao
-# a tela de envio (dono, 16/11/2026).
-construir "LECSOR Captura" bancada captura captura 1
-# Lado terra: recebe e mostra (servidor em nuvem ou na rede do cliente).
-construir "LECSOR Terra" cliente terra terra 0
-# Bancada/engenharia e os dois papeis de tela antigos (mesmo pacote, papel do lado terra).
-# O Admin LEVA o ambiente: ele e' o console do operador e pode ser usado na maquina das cameras
-# (menu "Subir servidor nesta maquina"), onde precisa anunciar o fluxo ao lado terra — sem o token de
-# ingestao o fluxo chega e ninguem ve'.
-construir "LECSOR Admin" admin terra admin 1
-construir "LECSOR Cliente" cliente terra cliente 0
+# APLICATIVO UNICO (dono, 17/11/2026): "vamos empacotar em um app apenas, o tipo de app e' definido
+# pela role do usuario". O pacote nasce no papel `unico` e abre a tela de ENTRADA (/entrada), que
+# entra e manda para a tela do papel de quem entrou (cliente -> /app, operacao/admin -> /admin,
+# tecnico -> / = "Enviar video"). Leva o ambiente (Supabase + token de ingestao): e' o MESMO pacote
+# que pode capturar, pela opcao "Liberar as funcoes de captura nesta maquina".
+#
+# Os quatro instaladores antigos (Captura/Terra/Admin/Cliente) sairam de linha: um pacote so' os
+# substitui, e o papel da INSTALACAO deixou de decidir o que aparece na tela — quem decide e' a role
+# do usuario que entra. `construir` continua aceitando os papeis antigos para a bancada de engenharia.
+construir "LECSOR" entrada unico unico 1
 echo "== pronto:"; ls -la dist/*/*.exe 2>/dev/null | grep -v uninstaller

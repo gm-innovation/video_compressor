@@ -28,5 +28,18 @@
       "portaApi": 8765
     },
     "abrirComWindows": false
+  },
+  "unico": {
+    "rotulo": "Aplicativo unico (a tela e' a do papel do usuario: cliente, operacao/administrador ou tecnico de captura)",
+    "base": "http://187.127.60.250:8085",
+    "destinoSrt": "187.127.60.250:8890",
+    "servidorLocal": {
+      "ligado": false,
+      "portaApi": 8765
+    },
+    "abrirAoIniciar": [
+      "entrada"
+    ],
+    "abrirComWindows": false
   }
 }

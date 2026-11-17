@@ -21,7 +21,44 @@ TOKEN = (os.environ.get("GITHUB_TOKEN_FOR_RELEASES") or os.environ.get("GH_TOKEN
 DIST = pathlib.Path.home() / "lecsor-pipeline-video" / "desktop" / "dist"
 PAPEIS = ("Captura", "Terra", "Admin", "Cliente")
 
+
+def instaladores(versao: str) -> list:
+    """Os arquivos .exe daquela versao.
+
+    Da 0.6.0 em diante e' UM aplicativo so' (`dist/unico/LECSOR-<versao>-x64.exe`): o pacote nasce no
+    papel `unico` e a tela que abre e' a do papel de quem entra (dono, 17/11/2026). As versoes antigas
+    seguem com um instalador por papel, que e' como elas foram publicadas.
+    """
+    if versao >= "0.6.0":
+        return [a for a in sorted((DIST / "unico").glob(f"*{versao}*.exe")) if "ninstaller" not in a.name]
+    return [DIST / papel.lower() / f"LECSOR-{papel}-{versao}-x64.exe" for papel in PAPEIS]
+
 NOTAS = {
+    "0.6.0": (
+        "**UM aplicativo so': a tela que abre e' a do PAPEL de quem entra.**\n\n"
+        "Pedido do dono: \"vamos empacotar em um app apenas, o tipo de app e' definido pela role do "
+        "usuario\". Os quatro instaladores (Captura/Terra/Admin/Cliente) sairam de linha; agora e' **um** "
+        "`LECSOR-0.6.0-x64.exe`, no papel `unico`, que abre a tela de **entrada** (`/entrada`) e manda cada "
+        "um para a sua tela: **cliente** -> `/app`, **operacao/administrador** -> `/admin`, **tecnico** -> "
+        "`/` (\"Enviar video\"). O papel do usuario vem do SERVIDOR, nunca da interface.\n\n"
+        "**Quem cadastra usuario e' o administrador** (mesmo pedido, 17/11/2026): o login deixou de adotar "
+        "identidade de fora — quem o Supabase reconhece e a instalacao nao conhece toma **403** e nenhuma "
+        "linha nasce no banco local. E o usuario criado pelo administrador agora funciona: a senha passa a "
+        "ser gravada **tambem** no Supabase Auth (antes ficava so' local e o login devolvia 401). O "
+        "\"primeiro acesso\" desta maquina tambem grava dos dois lados e nasce como administrador.\n\n"
+        "Na tela de Usuarios: coluna **Credencial** (quem tem login valido no Supabase) e botao "
+        "**redefinir senha** (conserta quem foi criado antes). Papel novo **tecnico** (bordo) entra pela "
+        "propria atualizacao — a migracao do CHECK roda no boot da API, sem passo manual no cliente.\n\n"
+        "Provado na bancada: 7 verificacoes novas de cadastro (`test-cadastro-so-pelo-admin.py`, com "
+        "Supabase dublado e servidor de verdade), o teste do app unico com 32 verificacoes, a migracao do "
+        "papel tecnico num banco de verdade (4 usuarios, 432 sessoes e 12.796 linhas de auditoria "
+        "preservadas) e as suites de regressao.\n\n"
+        "**Falta do lado do painel:** desligar o cadastro publico no Supabase (Authentication -> Sign In / "
+        "Providers -> Email -> desmarcar \"Allow new users to sign up\") e conferir com "
+        "`python tools/conferir-signup.py`.\n\n"
+        "**Migracao:** desinstale os pacotes antigos e instale este (o aplicativo unico tem identidade "
+        "propria e convive com os antigos). O lado terra tambem precisa desta versao."
+    ),
     "0.5.0": (
         "Instaladores da 0.5.0 (Windows).\n\n"
         "**O Admin passa a LIBERAR as funcoes de captura dentro dele, sem virar o app de captura.**\n\n"
@@ -138,7 +175,7 @@ def subir_asset(release_id: int, caminho: pathlib.Path) -> str:
 
 
 def main() -> int:
-    for versao in ("0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8"):
+    for versao in ("0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8"):
         s, j = pedir(f"{API}/releases/tags/v{versao}")
         if s == 200:
             rid, existentes = j["id"], {a["name"] for a in j["assets"]}
@@ -147,15 +184,14 @@ def main() -> int:
             s, j = pedir(f"{API}/releases", {"tag_name": f"v{versao}", "name": f"v{versao}",
                                              "body": NOTAS[versao], "draft": False,
                                              "prerelease": False,
-                                             "make_latest": "true" if versao == "0.5.0" else "false"},
+                                             "make_latest": "true" if versao == "0.6.0" else "false"},
                          "POST")
             if s not in (200, 201):
                 print(f"[{versao}] FALHOU criar release: {s} {json.dumps(j)[:300]}")
                 continue
             rid, existentes = j["id"], set()
             print(f"[{versao}] release criada (id {rid})")
-        for papel in PAPEIS:
-            arquivo = DIST / papel.lower() / f"LECSOR-{papel}-{versao}-x64.exe"
+        for arquivo in instaladores(versao):
             if not arquivo.exists():
                 print(f"[{versao}] FALTA o instalador {arquivo}")
                 continue

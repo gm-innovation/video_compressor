@@ -163,6 +163,18 @@ def inicializar(semear_demo: bool = False) -> None:
                            ("alvo", "TEXT DEFAULT ''")):
             if nome not in colunas:
                 c.execute(f"ALTER TABLE cameras ADD COLUMN {nome} {tipo}")
+        # Papel `tecnico` (bordo) precisa do CHECK novo. SQLite nao altera CHECK no lugar: o
+        # `db/migracao-tecnico.sql` recria a tabela preservando as linhas, e roda aqui para a
+        # instalacao que ATUALIZA se consertar sozinha (o dono nao faz passo manual no cliente).
+        tabela = c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='usuarios'").fetchone()
+        if tabela and "tecnico" not in (tabela["sql"] or ""):
+            import sqlite3 as _sqlite3
+            script = (RAIZ / "db" / "migracao-tecnico.sql").read_text(encoding="utf-8")
+            try:
+                c.executescript(script)
+                print("[api] migracao aplicada: papel tecnico em usuarios", flush=True)
+            except _sqlite3.Error as e:
+                print("[api] aviso: nao apliquei a migracao do papel tecnico:", e, flush=True)
         for f in json.loads((RAIZ / "db" / "fases-seed.json").read_text(encoding="utf-8")):
             c.execute("""INSERT INTO fases (id,numero,nome,prioridade,status,criterio_aceite,evidencia)
                          VALUES (:id,:numero,:nome,:prioridade,:status,:criterio_aceite,:evidencia)
@@ -746,12 +758,16 @@ class Handler(SimpleHTTPRequestHandler):
         return bool(esperada) and secrets.compare_digest(esperada, recebida)
 
     def end_headers(self) -> None:
-        if self.path.endswith((".html", ".css", ".js")) or urlparse(self.path).path in ("/", "/app", "/admin"):
+        if self.path.endswith((".html", ".css", ".js")) or urlparse(self.path).path in ("/", "/app", "/admin", "/entrada"):
             self.send_header("Cache-Control", "no-store, must-revalidate")
         super().end_headers()
 
     def translate_path(self, path: str) -> str:
         rota = urlparse(path).path
+        if rota in ("/entrada", "/entrada/"):
+            return str(RAIZ / "entrada" / "index.html")
+        if rota.startswith("/entrada/"):
+            return str(RAIZ / "entrada" / rota[len("/entrada/"):])
         if rota in ("/app", "/app/"):
             return str(RAIZ / "app" / "index.html")
         if rota.startswith("/app/"):
@@ -1156,7 +1172,22 @@ class Handler(SimpleHTTPRequestHandler):
                 linhas = c.execute("""SELECT u.id,u.email,u.nome,u.papel,u.cliente_id,u.ativo,u.criado_em,
                                       (SELECT count(*) FROM sessoes s WHERE s.usuario_id=u.id) AS sessoes
                                       FROM usuarios u ORDER BY u.papel, u.email""").fetchall()
-            return self._json(200, {"usuarios": [dict(x) for x in linhas]})
+            usuarios = [dict(x) for x in linhas]
+            # `?credencial=1` pergunta ao Supabase quais e-mails existem la (UMA listagem, nao uma
+            # por linha). Sem o parametro a resposta sai na hora e a coluna vem "não verificado" —
+            # a tela do admin nao pode depender de rede para desenhar.
+            consulta = parse_qs(urlparse(self.path).query)
+            conhecidos = None
+            if (consulta.get("credencial") or ["0"])[0] == "1":
+                try:
+                    import supabase_auth
+                    conhecidos = supabase_auth.emails()
+                except Exception:
+                    conhecidos = None
+            for linha in usuarios:
+                linha["supabase"] = (None if conhecidos is None
+                                     else (str(linha["email"]).lower() in conhecidos))
+            return self._json(200, {"usuarios": usuarios, "verificado": conhecidos is not None})
         if rota == "/api/clientes":
             if not (u and u["papel"] in PAPEL_ADMIN):
                 return self._json(401, {"erro": "entre no sistema"})
@@ -1226,11 +1257,15 @@ class Handler(SimpleHTTPRequestHandler):
             # mas senha trocada no Supabase vale aqui — recusa de la nao cai para o local.
             import supabase_auth
             veredito = supabase_auth.entrar(email, senha)
-            if veredito and veredito.get("ok") and not alvo:
-                # O Supabase reconheceu o usuario e esta instalacao ainda nao o conhece: adota a
-                # identidade em vez de recusar. Era o "so' permite entrar com as credenciais novas"
-                # no PC instalado (banco local nasceu vazio e so' tinha o admin do primeiro acesso).
-                alvo = self._adotar_do_supabase(email, veredito, senha)
+            # Quem autoriza a entrar e' o CADASTRO DESTA INSTALACAO (dono, 17/11/2026: "um usuario
+            # nao pode se cadastrar, quem cadastra os usuarios e' o admin"). O Supabase confere a
+            # SENHA; se ele reconhecer alguem que nao esta cadastrado aqui (conta criada por fora),
+            # a resposta e' 403 e NENHUMA linha nasce neste banco. Antes disso a identidade era
+            # adotada no ato do login, o que fazia qualquer cadastro de fora entrar como cliente.
+            if veredito is not None and veredito.get("ok") and not alvo:
+                auditar(None, "adocao_recusada", email[:80], self.client_address[0])
+                return self._json(403, {"erro": "esta conta nao esta cadastrada nesta instalacao: "
+                                               "quem cadastra usuarios e' o administrador"})
             if veredito is None:
                 entrou = bool(alvo) and conferir_senha(alvo, senha)
             else:
@@ -1273,7 +1308,11 @@ class Handler(SimpleHTTPRequestHandler):
             if _cfg:
                 v = supabase_auth.entrar(email, senha)
                 if v and v.get("ok"):
-                    alvo = self._adotar_do_supabase(email, v, senha)
+                    # Primeiro acesso desta maquina e' o ADMINISTRADOR dela: adotar a identidade do
+                    # Supabase aqui nao pode nascer como "cliente" (o papel vem do token, que nao
+                    # guarda papel) — senao a instalacao nova nascia sem administrador.
+                    alvo = self._adotar_do_supabase(email, v, senha, "admin")
+                    self._provisionar_no_supabase(email, senha, nome)
                     token = criar_sessao(alvo["id"], self.headers.get("User-Agent", ""))
                     auditar(alvo, "primeiro_acesso_supabase", email, self.client_address[0])
                     return self._json(200, {"ok": True, "nome": alvo["nome"], "papel": alvo["papel"],
@@ -1287,9 +1326,13 @@ class Handler(SimpleHTTPRequestHandler):
                              VALUES (?,?,?,?,?,?,?)""",
                           (uid, email, nome, "admin", None, hash_senha(senha, salt), salt))
                 alvo = c.execute("SELECT * FROM usuarios WHERE id=?", (uid,)).fetchone()
+            # A senha digitada vale tambem no Supabase Auth: sem isso o login seguinte (que e' do
+            # Supabase) recusava o administrador que esta tela acabou de criar.
+            supabase = self._provisionar_no_supabase(email, senha, nome)
             token = criar_sessao(alvo["id"], self.headers.get("User-Agent", ""))
             auditar(alvo, "primeiro_acesso", email, self.client_address[0])
-            return self._json(200, {"ok": True, "nome": alvo["nome"], "papel": alvo["papel"]},
+            return self._json(200, {"ok": True, "nome": alvo["nome"], "papel": alvo["papel"],
+                                    "supabase": supabase},
                               {"Set-Cookie": f"sessao={token}; HttpOnly; SameSite=Lax; Path=/",
                                "Cache-Control": "no-store"})
         if rota == "/api/sair":
@@ -1549,8 +1592,9 @@ class Handler(SimpleHTTPRequestHandler):
             faltando = [k for k in ("email", "nome", "papel") if not str(d.get(k, "")).strip()]
             if faltando:
                 return self._json(422, {"erro": "usuario incompleto", "campos_faltando": faltando})
-            if d["papel"] not in ("cliente", "operador", "admin"):
-                return self._json(422, {"erro": "papel invalido", "aceitos": ["cliente", "operador", "admin"]})
+            if d["papel"] not in ("cliente", "operador", "admin", "tecnico"):
+                return self._json(422, {"erro": "papel invalido",
+                                        "aceitos": ["cliente", "operador", "admin", "tecnico"]})
             if d["papel"] == "cliente" and not d.get("cliente_id"):
                 return self._json(422, {"erro": "usuario de cliente precisa de cliente_id"})
             if d["papel"] != "cliente":
@@ -1567,9 +1611,34 @@ class Handler(SimpleHTTPRequestHandler):
                 c.execute("""INSERT INTO usuarios (id,email,nome,papel,cliente_id,senha_hash,salt)
                              VALUES (?,?,?,?,?,?,?)""",
                           (uid, email, d["nome"], d["papel"], d.get("cliente_id"), hash_senha(senha, salt), salt))
+            # A senha vale dos DOIS lados: no banco local (rede de protecao sem rede) e no Supabase
+            # Auth, que e' quem confere no login. Sem isto o usuario criado pelo administrador tomava
+            # 401 ao entrar — era o "usuario nao consegue entrar" (dono, 17/11/2026). Falha de rede
+            # nao esconde o usuario: a linha local ja' existe e a resposta diz o que faltou.
+            supabase = self._provisionar_no_supabase(email, senha, str(d["nome"]))
             auditar(u, "criar_usuario", email, self.client_address[0])
             # a senha inicial aparece UMA vez, para quem criou entregar; o banco guarda so o hash
-            return self._json(201, {"id": uid, "email": email, "papel": d["papel"], "senha_inicial": senha})
+            return self._json(201, {"id": uid, "email": email, "papel": d["papel"],
+                                    "senha_inicial": senha, "supabase": supabase})
+        if rota.startswith("/api/usuarios/") and rota.endswith("/senha"):
+            # Redefinir senha pelo administrador: a senha nova vale no banco local E no Supabase.
+            # E' o conserto de quem foi criado antes desta correcao (senha so' local -> 401 no login).
+            if not (u and u["papel"] == "admin"):
+                return self._json(401, {"erro": "so o administrador do sistema"})
+            uid = rota[len("/api/usuarios/"):-len("/senha")]
+            with conexao() as c:
+                alvo = c.execute("SELECT * FROM usuarios WHERE id=?", (uid,)).fetchone()
+            if not alvo:
+                return self._json(404, {"erro": "usuario inexistente"})
+            senha = secrets.token_urlsafe(9)
+            salt = secrets.token_hex(16)
+            with conexao() as c:
+                c.execute("UPDATE usuarios SET senha_hash=?, salt=?, interacoes=200000 WHERE id=?",
+                          (hash_senha(senha, salt), salt, uid))
+            supabase = self._provisionar_no_supabase(alvo["email"], senha, alvo["nome"])
+            auditar(u, "redefinir_senha", alvo["email"], self.client_address[0])
+            return self._json(200, {"id": uid, "email": alvo["email"], "senha_nova": senha,
+                                    "supabase": supabase})
         if rota.startswith("/api/usuarios/") and rota.endswith("/ativo"):
             if not (u and u["papel"] == "admin"):
                 return self._json(401, {"erro": "so o administrador do sistema"})
@@ -1869,7 +1938,22 @@ class Handler(SimpleHTTPRequestHandler):
             host = ""
         return host.strip() or "127.0.0.1"
 
-    def _adotar_do_supabase(self, email: str, veredito: dict, senha: str):
+    def _provisionar_no_supabase(self, email: str, senha: str, nome: str = "") -> str:
+        """Garante a credencial no Supabase Auth e devolve o estado em uma palavra, para a tela.
+
+        "ok" | "atualizado" | "sem_chave_servico" | "falhou: <Tipo>". Nunca levanta: o usuario ja'
+        esta' gravado no banco local e a resposta precisa dizer a verdade em vez de estourar 500.
+        """
+        try:
+            import supabase_auth
+            if not supabase_auth.pode_administrar():
+                return "sem_chave_servico"
+            r = supabase_auth.definir_senha(email, senha, nome)
+            return "atualizado" if r.get("atualizado") else "ok"
+        except Exception as e:
+            return "falhou: " + type(e).__name__
+
+    def _adotar_do_supabase(self, email: str, veredito: dict, senha: str, papel_forcado: str = ""):
         """Cria a linha local para o usuario que o Supabase Auth reconheceu.
 
         Sem isto uma instalacao nova (banco local vazio) recusava o usuario que ja' existe no
@@ -1878,8 +1962,8 @@ class Handler(SimpleHTTPRequestHandler):
         guarda papel nem cliente. O hash local guarda a MESMA senha informada, para o login
         continuar funcionando na bancada sem rede.
         """
-        papel = str(veredito.get("papel") or "").strip().lower()
-        if papel not in ("cliente", "operador", "admin"):
+        papel = str(papel_forcado or veredito.get("papel") or "").strip().lower()
+        if papel not in ("cliente", "operador", "admin", "tecnico"):
             papel = "cliente"
         nome = str(veredito.get("nome") or "").strip() or email.split("@")[0]
         salt = secrets.token_hex(8)

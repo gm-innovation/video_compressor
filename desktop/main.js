@@ -145,13 +145,32 @@ if (process.env.LECSOR_CAPTURA_LOCAL === '1') {
 
 // Cada superficie tem sessao propria (particao propria): entrar como cliente nao pode virar admin.
 const SUPERFICIES = {
+  // Entrada unica (17/11/2026): o pacote nasce com o papel `unico` e abre ESTA tela, que entra e
+  // manda para a tela do papel do usuario. As superficies abaixo continuam existindo para a bancada
+  // de engenharia e para os instaladores antigos.
+  entrada: { titulo: 'LECSOR — entrar', rota: '/entrada', particao: 'persist:lecsor', permitirSessao: true },
   cliente: { titulo: 'LECSOR — Cliente', rota: '/app', particao: 'persist:cliente', permitirSessao: true },
   admin: { titulo: 'LECSOR — Admin / Operacao', rota: '/admin', particao: 'persist:admin', permitirSessao: true },
   bancada: { titulo: 'LECSOR — Bancada', rota: '/', particao: 'persist:bancada', permitirSessao: true }
 };
 const janelas = new Map();
 
-function urlDe(nome) { return config.base.replace(/\/$/, '') + SUPERFICIES[nome].rota; }
+// Endereco da entrada: com as funcoes de captura liberadas NESTA maquina, a entrada vem do servidor
+// LOCAL — e' ele que tem o banco desta maquina (a embarcacao pode estar sem internet, e o tecnico
+// precisa entrar para chegar em "Enviar video"). Fora disso, a entrada vem do lado terra, como as
+// outras telas. Ver `aplicarEnderecoDaCaptura()`.
+function baseDaEntrada() {
+  const porta = (config.servidorLocal || {}).portaApi || 8765;
+  if (config.capturaLocal && config.servidorLocal && config.servidorLocal.ligado) {
+    return 'http://127.0.0.1:' + porta;
+  }
+  return config.base;
+}
+
+function urlDe(nome) {
+  const raiz = nome === 'entrada' ? baseDaEntrada() : config.base;
+  return raiz.replace(/\/$/, '') + SUPERFICIES[nome].rota;
+}
 
 // Tela de erro quando o lado terra nao responde: diz o endereco tentado e o motivo, em vez de
 // deixar a janela vazia (parecia "nao aparece os campos de autenticacao").
@@ -189,7 +208,10 @@ function abrir(nome) {
   // Navegacao presa a propria instalacao: link de fora abre no navegador do sistema.
   janela.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
   janela.webContents.on('will-navigate', (evento, url) => {
-    if (!url.startsWith(config.base) && !url.startsWith('data:')) { evento.preventDefault(); shell.openExternal(url); }
+    // A entrada redireciona para a tela do papel: com a captura liberada nesta maquina a pagina vem
+    // do loopback e vai para o mesmo loopback (ou para o lado terra) — os dois enderecos sao legitimos.
+    const permitidos = [config.base, baseDaEntrada(), 'data:'];
+    if (!permitidos.some((b) => url.startsWith(b))) { evento.preventDefault(); shell.openExternal(url); }
   });
   // Se o lado terra nao responde (API parada, endereco errado, sem rede), a janela NAO pode ficar
   // em branco com so o menu: o motivo aparece na tela. Foi assim que o dono viu "nao aparece
@@ -212,7 +234,8 @@ function abrir(nome) {
 function menu() {
   const modelo = [];
   if (!SUPERFICIE) {   // app de bancada: as tres superficies na mesma janela-menu
-    modelo.push({ label: 'Superficies', submenu: Object.keys(SUPERFICIES).map((n) => ({ label: SUPERFICIES[n].titulo, accelerator: 'CmdOrCtrl+' + (n === 'cliente' ? '1' : n === 'admin' ? '2' : '3'), click: () => abrir(n) })) });
+    const atalhos = { entrada: '0', cliente: '1', admin: '2', bancada: '3' };
+    modelo.push({ label: 'Superficies', submenu: Object.keys(SUPERFICIES).map((n) => ({ label: SUPERFICIES[n].titulo, accelerator: 'CmdOrCtrl+' + (atalhos[n] || '9'), click: () => abrir(n) })) });
   }
   modelo.push(
     { label: 'Modo', submenu: [
@@ -319,6 +342,8 @@ function menu() {
               + ((config.servidorLocal || {}).portaApi || 8765) + '.');
           }
           // Desligar: se este papel nao e' o PC de captura, o servidor local sai do ar junto.
+          // `unico` NAO entra aqui: desligar a captura nele nao pode derrubar o servidor local
+          // de quem o tem ligado por outro motivo (o papel do pacote unico nao e' PC de captura).
           const precisa = PAPEL === 'captura' || PAPEL === 'bancada';
           if (!precisa) { try { servidor.parar(config); } catch (e) {} config.servidorLocal.ligado = false; }
           gravarConfig(config);
@@ -367,7 +392,7 @@ function menu() {
           gravarConfig(config); recarregarTelas();
           dialog.showMessageBox({ message: 'Endereco salvo', detail: 'As telas foram reabertas em ' + config.base });
         } },
-      { label: 'Sobre', click: () => dialog.showMessageBox({ message: 'LECSOR Pipeline de Video', detail: (SUPERFICIE ? 'Superficie: ' + SUPERFICIE + '. ' : 'Superficies: cliente, admin e bancada. ') + 'Interface sem acesso a credencial de camera e sem chave de API.' }) }
+      { label: 'Sobre', click: () => dialog.showMessageBox({ message: 'LECSOR Pipeline de Video', detail: (SUPERFICIE ? 'Superficie: ' + SUPERFICIE + '. ' : (PAPEL === 'unico' ? 'Aplicativo unico: a tela e\' a do papel do usuario (cliente, operacao/administrador ou tecnico de captura). ' : 'Superficies: cliente, admin e bancada. ')) + 'Interface sem acesso a credencial de camera e sem chave de API.' }) }
     ] }
   );
   if (SUPERFICIE === 'bancada') { /* servidor local ja esta no menu acima */ }

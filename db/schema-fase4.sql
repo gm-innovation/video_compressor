@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
   id         TEXT PRIMARY KEY,
   email      TEXT NOT NULL UNIQUE,
   nome       TEXT NOT NULL,
-  papel      TEXT NOT NULL CHECK (papel IN ('cliente','operador','admin')),
+  papel      TEXT NOT NULL CHECK (papel IN ('cliente','operador','admin','tecnico')),
   cliente_id TEXT REFERENCES clientes(id),   -- cliente so ve a propria empresa
   senha_hash TEXT NOT NULL,
   salt       TEXT NOT NULL,

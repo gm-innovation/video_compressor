@@ -35,7 +35,9 @@ function resolver(PADRAO, PAPEIS, PAPEL, doUsuario) {
   const fabrica = {
     base: papel.base || PADRAO.base,
     destinoSrt: papel.destinoSrt || '',
-    abrirAoIniciar: (PADRAO.abrirAoIniciar || []).slice(),
+    // 6) O PACOTE UNICO abre a tela de ENTRADA (`papeis.json` -> unico): o papel define quais telas
+    // abrem, e delas sai a tela do usuario depois do login.
+    abrirAoIniciar: (papel.abrirAoIniciar || PADRAO.abrirAoIniciar || []).slice(),
     modoQuiosque: !!PADRAO.modoQuiosque,
     abrirComWindows: !!papel.abrirComWindows,
     servidorLocal: Object.assign({ ligado: false, repo: '', portaApi: 8765 },

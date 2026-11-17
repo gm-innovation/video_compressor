@@ -4,6 +4,15 @@ O PC de captura é a máquina onde as câmeras estão plugadas (USB/HDMI-captura
 comprime local** e o vídeo comprimido sobe para o **lado terra** (a VPS da LECSOR ou outro computador
 da rede), que descomprime e mostra.
 
+## 0.6.0 — muda o instalador (leia antes)
+
+Desde a **0.6.0** existe **um aplicativo só**: instale `LECSOR-0.6.0-x64.exe` (desinstale o
+`LECSOR-Captura` antigo — o novo tem identidade própria). A tela que abre é a do **papel de quem entra**
+(entrada única: cliente → `/app`, operação/administrador → `/admin`, técnico → `/`). Para esta máquina
+capturar, use o menu **Servidor local → "Liberar as funções de captura nesta máquina (sem trocar de
+app)"**. Quem entra aqui é **usuário cadastrado pelo administrador** (o login não cria conta); numa
+máquina nova, é a própria tela de entrada que cria o primeiro administrador desta máquina.
+
 A partir da **0.2.0** (corrigido na **0.2.1**, **0.2.2**, **0.2.3** e **0.2.5**) o instalador do PC de captura é **plug & play**: ele leva dentro do pacote o
 servidor (API + `ground/`), o **ffmpeg**, o **mediamtx** e o **Python portátil**, e **já nasce
 configurado** para esta máquina. Não se instala Python, não se copia repositório e não se edita JSON.

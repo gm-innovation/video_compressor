@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LECSOR · entrar</title>
+<link rel="stylesheet" href="/fronts/vms.css">
+</head><body>
+
+<!-- Entrada unica do produto (dono, 17/11/2026: "vamos empacotar em um app apenas, o tipo de app e'
+     definido pela role do usuario"). Esta e' a UNICA tela que o aplicativo abre sozinho: ela entra e
+     manda para a tela do PAPEL de quem entrou — cliente (/app), operacao/administrador (/admin) ou
+     tecnico de captura (/ Enviar video). O papel vem do servidor, nunca da interface. -->
+<section id="entrada" class="entrada">
+  <h1>LECSOR · entrar</h1>
+  <p class="sub">Um aplicativo só. A tela que abre é a do seu papel: cliente, operação/administrador ou a bancada de captura.</p>
+  <div id="entrada-erro" class="erro oculto"></div>
+  <form id="form-entrar">
+    <label for="email">E-mail</label>
+    <input id="email" type="email" autocomplete="username" required>
+    <label for="senha">Senha</label>
+    <input id="senha" type="password" autocomplete="current-password" required>
+    <button class="principal" type="submit">Entrar</button>
+  </form>
+</section>
+
+<!-- Instalacao nova (zero usuarios) e' a mesma tela do Admin: a API so aceita isso da propria maquina.
+     Sem isto o PC de captura recem-instalado ficava sem login nenhum. -->
+<section id="primeiro" class="entrada oculto">
+  <h1>LECSOR · primeiro acesso</h1>
+  <p class="sub">Esta instalação é nova. Crie agora o administrador desta máquina — é com ele que a operação entra.</p>
+  <div id="primeiro-erro" class="erro oculto"></div>
+  <form id="form-primeiro">
+    <label for="p-nome">Nome de quem opera</label>
+    <input id="p-nome" type="text" autocomplete="name" required>
+    <label for="p-email">E-mail</label>
+    <input id="p-email" type="email" autocomplete="username" required>
+    <label for="p-senha">Senha (8 caracteres ou mais)</label>
+    <input id="p-senha" type="password" autocomplete="new-password" minlength="8" required>
+    <label for="p-senha2">Repetir a senha</label>
+    <input id="p-senha2" type="password" autocomplete="new-password" minlength="8" required>
+    <button class="principal" type="submit">Criar e entrar</button>
+  </form>
+</section>
+
+<script src="/entrada/entrada.js"></script>
+</body></html>

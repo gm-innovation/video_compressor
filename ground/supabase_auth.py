@@ -111,4 +111,50 @@ def criar_usuario(email: str, senha: str, nome: str = "", tempo: float = TEMPO_P
         return {"id": existente, "email": alvo, "criado": False}
 
 
-__all__ = ["configurado", "entrar", "criar_usuario", "id_por_email"]
+def pode_administrar() -> bool:
+    """Da' para criar/alterar usuario no Supabase? Exige URL + chave de SERVICO (nunca a anonima)."""
+    return bool(_url() and _servico())
+
+
+def emails(tempo: float = TEMPO_PADRAO) -> set | None:
+    """Todos os e-mails que existem no Supabase Auth (ou None quando nao deu para perguntar).
+
+    Uma listagem só: a tela de usuários diz quem tem credencial dos DOIS lados sem fazer uma
+    chamada por linha. Sem chave de serviço/rede fora devolve None — "não sei" é diferente de
+    "não existe".
+    """
+    if not (_url() and _servico()):
+        return None
+    saida = set()
+    for pagina in range(1, 51):
+        try:
+            d = _pedido(f"/auth/v1/admin/users?page={pagina}&per_page=200", None, _servico(),
+                        metodo="GET", tempo=tempo)
+        except Exception:
+            return None
+        usuarios = d.get("users") or []
+        for u in usuarios:
+            e = (u.get("email") or "").strip().lower()
+            if e:
+                saida.add(e)
+        if len(usuarios) < 200:
+            return saida
+    return saida
+
+
+def definir_senha(email: str, senha: str, nome: str = "", tempo: float = TEMPO_PADRAO) -> dict:
+    """Põe a senha nova no Supabase Auth (cria o usuário se ele ainda não existir lá).
+
+    O login do produto é o do Supabase: senha que só existe no banco local NÃO entra. Redefinir
+    senha pelo administrador grava dos dois lados, e criar usuário idem.
+    """
+    alvo = email.strip().lower()
+    ident = id_por_email(alvo, tempo=tempo)
+    if not ident:
+        return criar_usuario(alvo, senha, nome or alvo.split("@")[0], tempo=tempo)
+    u = _pedido(f"/auth/v1/admin/users/{ident}", {"password": senha}, _servico(),
+                metodo="PUT", tempo=tempo)
+    return {"id": u.get("id") or ident, "email": (u.get("email") or alvo).lower(), "atualizado": True}
+
+
+__all__ = ["configurado", "pode_administrar", "entrar", "criar_usuario", "id_por_email", "emails", "definir_senha"]

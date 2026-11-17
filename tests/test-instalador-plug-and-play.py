@@ -170,10 +170,13 @@ checar("python-3.12.7-embed-amd64.zip" in baixador, "fonte do Python é o pacote
 construir = (RAIZ / "desktop" / "construir-instaladores.sh").read_text(encoding="utf-8")
 checar("baixar-servidor.sh" in construir, "o build chama o baixador do servidor")
 checar("--config.extraMetadata.papel" in construir, "o build grava o papel no pacote")
-# O pacote do PC de captura nasce na superficie `bancada` (0.4.1): e' o que abre direto em "Enviar
-# video". A expectativa do teste tinha ficado para tras quando a superficie mudou — corrigida aqui.
-checar('construir "LECSOR Captura" bancada captura captura' in construir, "existe o instalador do PC de captura")
-checar('construir "LECSOR Terra" cliente terra terra' in construir, "existe o instalador do lado terra")
+# 17/11/2026 — UM aplicativo só (dono: "vamos empacotar em um app apenas, o tipo de app é definido pela
+# role do usuário"). O pacote nasce no papel `unico` e abre a tela de ENTRADA (/entrada), que manda cada
+# um para a tela do seu papel. Os quatro instaladores antigos (Captura/Terra/Admin/Cliente) saíram de
+# linha — a expectativa deste teste acompanhou a mudança.
+checar('construir "LECSOR" entrada unico unico 1' in construir,
+       "existe o APLICATIVO UNICO (papel `unico`, abre a entrada)")
+checar(construir.count('construir "') == 1, "e' UM pacote so': os quatro antigos nao sao mais construidos")
 checar("tools/python/" in (RAIZ / ".gitignore").read_text(encoding="utf-8"), "o Python portátil está fora do Git")
 
 print("8) a análise local é opcional; o servidor sobe mesmo sem ela")
@@ -385,14 +388,12 @@ print("== 16. ambiente do pacote (Supabase/token de ingestao) vai no PC de captu
 marc = (RAIZ / "desktop" / "construir-instaladores.sh").read_text(encoding="utf-8")
 checar("ambiente.json" in marc and "leva_ambiente" in marc,
        "o build decide por papel se o ambiente entra no pacote")
-checar('construir "LECSOR Captura" bancada captura captura 1' in marc,
-       "o PC de captura LEVA o ambiente (nasce plug & play)")
-checar('construir "LECSOR Admin" admin terra admin 1' in marc,
-       "o Admin (console do operador) tambem LEVA o ambiente: usado na maquina das cameras ele "
-       "precisa do token de ingestao para anunciar o fluxo ao lado terra")
-for papel_args in ('construir "LECSOR Terra" cliente terra terra 0',
-                   'construir "LECSOR Cliente" cliente terra cliente 0'):
-    checar(papel_args in marc, f"so' mostra tela -> SEM ambiente: {papel_args}")
+# O pacote unico e' justamente o que PODE capturar: leva o ambiente (Supabase + token de ingestao) para
+# nascer plug & play na maquina das cameras. O gerador continua sabendo construir um pacote SEM ambiente.
+checar('construir "LECSOR" entrada unico unico 1' in marc,
+       "o aplicativo unico LEVA o ambiente (e' ele que captura, pela opcao 'Liberar as funcoes de captura')")
+checar('nome="$1"; superficie="$2"; papel="$3"; id="$4"; leva_ambiente="$5"' in marc,
+       "o gerador continua aceitando papel SEM ambiente (bancada de engenharia)")
 ser = (RAIZ / "desktop" / "servidor.js").read_text(encoding="utf-8")
 checar("ambienteDoPacote" in ser and "ambiente.json" in ser,
        "o servidor embutido le' o ambiente do pacote para os processos filhos")

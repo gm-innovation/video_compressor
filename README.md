@@ -18,6 +18,24 @@ sistema comprime na máquina e o vídeo comprimido sobe para o lado terra (`dest
 
 ## Instaladores prontos (Windows x64) — PLUG & PLAY desde a 0.2.0
 Na página de releases: https://github.com/gm-innovation/video_compressor/releases
+
+### 0.6.0 — **UM aplicativo só** (a tela é a do papel do usuário)
+- **`LECSOR-0.6.0-x64.exe`** — o aplicativo. Ele abre a tela de **entrada** (`/entrada`), entra e manda
+  cada um para a **sua** tela: **cliente** → `/app`, **operação/administrador** → `/admin`, **técnico**
+  → `/` ("Enviar vídeo"). O papel vem do servidor, não da interface.
+- Quem captura é a **máquina**: menu *Servidor local → "Liberar as funções de captura nesta máquina (sem
+  trocar de app)"*. O mesmo pacote serve para todas as máquinas.
+- **Quem cadastra usuário é o administrador** (tela Usuários do console): não existe cadastro pelo
+  próprio usuário — o login não cria conta nenhuma, e o Supabase do produto tem de estar com o cadastro
+  público desligado (`python tools/conferir-signup.py` confere).
+- Papéis: `cliente`, `operador`, `admin` e **`tecnico`** (bordo, só "Enviar vídeo"). A base do produto
+  (bancada/VPS) atualiza sozinha no boot: a migração do papel `tecnico` roda na subida da API.
+
+**Migração de quem já tem os pacotes antigos (0.2.x–0.5.0):** desinstale os quatro e instale este — o
+aplicativo unico tem identidade própria e convive com os antigos. O **lado terra** (VPS/cliente) também
+precisa desta versão, porque é ele que serve as telas.
+
+### Pacotes antigos (linha 0.2.x–0.5.0, um por papel)
 - `LECSOR-Captura-0.2.0-x64.exe` — **PC de captura**: nasce apontado para `127.0.0.1:8765`, com o
   servidor local ligado (sobe sozinho no boot) e repasse para o lado terra já configurado
 - `LECSOR-Terra-0.2.0-x64.exe` — **lado terra**: apontado para o servidor (VPS ou local do cliente)
