@@ -147,6 +147,30 @@ nada hoje manda ordem de terra para a máquina de captura.
   → **`Ran 1 test in 518,464s` / OK / rc=0** (todo `tests/test-*.py` do projeto verde, radar e webcam inclusos);
   prova de tela em navegador real (`e2e-transmissao-na-tela.py`) → **23 checagens, rc=0**.
 
+### Fechamento da rodada (17/11/2026, depois das provas)
+
+- **Publicado:** repo `origin/main` = `574a284` (`git push origin main`, rc=0); nota do vault publicada.
+- **Lado terra na VPS:** `scp` de `ground/{api,agente_de_ordens,gravacao,ingestao,radar_drq,radar_tcp}.py`,
+  `app/{app.js,index.html}`, `fronts/vms.css`, `db/{schema-transmissao,schema-fase4}.sql` para
+  `/opt/pipeline/app` (md5 conferido igual ao local) e `systemctl restart pipeline-api.service`.
+  Conferido no ar: serviço **ativo**, `/api/saude` 200, tabelas `transmissoes`/`ordens_do_bordo`/
+  `configs_do_cliente` criadas no banco da VPS, `GET /api/transmissao` → 401 (rota existe), tela `/app/`
+  serve "Transmitir" e "Tempo de transmissão".
+- **Agente contra o lado terra real, pela internet:** rodado neste PC apontando para
+  `http://187.127.60.250:8085` → o lado terra respondeu **401 token de ingestão inválido** e o agente
+  **avisou** (não inventou sucesso): o caminho bordo→terra está ligado ponta a ponta; falta só a máquina de
+  captura do cliente, que traz o token dele.
+- **Fase 1 (celular) — FEITO e provado:** a tela do cliente **não cabia** num telefone de 390 px (o navegador
+  alargava a janela para 551–583 px: menu, barra de seleção e linha da câmera estouravam). Corrigido com um
+  bloco `@media (max-width: 720px)` em `fronts/vms.css` (vale só em tela estreita; a tela larga não muda).
+  Prova nova `tests/test-app-no-celular.py` (Chromium com janela de telefone e toque): **8 checagens, rc=0** —
+  cabe na largura, alvo de dedo de 40 px, e o **toque** no iniciar manda o pedido ao bordo.
+- **Fase 6 (documento de instalação) — FEITO:** `docs/instalacao-transmissao-a-pedido.md` — o que o cliente
+  faz, o que instala na máquina de captura (o agente de ordens + variáveis), onde ficam as gravações, a regra
+  de credencial e a tabela "como saber, na hora, que está funcionando".
+- **Não feito de propósito:** *retenção/limpeza das gravações* (fase 5, P2) — o dono fixou que **nada é
+  apagado** do histórico; apagar por tempo contraria isso. Fica para decisão dele.
+
 ### Defeitos REAIS que as provas pegaram (todos corrigidos na causa)
 
 1. `_json` não retorna → um cliente **encerrava a sessão de outro**; agora `_transmissao_da_tela` devolve
