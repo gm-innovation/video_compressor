@@ -60,6 +60,7 @@ from ingestao import capturar as ing_capturar, listar_dispositivos as ing_dispos
 from ingestao import limpar_vivos_mortos as ing_limpar_vivos
 from ferramentas import caminho_banco, resumo as resumo_ferramentas  # noqa: E402
 import etapas as etapas_pipeline  # noqa: E402
+import gravacao as gravacao_modulo  # noqa: E402
 import trecho as trecho_modulo  # noqa: E402
 import producao as producao_pipeline  # noqa: E402
 from urllib.parse import parse_qs, unquote, urlparse
@@ -130,6 +131,121 @@ def pode_ver_camera(usuario, camera: sqlite3.Row | None) -> bool:
     with conexao() as c:
         emb = c.execute("SELECT cliente_id FROM embarcacoes WHERE id = ?", (camera["embarcacao_id"],)).fetchone()
     return bool(emb) and emb["cliente_id"] == usuario["cliente_id"]
+
+
+
+# ----------------------------------------------------------------- transmissao a pedido do cliente
+# 17/11/2026 (plano .hermes/plans/2026-11-17-transmissao-a-pedido-do-cliente.md):
+#  * quem PEDE e' o cliente (tela web `/app`, sem app instalado);
+#  * a ORDEM nasce aqui (lado terra) e vai ao bordo — o bordo nao abre porta, ele pergunta e obedece;
+#  * o corte e' POR SESSAO: quem fecha a tela derruba a propria sessao; se outro cliente esta' vendo, a
+#    transmissao continua para ele;
+#  * ao estourar o TEMPO a transmissao para e o cliente inicia de novo — a menos que esteja GRAVANDO;
+#  * `transmissoes` e' o historico: nada e' apagado.
+TEMPOS_DE_TRANSMISSAO = (300, 900, 1800, 3600, 7200)      # 5, 15, 30, 60 e 120 minutos (lista FECHADA)
+TEMPO_MAXIMO_PADRAO = 900
+SEGUNDOS_SEM_BATIMENTO = 60        # tela fechada / computador desligado: sem "estou aqui", a sessao morre
+SEGUNDOS_SEM_RESPOSTA = 30         # a maquina de captura nao respondeu a ordem (nunca foi entregue)
+SEGUNDOS_ENTREGA_LENTA = 90        # a ordem foi entregue e a maquina nunca contou o que houve
+
+
+def em_iso(quando=None) -> str:
+    """Carimbo ISO-8601 UTC (com offset) — o MESMO formato nas tabelas novas."""
+    return (quando or dt.datetime.now(dt.timezone.utc)).isoformat(timespec="seconds")
+
+
+def texto_do_tempo(segundos: int) -> str:
+    return f"{max(1, int(segundos) // 60)} min"
+
+
+def enfileirar_ordem(embarcacao_id: str, camera_id: str, fluxo_id: str, acao: str,
+                     motivo: str = "", transmissao_id: str = "") -> dict:
+    """Poe a ordem na fila do bordo. A acao NASCE no lado terra: o bordo so' obedece (sem tecnico)."""
+    with conexao() as c:
+        seq = c.execute("SELECT COALESCE(MAX(seq),0)+1 AS s FROM ordens_do_bordo").fetchone()["s"]
+        oid = secrets.token_hex(8)
+        c.execute("""INSERT INTO ordens_do_bordo
+                     (id,seq,embarcacao_id,camera_id,fluxo_id,acao,transmissao_id,motivo,criado_em,estado)
+                     VALUES (?,?,?,?,?,?,?,?,?,'pedido')""",
+                  (oid, seq, embarcacao_id, camera_id, fluxo_id, acao, transmissao_id,
+                   motivo[:200], em_iso()))
+    auditar(None, f"ordem_{acao}", f"{camera_id} ({embarcacao_id})", "")
+    return {"id": oid, "seq": seq, "acao": acao, "camera_id": camera_id}
+
+
+def fechar_transmissao(tid: str, estado: str, motivo: str) -> dict | None:
+    """Fecha a sessao UMA vez (None se ja' estava fechada) — e' o que entra no historico."""
+    with conexao() as c:
+        linha = c.execute("SELECT * FROM transmissoes WHERE id=?", (tid,)).fetchone()
+        if not linha or linha["estado"] not in ("pedida", "no_ar"):
+            return None
+        c.execute("UPDATE transmissoes SET estado=?, motivo=?, encerrada_em=? WHERE id=?",
+                  (estado, str(motivo)[:200], em_iso(), tid))
+    return dict(linha)
+
+
+def sessoes_vivas(embarcacao_id: str, camera_id: str) -> int:
+    with conexao() as c:
+        r = c.execute("""SELECT COUNT(*) AS n FROM transmissoes
+                         WHERE embarcacao_id=? AND camera_id=? AND estado IN ('pedida','no_ar')""",
+                      (embarcacao_id, camera_id)).fetchone()
+    return int(r["n"])
+
+
+def parar_se_ninguem_vendo(embarcacao_id: str, camera_id: str, fluxo_id: str, motivo: str) -> bool:
+    """So' manda PARAR quando nao ha' mais nenhuma sessao viva naquela camera (corte por sessao)."""
+    if sessoes_vivas(embarcacao_id, camera_id):
+        return False
+    enfileirar_ordem(embarcacao_id, camera_id, fluxo_id, "parar", motivo)
+    return True
+
+
+def _vigiar_uma_vez(agora: dt.datetime | None = None) -> dict:
+    """Uma passada da regra do tempo e do batimento (quem chama e' `vigiar_transmissoes`)."""
+    agora = agora or dt.datetime.now(dt.timezone.utc)
+    carimbo = agora.isoformat(timespec="seconds")
+    limite_bat = (agora - dt.timedelta(seconds=SEGUNDOS_SEM_BATIMENTO)).isoformat(timespec="seconds")
+    limite_resp = (agora - dt.timedelta(seconds=SEGUNDOS_SEM_RESPOSTA)).isoformat(timespec="seconds")
+    limite_entrega = (agora - dt.timedelta(seconds=SEGUNDOS_ENTREGA_LENTA)).isoformat(timespec="seconds")
+    feitas = {"sem_batimento": [], "por_tempo": [], "sem_resposta": []}
+    with conexao() as c:
+        sem_bat = [dict(x) for x in c.execute(
+            "SELECT * FROM transmissoes WHERE estado IN ('pedida','no_ar') AND batimento_em < ?",
+            (limite_bat,)).fetchall()]
+        por_tempo = [dict(x) for x in c.execute(
+            """SELECT * FROM transmissoes WHERE estado IN ('pedida','no_ar') AND gravando=0
+               AND termina_em <> '' AND termina_em <= ?""", (carimbo,)).fetchall()]
+        sem_resp = [dict(x) for x in c.execute(
+            """SELECT t.* FROM transmissoes t
+               JOIN ordens_do_bordo o ON o.transmissao_id = t.id AND o.acao='iniciar'
+               WHERE t.estado='pedida'
+                 AND ((o.estado='pedido' AND t.criada_em < ?)
+                      OR (o.estado='entregue' AND o.entregue_em <> '' AND o.entregue_em < ?))""",
+            (limite_resp, limite_entrega)).fetchall()]
+    for t in sem_bat:
+        if fechar_transmissao(t["id"], "encerrada", "a tela foi fechada ou o computador foi desligado"):
+            feitas["sem_batimento"].append(t["id"])
+            parar_se_ninguem_vendo(t["embarcacao_id"], t["camera_id"], t["fluxo_id"],
+                                   "nao havia mais ninguem vendo")
+    for t in por_tempo:
+        if fechar_transmissao(t["id"], "expirada", "o tempo da transmissao acabou — inicie de novo"):
+            feitas["por_tempo"].append(t["id"])
+            parar_se_ninguem_vendo(t["embarcacao_id"], t["camera_id"], t["fluxo_id"], "o tempo acabou")
+    for t in sem_resp:
+        if            fechar_transmissao(t["id"], "sem_sinal",
+                               "a maquina de captura nao concluiu o pedido (sem resposta)"):
+            feitas["sem_resposta"].append(t["id"])
+    return feitas
+
+
+def vigiar_transmissoes(intervalo: float = 5.0) -> None:
+    """Vigia do lado terra: tempo maximo e batimento da tela do cliente."""
+    while True:
+        try:
+            _vigiar_uma_vez()
+        except Exception as e:
+            print("[api] aviso: vigia das transmissoes:", type(e).__name__, e, flush=True)
+        time.sleep(intervalo)
 
 
 # --------------------------------------------------------------------------- banco / inicializacao
@@ -692,6 +808,76 @@ class Handler(SimpleHTTPRequestHandler):
     def _local(self) -> bool:
         return self.client_address[0] in ("127.0.0.1", "::1")
 
+    # ---- transmissao a pedido do cliente (17/11/2026)
+    def _papel_cliente(self, u) -> bool:
+        """Quem INICIA transmissao e' o cliente (dono, 17/11/2026: "apenas o cliente")."""
+        return bool(u) and u["papel"] == "cliente"
+
+    def _embarcacao_do_cliente(self, u, embarcacao_id: str) -> bool:
+        """A embarcacao tem de ser da PROPRIA empresa do cliente (mesma regra de `pode_ver_camera`)."""
+        if not embarcacao_id:
+            return False
+        with conexao() as c:
+            e = c.execute("SELECT cliente_id FROM embarcacoes WHERE id=?", (embarcacao_id,)).fetchone()
+        return bool(e) and u["cliente_id"] == e["cliente_id"]
+
+    def _token_do_bordo(self) -> bool:
+        """Autoriza o BORDO (agente de ordens): token de ingestao, nunca sessao de navegador."""
+        esperado = (os.environ.get("LECSOR_TOKEN_INGESTAO") or "").strip()
+        recebido = (self.headers.get("Authorization") or "").strip()
+        if recebido.lower().startswith("bearer "):
+            recebido = recebido[7:].strip()
+        return bool(esperado) and hmac.compare_digest(recebido, esperado)
+
+    def _tempo_do_cliente(self, usuario_id: str) -> int:
+        """Tempo maximo que ESTE cliente configurou na tela de configuracao."""
+        with conexao() as c:
+            r = c.execute("SELECT tempo_maximo_s FROM configs_do_cliente WHERE usuario_id=?",
+                          (usuario_id,)).fetchone()
+        return int(r["tempo_maximo_s"]) if r else TEMPO_MAXIMO_PADRAO
+
+    def _transmissao_aberta(self, usuario_email: str, camera_id: str):
+        with conexao() as c:
+            return c.execute("""SELECT * FROM transmissoes WHERE usuario_email=? AND camera_id=?
+                                AND estado IN ('pedida','no_ar') ORDER BY criada_em DESC LIMIT 1""",
+                             (usuario_email, camera_id)).fetchone()
+
+    def _transmissao_da_tela(self, tid: str, u):
+        """A sessao que a tela pode mexer: a propria, ou de qualquer um se for operacao/admin.
+
+        Devolve `(linha, erro, codigo)`. `codigo` ZERO quer dizer liberado: quem chama TEM de
+        interromper quando vem codigo — `_json` nao retorna nada, e o `if erro:` antigo seguia
+        atendendo depois de responder 403 (um cliente encerrava a sessao de outro).
+        """
+        with conexao() as c:
+            t = c.execute("SELECT * FROM transmissoes WHERE id=?", (tid,)).fetchone()
+        if not t:
+            return None, "transmissao nao encontrada", 404
+        if u and (u["papel"] in PAPEL_ADMIN or u["email"] == t["usuario_email"]):
+            return t, "", 0
+        return None, "esta transmissao nao e' sua", 403
+
+    def _json_transmissao(self, t) -> dict:
+        """A linha da sessao como a tela ve: sem endereco de camera, sem credencial, sem porta."""
+        d = dict(t)
+        d["gravando"] = bool(d.get("gravando"))
+        # a GRAVACAO mora no lado terra: o historico diz se existe arquivo e quanto ele tem
+        try:
+            g = gravacao_modulo.estado(d["id"])
+            d["gravacao"] = {"tem": bool(g["arquivo"]), "bytes": g["bytes"], "segundos": g["segundos"],
+                             "gravando": bool(g["gravando"])}
+        except Exception:
+            d["gravacao"] = {"tem": False, "bytes": 0, "segundos": 0, "gravando": False}
+        d["segundos_restantes"] = 0
+        if d.get("termina_em"):
+            try:
+                resta = (dt.datetime.fromisoformat(d["termina_em"])
+                         - dt.datetime.now(dt.timezone.utc)).total_seconds()
+                d["segundos_restantes"] = max(0, int(resta))
+            except Exception:
+                d["segundos_restantes"] = 0
+        return d
+
     # ---- trecho de 1 minuto (prova da compressao)
     def _autoriza_fluxo(self, u, fluxo: str) -> tuple[bool, str]:
         """Quem pode baixar trecho DESTE fluxo: operacao/admin, o cliente dono da camera, ou a bancada.
@@ -1062,6 +1248,79 @@ class Handler(SimpleHTTPRequestHandler):
                 else:
                     linhas = c.execute("SELECT * FROM embarcacoes WHERE cliente_id=? ORDER BY nome", (u["cliente_id"],)).fetchall()
             return self._json(200, {"embarcacoes": [dict(x) for x in linhas]})
+        if rota == "/api/transmissao":
+            # A TELA DO CLIENTE: o que esta' no ar, o historico e o tempo configurado. O cliente so'
+            # alcanca embarcacao da propria empresa; operacao/admin acompanham qualquer uma.
+            if not u:
+                return self._json(401, {"erro": "entre no sistema"})
+            emb = (parse_qs(urlparse(self.path).query).get("embarcacao", [""])[0] or "").strip()
+            if not emb:
+                return self._json(422, {"erro": "informe a embarcacao"})
+            if u["papel"] not in PAPEL_ADMIN and not self._embarcacao_do_cliente(u, emb):
+                return self._json(403, {"erro": "esta embarcacao nao e' da sua empresa"})
+            with conexao() as c:
+                # as abertas passam pelo mesmo enfeite do historico: a tela precisa do estado da
+                # gravacao (e do tempo restante) tambem nas transmissoes que estao' no ar
+                abertas = [self._json_transmissao(dict(x)) for x in c.execute(
+                    """SELECT * FROM transmissoes WHERE embarcacao_id=? AND estado IN ('pedida','no_ar')
+                       ORDER BY criada_em""", (emb,)).fetchall()]
+                hist = [dict(x) for x in c.execute(
+                    """SELECT * FROM transmissoes WHERE embarcacao_id=?
+                       ORDER BY criada_em DESC LIMIT 100""", (emb,)).fetchall()]
+            return self._json(200, {"agora": em_iso(), "embarcacao_id": emb,
+                                    "tempos": list(TEMPOS_DE_TRANSMISSAO),
+                                    "tempo_maximo_s": self._tempo_do_cliente(u["id"]),
+                                    "papel": u["papel"],
+                                    "abertas": abertas,
+                                    "historico": [self._json_transmissao(t) for t in hist]},
+                              {"Cache-Control": "no-store"})
+        if rota.startswith("/api/gravacoes/"):
+            # Baixar a gravacao (GET — fica no do_GET): so' quem ve a sessao (o dono dela ou a operacao).
+            if not u:
+                return self._json(401, {"erro": "entre no sistema"})
+            tid = rota[len("/api/gravacoes/"):].strip("/")
+            t, erro, codigo = self._transmissao_da_tela(tid, u)
+            if codigo:
+                return self._json(codigo, {"erro": erro})
+            caminho = gravacao_modulo.arquivo(tid)
+            if not caminho.exists():
+                return self._json(404, {"erro": "esta transmissao nao tem gravacao"})
+            auditar(u, "gravacao_baixada", f"{t['camera_id']}", self.client_address[0])
+            return self._enviar_arquivo(caminho, baixar=True)
+        if rota == "/api/ordens":
+            # O AGENTE DO BORDO pergunta o que fazer e obedece direto (nao ha tecnico confirmando).
+            # Autorizado pelo token de ingestao. Segura a resposta ate' `espera` segundos quando nao
+            # ha' nada — e' assim que a ordem do cliente chega ao bordo sem o bordo abrir porta.
+            if not self._token_do_bordo():
+                return self._json(401, {"erro": "token de ingestao invalido"})
+            q = parse_qs(urlparse(self.path).query)
+            emb = (q.get("embarcacao_id", [""])[0] or os.environ.get("LECSOR_EMBARCACAO_BORDO") or "").strip()
+            if not emb:
+                return self._json(422, {"erro": "informe a embarcacao"})
+            try:
+                espera = float(q.get("espera", ["20"])[0] or 20)
+            except Exception:
+                espera = 20.0
+            fim = time.time() + min(30.0, max(0.0, espera))
+            linhas = []
+            while True:
+                with conexao() as c:
+                    linhas = [dict(x) for x in c.execute(
+                        """SELECT * FROM ordens_do_bordo WHERE embarcacao_id=? AND estado='pedido'
+                           ORDER BY seq""", (emb,)).fetchall()]
+                    if linhas:
+                        c.executemany("UPDATE ordens_do_bordo SET estado='entregue', entregue_em=? WHERE id=?",
+                                      [(em_iso(), l["id"]) for l in linhas])
+                if linhas or time.time() >= fim:
+                    break
+                time.sleep(0.4)
+            return self._json(200, {"embarcacao_id": emb, "recebidas": len(linhas),
+                                    "seq": max([l["seq"] for l in linhas], default=0),
+                                    "ordens": [{"id": l["id"], "seq": l["seq"], "camera_id": l["camera_id"],
+                                                "fluxo_id": l["fluxo_id"], "acao": l["acao"],
+                                                "transmissao_id": l["transmissao_id"],
+                                                "motivo": l["motivo"]} for l in linhas]},
+                              {"Cache-Control": "no-store"})
         if rota in ("/api/metricas", "/api/tempo-real", "/api/metricas/tempo-real"):
             if not (self._pode_operar(u) or self._local()):
                 return self._json(403, {"erro": "so operacao e administrador veem as metricas"})
@@ -2009,6 +2268,165 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:
                 lado = {"ok": False, "motivo": f"{type(e).__name__}: {e}"}
             return self._json(200, {"id": cid, "ativo": bool(novo), "lado_terra": lado})
+        if rota == "/api/transmissao/iniciar":
+            # O CLIENTE abre a transmissao pela web. A ordem nasce AQUI e vai ao bordo.
+            if not u:
+                return self._json(401, {"erro": "entre no sistema"})
+            if not self._papel_cliente(u):
+                return self._json(403, {"erro": "quem inicia a transmissao e' o cliente"})
+            d = self._corpo()
+            cam_id = str(d.get("camera_id") or "").strip()
+            if not cam_id:
+                return self._json(422, {"erro": "escolha a camera"})
+            with conexao() as c:
+                cam = c.execute("SELECT * FROM cameras WHERE id=?", (cam_id,)).fetchone()
+            if not cam:
+                return self._json(404, {"erro": "camera nao encontrada"})
+            if not cam["ativo"]:
+                return self._json(422, {"erro": "esta camera esta desativada"})
+            if not pode_ver_camera(u, cam):
+                return self._json(403, {"erro": "esta camera nao e' da sua empresa"})
+            seg_bruto = d.get("segundos_max")
+            seg = self._tempo_do_cliente(u["id"]) if seg_bruto in (None, "") else seg_bruto
+            try:
+                seg = int(seg)
+            except Exception:
+                return self._json(422, {"erro": f"tempo invalido; escolha um de {list(TEMPOS_DE_TRANSMISSAO)}"})
+            if seg not in TEMPOS_DE_TRANSMISSAO:
+                return self._json(422, {"erro": f"tempo fora da lista; escolha um de {list(TEMPOS_DE_TRANSMISSAO)}"})
+            aberta = self._transmissao_aberta(u["email"], cam_id)
+            if aberta:
+                # pedir de novo o que ja' esta' aberto nao abre uma segunda sessao (a tela pode
+                # reenviar o clique sem medo)
+                return self._json(200, {"ok": True, "ja_aberta": True,
+                                        "transmissao": self._json_transmissao(aberta)},
+                                  {"Cache-Control": "no-store"})
+            agora = dt.datetime.now(dt.timezone.utc)
+            tid = secrets.token_hex(8)
+            termina = (agora + dt.timedelta(seconds=seg)).isoformat(timespec="seconds")
+            carimbo = em_iso(agora)
+            with conexao() as c:
+                seq = c.execute("SELECT COALESCE(MAX(seq),0)+1 AS s FROM transmissoes").fetchone()["s"]
+                c.execute("""INSERT INTO transmissoes
+                             (id,seq,embarcacao_id,camera_id,fluxo_id,usuario_email,segundos_max,
+                              criada_em,batimento_em,termina_em,estado,motivo)
+                             VALUES (?,?,?,?,?,?,?,?,?,?,'pedida','')""",
+                          (tid, seq, cam["embarcacao_id"], cam_id, cam["fluxo_id"], u["email"],
+                           seg, carimbo, carimbo, termina))
+                linha = c.execute("SELECT * FROM transmissoes WHERE id=?", (tid,)).fetchone()
+            ordem = enfileirar_ordem(cam["embarcacao_id"], cam_id, cam["fluxo_id"], "iniciar",
+                                     f"pedido do cliente {u['email']}", tid)
+            auditar(u, "transmissao_pedida", f"{cam_id} ({texto_do_tempo(seg)})", self.client_address[0])
+            return self._json(201, {"ok": True, "transmissao": self._json_transmissao(linha),
+                                    "ordem": ordem}, {"Cache-Control": "no-store"})
+        if rota.startswith("/api/transmissao/") and rota.endswith("/batimento"):
+            # "estou aqui": enquanto a tela bate, a sessao vive. Sem batimento por
+            # SEGUNDOS_SEM_BATIMENTO o lado terra fecha a sessao e manda o bordo parar.
+            if not u:
+                return self._json(401, {"erro": "entre no sistema"})
+            tid = rota[len("/api/transmissao/"):-len("/batimento")]
+            t, erro, codigo = self._transmissao_da_tela(tid, u)
+            if codigo:
+                return self._json(codigo, {"erro": erro})
+            with conexao() as c:
+                c.execute("UPDATE transmissoes SET batimento_em=? WHERE id=?", (em_iso(), tid))
+            return self._json(200, {"ok": True, "estado": t["estado"], "agora": em_iso()},
+                              {"Cache-Control": "no-store"})
+        if rota.startswith("/api/transmissao/") and rota.endswith("/encerrar"):
+            # Fechou a tela/navegador ou clicou em parar. Aceita corpo vazio (o aviso do
+            # `sendBeacon` ao fechar a pagina nao e' JSON).
+            if not u:
+                return self._json(401, {"erro": "entre no sistema"})
+            tid = rota[len("/api/transmissao/"):-len("/encerrar")]
+            t, erro, codigo = self._transmissao_da_tela(tid, u)
+            if codigo:
+                return self._json(codigo, {"erro": erro})
+            fechada = fechar_transmissao(tid, "encerrada", "a transmissao foi encerrada na tela do cliente")
+            if fechada:
+                parar_se_ninguem_vendo(t["embarcacao_id"], t["camera_id"], t["fluxo_id"],
+                                       "nao havia mais ninguem vendo")
+                auditar(u, "transmissao_encerrada", f"{t['camera_id']}", self.client_address[0])
+            return self._json(200, {"ok": True, "encerrada": bool(fechada)}, {"Cache-Control": "no-store"})
+        if rota.startswith("/api/transmissao/") and rota.endswith("/gravando"):
+            # GRAVACAO NO LADO TERRA (decisao do dono, 17/11/2026): grava o video que JA' CHEGOU pela
+            # rede, aqui na VPS — nao gasta banda do link da embarcacao. Enquanto grava, o corte por
+            # TEMPO NAO acontece (a gravacao nao pode ser picada no meio).
+            if not u:
+                return self._json(401, {"erro": "entre no sistema"})
+            tid = rota[len("/api/transmissao/"):-len("/gravando")]
+            t, erro, codigo = self._transmissao_da_tela(tid, u)
+            if codigo:
+                return self._json(codigo, {"erro": erro})
+            d = self._corpo()
+            ligado = str(d.get("gravando", 1)).strip().lower() not in ("0", "false", "nao", "não")
+            if ligado:
+                r = gravacao_modulo.iniciar(tid, t["fluxo_id"] or t["camera_id"])
+                if "erro" in r:
+                    # a tela NAO pode dizer "gravando" quando o ffmpeg nao subiu
+                    with conexao() as c:
+                        c.execute("UPDATE transmissoes SET gravando=0 WHERE id=?", (tid,))
+                    return self._json(422, {"erro": r["erro"], "gravando": False})
+                with conexao() as c:
+                    c.execute("UPDATE transmissoes SET gravando=1 WHERE id=?", (tid,))
+                auditar(u, "gravacao_iniciada", f"{t['camera_id']}", self.client_address[0])
+                return self._json(200, {"ok": True, "gravando": True, "gravacao": r},
+                                  {"Cache-Control": "no-store"})
+            r = gravacao_modulo.parar(tid)
+            with conexao() as c:
+                c.execute("UPDATE transmissoes SET gravando=0 WHERE id=?", (tid,))
+            auditar(u, "gravacao_parada", f"{t['camera_id']} ({r.get('bytes', 0)} B)",
+                    self.client_address[0])
+            return self._json(200, {"ok": True, "gravando": False, "gravacao": r},
+                              {"Cache-Control": "no-store"})
+        if rota == "/api/transmissao/config":
+            # Tela de configuracao do cliente: o tempo maximo de cada transmissao.
+            if not u:
+                return self._json(401, {"erro": "entre no sistema"})
+            d = self._corpo()
+            try:
+                seg = int(d.get("tempo_maximo_s"))
+            except Exception:
+                return self._json(422, {"erro": f"informe o tempo em segundos; escolha um de {list(TEMPOS_DE_TRANSMISSAO)}"})
+            if seg not in TEMPOS_DE_TRANSMISSAO:
+                return self._json(422, {"erro": f"tempo fora da lista; escolha um de {list(TEMPOS_DE_TRANSMISSAO)}"})
+            with conexao() as c:
+                c.execute("""INSERT INTO configs_do_cliente (usuario_id,tempo_maximo_s,atualizado_em)
+                             VALUES (?,?,?) ON CONFLICT(usuario_id)
+                             DO UPDATE SET tempo_maximo_s=excluded.tempo_maximo_s,
+                                           atualizado_em=excluded.atualizado_em""",
+                          (u["id"], seg, em_iso()))
+            auditar(u, "tempo_de_transmissao_configurado", texto_do_tempo(seg), self.client_address[0])
+            return self._json(200, {"ok": True, "tempo_maximo_s": seg}, {"Cache-Control": "no-store"})
+        if rota.startswith("/api/ordens/") and rota.endswith("/resultado"):
+            # O BORDO conta o que aconteceu com a ordem (abriu? falhou? por que?).
+            if not self._token_do_bordo():
+                return self._json(401, {"erro": "token de ingestao invalido"})
+            oid = rota[len("/api/ordens/"):-len("/resultado")]
+            d = self._corpo()
+            bruto = str(d.get("estado") or "").strip().lower()
+            estado = "atendida" if bruto in ("atendida", "ok", "1", "true", "sim") else "erro"
+            resultado = str(d.get("resultado") or d.get("motivo") or "").strip()[:300]
+            with conexao() as c:
+                o = c.execute("SELECT * FROM ordens_do_bordo WHERE id=?", (oid,)).fetchone()
+                if not o:
+                    return self._json(404, {"erro": "ordem nao encontrada"})
+                c.execute("""UPDATE ordens_do_bordo SET estado=?, atendida_em=?, resultado=?
+                             WHERE id=?""", (estado, em_iso(), resultado, oid))
+            # a sessao do cliente acompanha: no ar quando abriu, erro quando nao deu.
+            if o["transmissao_id"]:
+                if estado == "atendida" and o["acao"] == "iniciar":
+                    with conexao() as c:
+                        c.execute("""UPDATE transmissoes SET estado='no_ar',
+                                     fluxo_id=CASE WHEN ?<>'' THEN ? ELSE fluxo_id END
+                                     WHERE id=? AND estado IN ('pedida','no_ar')""",
+                                  (str(d.get("fluxo_id") or ""), str(d.get("fluxo_id") or ""),
+                                   o["transmissao_id"]))
+                elif estado == "erro" and o["acao"] == "iniciar":
+                    fechar_transmissao(o["transmissao_id"], "erro",
+                                       resultado or "a maquina de captura nao conseguiu abrir a camera")
+            auditar(None, f"ordem_{estado}", f"{o['camera_id']} ({resultado})", self.client_address[0])
+            return self._json(200, {"ok": True, "ordem": oid, "estado": estado, "resultado": resultado},
+                              {"Cache-Control": "no-store"})
         if rota == "/api/decisoes":
             if not (u and u["papel"] in PAPEL_ADMIN):
                 return self._json(401, {"erro": "so operador/admin registra decisao"})
@@ -2438,6 +2856,14 @@ def principal() -> int:
     # Publica o cadastro das cameras desta maquina no lado terra (best-effort, em segundo plano: nao
     # pode atrasar o boot da API).
     threading.Thread(target=_publicar_cadastro_no_boot, daemon=True).start()
+    # Vigia da transmissao a pedido do cliente: fecha a sessao sem batimento (tela fechada /
+    # computador desligado), corta no tempo maximo e libera a camera quando ninguem mais esta' vendo.
+    threading.Thread(target=vigiar_transmissoes, daemon=True).start()
+    # gravacao que ficou com processo morto (a maquina reiniciou) e' marcada, sem apagar arquivo
+    try:
+        gravacao_modulo.limpar_orfas()
+    except Exception as e:
+        print(f"[api] aviso: limpeza das gravacoes falhou ({type(e).__name__}: {e})", flush=True)
     print(f"[ok] sistema em http://127.0.0.1:{porta}/  (bancada: /  ·  cliente: /app  ·  admin: /admin)")
     # por padrão o servidor fica SÓ no loopback da máquina; no lado terra ele precisa aceitar o
     # acesso do navegador do cliente, então o endereço vem do ambiente (LECSOR_BIND)

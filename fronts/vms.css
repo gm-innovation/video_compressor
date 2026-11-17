@@ -136,3 +136,18 @@ button.principal{background:var(--marca);color:#fff;border:0;border-radius:9px;p
 .destaque-titulo{margin-right:auto;font-size:13px;color:var(--texto2)}
 .destaque .grade-vms{flex:1;min-height:0;height:auto}
 .destaque .janela{border-color:var(--borda2)}
+
+/* ---------- transmissao a pedido do cliente (17/11/2026) ---------- */
+.transmissao-caixa,.config-caixa{border:1px solid var(--borda);border-radius:11px;background:var(--painel);overflow:hidden}
+.transmissao-linha{display:flex;align-items:center;gap:12px;padding:13px 15px;border-bottom:1px solid var(--borda)}
+.transmissao-linha:last-child{border-bottom:0}
+.transmissao-linha .nome{font-weight:600;min-width:150px}
+.transmissao-linha .estado{color:var(--texto2);font-size:12.5px;flex:1;min-width:0}
+.transmissao-linha .estado.noar{color:var(--ok)}
+.acoes-transmissao{margin-left:auto;display:flex;gap:8px;align-items:center}
+.acoes-transmissao select.pil{background:#131c2b}
+.grupo-historico{margin:18px 0 8px;font-size:11px;letter-spacing:.12em;color:var(--texto2);text-transform:uppercase}
+table.historico{width:100%;border-collapse:collapse;font-size:12.5px}
+table.historico th{text-align:left;color:var(--texto2);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--borda);font-size:11px;text-transform:uppercase;letter-spacing:.08em}
+table.historico td{padding:9px 10px;border-bottom:1px solid var(--borda);color:var(--texto)}
+table.historico tr:last-child td{border-bottom:0}

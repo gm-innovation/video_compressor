@@ -50,6 +50,10 @@ supabase/.temp/
 # clipes das medicoes de compressao: reproduziveis pelos scripts ground/medir-*.py, pesados demais para o repo
 ground/medicoes-hd/
 
+# dados de execucao das transmissao a pedido do cliente (gravacoes do lado terra e ordens do bordo): nao versionar
+ground/gravacoes/
+ground/ordens/
+
 # ambiente do pacote (Supabase/token de ingestao/embarcacao do PC de captura): segredo, nunca no git
 ground/ambiente.json
 desktop/ambiente.json

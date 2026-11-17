@@ -5,7 +5,9 @@ const S = {
   tela: 'visualizar', layout: 3, auto: true, pagina: 1, selecionadas: new Set(), ia: false, destaque: [],
   podeCamera: false, trechoEmCurso: false,
   eventos: [], contagens: [], relatorios: null, timer: null,
-  analises: { agentes: [], contagens: [], eventos: [] }, agentesPorCamera: {}
+  analises: { agentes: [], contagens: [], eventos: [] }, agentesPorCamera: {},
+  /* transmissao a pedido do cliente: o que esta' no ar, o historico e o tempo configurado */
+  transmissao: { abertas: [], historico: [], tempos: [], tempo_maximo_s: 900 }, minhas: []
 };
 const $ = (id) => document.getElementById(id);
 const limpar = (el) => { while (el.firstChild) el.removeChild(el.firstChild); };
@@ -70,6 +72,7 @@ async function atualizar() {
     for (const ag of (an.corpo.agentes || [])) S.agentesPorCamera[ag.camera_id] = ag;
   }
   if (S.tela === 'alertas' || S.tela === 'relatorios') await dadosExtras();
+  if (S.tela === 'transmissao' || S.tela === 'configuracao' || S.tela === 'gravacoes') await carregarTransmissao();
   if (S.tela === 'visualizar') {
     if (mudouLista || !$('palco').dataset.montado) desenharVisualizar();
     else { pintarEstados(); S.cameras.forEach((c) => desenharCaixas(c.id)); }
@@ -78,7 +81,12 @@ async function atualizar() {
   else {
     /* Nas telas de tabela a tela é atualizada no lugar (tabelaEmPalco só troca a célula que mudou),
        então repintar a cada 5 s não apaga mais nada; a marca evita trabalho quando nada mudou. */
-    const marca = assinaturaTelas();
+    // Na tela de TEMPO a unica coisa que muda por fora e' o valor gravado: redesenhar a cada 5 s
+    // recriava o <select> e apagava a escolha do cliente (mandava o valor antigo ao gravar — o
+    // defeito que a prova de tela pegou). Aqui so' redesenha quando o valor GRAVADO muda.
+    const marca = (S.tela === 'configuracao')
+      ? 'config|' + S.transmissao.tempo_maximo_s
+      : assinaturaTelas();
     if (marca !== marcaTela) { marcaTela = marca; desenharTela(); }
   }
   atualizarRodape();
@@ -89,7 +97,7 @@ async function atualizar() {
 let marcaTela = '';
 function assinaturaTelas() {
   try {
-    return JSON.stringify([S.tela, S.cameras, S.eventos, S.contagens, S.relatorios, S.analises],
+    return JSON.stringify([S.tela, S.cameras, S.eventos, S.contagens, S.relatorios, S.analises, S.transmissao],
       (k, v) => ((k === 'gerado_em' || k === 'caixas_idade' || k === 'agora' || k === 'atualizado_em') ? undefined : v));
   } catch (e) { return 'erro:' + Math.random(); }
 }
@@ -535,7 +543,9 @@ const TELAS = {
   relatorios: ['Relatórios', 'Indicadores medidos pelo sistema: disponibilidade, contagens e qualidade do link.'],
   pessoas: ['Pessoas', 'Cadastro usado pelas análises de vídeo — só liga com a autorização registrada.'],
   cameras: ['Câmeras', 'Câmeras liberadas para a sua empresa e o estado de cada uma.'],
-  avisos: ['Avisos', 'Preferências de notificação deste usuário.']
+  avisos: ['Avisos', 'Preferências de notificação deste usuário.'],
+  transmissao: ['Transmitir', 'Você abre a transmissão da câmera: a ordem vai até a máquina de captura da embarcação.'],
+  configuracao: ['Tempo de transmissão', 'Quanto tempo cada transmissão pode durar antes de parar.']
 };
 
 function desenharTela() {
@@ -558,8 +568,29 @@ function desenharTela() {
                    { rotulo: 'Clipe', campo: 'clipe' }], caidas.concat(daAnalise).concat(ev),
       'Nenhum alerta: todas as câmeras da sua embarcação estão no ar.');
   } else if (t === 'gravacoes') {
-    tabelaEmPalco([{ rotulo: 'Trecho', campo: 'inicio' }, { rotulo: 'Câmera', campo: 'camera_id' }], [],
-      'Gravação ainda não habilitada nesta embarcação (Fase 3, P1 do plano).');
+    /* A gravação fica no LADO TERRA (o vídeo que já chegou pela rede). Aqui o cliente vê o que ficou
+       gravado nas transmissões da embarcação dele e baixa — nada é apagado do histórico. */
+    const feitas = (S.transmissao.historico || []).filter((x) => x.gravacao && x.gravacao.tem);
+    tabelaEmPalco([
+      { rotulo: 'Quando', campo: 'quando' },
+      { rotulo: 'Câmera', campo: 'camera' },
+      { rotulo: 'Quem', campo: 'quem' },
+      { rotulo: 'Durou', campo: 'durou' },
+      { rotulo: 'Tamanho', campo: 'tamanho' },
+      { rotulo: 'Gravação', valor: (l) => l.baixar },
+    ], feitas.map((x) => ({
+      quando: (x.criada_em || '').replace('T', ' ').slice(0, 19),
+      camera: rotuloDe(x.camera_id),
+      quem: x.usuario_email || '',
+      durou: duracaoDa(x),
+      tamanho: emMB((x.gravacao || {}).bytes),
+      baixar: (() => {
+        const a = document.createElement('a');
+        a.href = '/api/gravacoes/' + encodeURIComponent(x.id);
+        a.textContent = 'baixar';
+        return a;
+      })(),
+    })), 'Nenhuma gravação ainda. Grave pela tela Transmitir — a gravação fica no lado terra e não é apagada.');
   } else if (t === 'relatorios') {
     const linhas = S.cameras.map((c) => ({ camera: c.rotulo, estado: c.no_ar ? 'no ar' : 'fora do ar',
       encoder: c.encoder && c.encoder.bitrate ? c.encoder.bitrate : '', leitores: c.leitores }));
@@ -617,7 +648,222 @@ function desenharTela() {
         localStorage.setItem('lecsor-avisos', novo); desenharTela(); };
       cx.appendChild(d); cx.appendChild(b);
     }
+  } else if (t === 'transmissao') {
+    desenharTransmissao();
+  } else if (t === 'configuracao') {
+    desenharConfiguracao();
   }
+}
+
+/* ---------------------------------------------- transmissao a pedido do cliente (17/11/2026)
+   O CLIENTE abre a transmissao pela web; a ordem nasce no lado terra e vai ate' a maquina de captura
+   da embarcacao. A tela bate um "estou aqui" enquanto esta' aberta: fechou a tela ou desligou o
+   computador, o lado terra derruba SO' a sessao de quem fechou — se outro cliente esta' vendo, a
+   transmissao continua para ele. */
+async function carregarTransmissao() {
+  if (!S.embarcacaoId) return;
+  const d = await api('/api/transmissao?embarcacao=' + encodeURIComponent(S.embarcacaoId));
+  if (d.ok && d.corpo) S.transmissao = d.corpo;
+  const meu = (S.usuario || {}).email;
+  S.minhas = (S.transmissao.abertas || []).filter((t) => t.usuario_email === meu).map((t) => t.id);
+}
+
+function mmss(seg) {
+  const total = Math.max(0, Math.round(seg));
+  return dois(Math.floor(total / 60)) + ':' + dois(total % 60);
+}
+
+function duracaoDa(t) {
+  if (!t.criada_em) return '—';
+  const fim = t.encerrada_em ? new Date(t.encerrada_em) : new Date();
+  const seg = Math.max(0, Math.round((fim - new Date(t.criada_em)) / 1000));
+  return mmss(seg);
+}
+
+function textoDaSessao(t, meu) {
+  if (t.estado === 'no_ar') {
+    return 'no ar' + (t.usuario_email === meu ? ' — a sua transmissão' : ' — outro cliente assistindo');
+  }
+  if (t.estado === 'pedida') return 'pedido enviado à máquina de captura…';
+  if (t.estado === 'expirada') return 'parada: o tempo acabou — inicie de novo';
+  if (t.estado === 'sem_sinal') return 'sem resposta da máquina de captura';
+  return (t.estado || '') + (t.motivo ? ' — ' + t.motivo : '');
+}
+
+async function pedirTransmissao(cameraId, botao) {
+  if (botao) { botao.disabled = true; botao.textContent = 'pedindo…'; }
+  const d = await api('/api/transmissao/iniciar', { method: 'POST', body: JSON.stringify({ camera_id: cameraId }) });
+  if (!d.ok) {
+    alert((d.corpo && d.corpo.erro) || 'não deu para pedir a transmissão');
+    if (botao) { botao.disabled = false; botao.textContent = 'Iniciar transmissão'; }
+    return;
+  }
+  await carregarTransmissao();
+  desenharTela();
+}
+
+function emMB(bytes) { return (Math.max(0, bytes || 0) / 1048576).toFixed(1) + ' MB'; }
+
+/* Gravação no lado terra: o cliente liga e desliga; enquanto grava, o corte por tempo não acontece. */
+async function marcarGravando(tid, ligado, botao) {
+  if (botao) { botao.disabled = true; botao.textContent = ligado ? 'gravando…' : 'parando…'; }
+  const d = await api('/api/transmissao/' + tid + '/gravando',
+    { method: 'POST', body: JSON.stringify({ gravando: !!ligado }) });
+  await carregarTransmissao();
+  desenharTela();
+  if (!d.ok) alert((d.corpo && d.corpo.erro) || 'não deu para gravar');
+}
+
+async function pararTransmissao(tid, botao) {
+  if (botao) { botao.disabled = true; botao.textContent = 'parando…'; }
+  await api('/api/transmissao/' + tid + '/encerrar', { method: 'POST', body: '{}' });
+  await carregarTransmissao();
+  desenharTela();
+}
+
+/* O "estou aqui": enquanto esta' tela estiver aberta a sessao vive. E' o que faz fechar a tela (ou
+   desligar o computador) interromper a transmissao sem ninguem precisar clicar em nada. */
+async function baterPonto() {
+  const minhas = S.minhas || [];
+  for (const id of minhas) {
+    try { await api('/api/transmissao/' + id + '/batimento', { method: 'POST', body: '{}' }); } catch (e) { /* volta na proxima */ }
+  }
+}
+
+function desenharTransmissao() {
+  const p = $('palco');
+  limpar(p); p.dataset.montado = '';
+  const meu = (S.usuario || {}).email;
+  const cams = S.cameras || [];
+  if (!cams.length) {
+    const d = document.createElement('div'); d.className = 'vazio';
+    d.textContent = 'Nenhuma câmera liberada para esta embarcação.';
+    p.appendChild(d); return;
+  }
+  const cx = document.createElement('div'); cx.className = 'transmissao-caixa';
+  for (const cam of cams) {
+    const abertas = (S.transmissao.abertas || []).filter((t) => t.camera_id === cam.id);
+    const minha = abertas.find((t) => t.usuario_email === meu);
+    const quantos = new Set(abertas.map((t) => t.usuario_email)).size;
+    const l = document.createElement('div'); l.className = 'transmissao-linha'; l.dataset.camera = cam.id;
+
+    const nome = document.createElement('div'); nome.className = 'nome'; nome.textContent = cam.rotulo;
+    const est = document.createElement('div');
+    est.className = 'estado' + (minha && minha.estado === 'no_ar' ? ' noar' : '');
+    est.dataset.estado = cam.id;
+    if (minha) {
+      est.textContent = textoDaSessao(minha, meu);
+      if (minha.termina_em && minha.estado !== 'encerrada' && minha.estado !== 'expirada') {
+        est.textContent += ' · tempo restante ' + mmss(minha.segundos_restantes || 0);
+      }
+    } else if (abertas.length) {
+      est.textContent = 'no ar — outro cliente da sua empresa está assistindo';
+    } else {
+      est.textContent = cam.no_ar ? 'no ar agora' : 'parada';
+    }
+    if (quantos > 1) est.textContent += ' · ' + quantos + ' clientes assistindo';
+
+    const acoes = document.createElement('div'); acoes.className = 'acoes-transmissao';
+    const b = document.createElement('button');
+    if (minha) {
+      /* a gravacao mora no LADO TERRA (o vídeo que já chegou); enquanto grava, o tempo não corta */
+      if ((minha.estado === 'no_ar' || minha.estado === 'pedida')) {
+        const gravando = !!minha.gravando || !!(minha.gravacao && minha.gravacao.gravando);
+        const g = document.createElement('button');
+        g.className = 'pil' + (gravando ? ' on' : ''); g.id = 'gravar-' + cam.id;
+        g.textContent = gravando ? 'Parar gravação' : 'Gravar (no lado terra)';
+        g.onclick = () => marcarGravando(minha.id, !gravando, g);
+        acoes.appendChild(g);
+      }
+      b.className = 'pil'; b.textContent = 'Parar transmissão'; b.id = 'parar-' + cam.id;
+      b.onclick = () => pararTransmissao(minha.id, b);
+    } else {
+      b.className = 'pil on'; b.textContent = 'Iniciar transmissão'; b.id = 'iniciar-' + cam.id;
+      b.onclick = () => pedirTransmissao(cam.id, b);
+    }
+    acoes.appendChild(b);
+    l.appendChild(nome); l.appendChild(est); l.appendChild(acoes);
+    cx.appendChild(l);
+  }
+  p.appendChild(cx);
+
+  const h = document.createElement('div'); h.className = 'grupo-historico';
+  h.textContent = 'Histórico das transmissões desta embarcação';
+  p.appendChild(h);
+  const hist = S.transmissao.historico || [];
+  if (!hist.length) {
+    const d = document.createElement('div'); d.className = 'vazio';
+    d.textContent = 'Ainda não houve transmissão nesta embarcação.';
+    p.appendChild(d); return;
+  }
+  const tb = document.createElement('table'); tb.className = 'historico';
+  const th = document.createElement('thead');
+  const trh = document.createElement('tr');
+  for (const titulo of ['Quando', 'Câmera', 'Quem', 'Durou', 'Como terminou', 'Gravação']) {
+    const c = document.createElement('th'); c.textContent = titulo; trh.appendChild(c);
+  }
+  th.appendChild(trh); tb.appendChild(th);
+  const corpo = document.createElement('tbody');
+  for (const t of hist.slice(0, 20)) {
+    const tr = document.createElement('tr');
+    for (const valor of [(t.criada_em || '').replace('T', ' ').slice(0, 19), rotuloDe(t.camera_id),
+                         t.usuario_email || '', duracaoDa(t), textoDaSessao(t, meu)]) {
+      const td = document.createElement('td'); td.textContent = valor; tr.appendChild(td);
+    }
+    const tdG = document.createElement('td');
+    if (t.gravacao && t.gravacao.tem) {
+      const a = document.createElement('a');
+      a.href = '/api/gravacoes/' + encodeURIComponent(t.id);
+      a.textContent = 'baixar (' + emMB(t.gravacao.bytes) + ')';
+      tdG.appendChild(a);
+    } else { tdG.textContent = '—'; }
+    tr.appendChild(tdG);
+    corpo.appendChild(tr);
+  }
+  tb.appendChild(corpo);
+  p.appendChild(tb);
+}
+
+/* O que o cliente escolheu nesta tela. E' o que VENCE o valor do servidor: o redesenho nao pode
+   apagar a escolha dele (mesmo defeito que a prova de tela pegou na tela do tempo). */
+let tempoEscolhido = null;
+
+function desenharConfiguracao() {
+  const p = $('palco');
+  limpar(p); p.dataset.montado = '';
+  const cx = document.createElement('div'); cx.className = 'config-caixa';
+  const d = document.createElement('div'); d.className = 'vazio';
+  d.textContent = 'Tempo máximo de cada transmissão. Ao estourar, a transmissão para e você inicia de '
+    + 'novo — a menos que esteja gravando. Tudo o que for feito fica no histórico.';
+  cx.appendChild(d);
+  const linha = document.createElement('div'); linha.className = 'transmissao-linha';
+  const nome = document.createElement('div'); nome.className = 'nome'; nome.textContent = 'Tempo máximo';
+  const atual = tempoEscolhido === null ? S.transmissao.tempo_maximo_s : tempoEscolhido;
+  const sel = document.createElement('select'); sel.className = 'pil'; sel.id = 'tempo-maximo';
+  for (const s of (S.transmissao.tempos || [900])) {
+    const o = document.createElement('option'); o.value = s; o.textContent = (s / 60) + ' min';
+    if (s === atual) o.selected = true;
+    sel.appendChild(o);
+  }
+  sel.onchange = () => { tempoEscolhido = parseInt(sel.value, 10); };
+  const b = document.createElement('button'); b.className = 'pil on'; b.id = 'gravar-tempo';
+  b.textContent = 'Gravar';
+  b.onclick = async () => {
+    b.disabled = true;
+    const escolhido = tempoEscolhido === null ? parseInt(sel.value, 10) : tempoEscolhido;
+    const r = await api('/api/transmissao/config',
+      { method: 'POST', body: JSON.stringify({ tempo_maximo_s: escolhido }) });
+    b.disabled = false;
+    if (!r.ok) { alert((r.corpo && r.corpo.erro) || 'não deu para gravar'); return; }
+    tempoEscolhido = null;          // gravou: o servidor passa a ser a verdade
+    await carregarTransmissao();
+    desenharTela();
+  };
+  const acoes = document.createElement('div'); acoes.className = 'acoes-transmissao';
+  acoes.appendChild(b);
+  linha.appendChild(nome); linha.appendChild(sel); linha.appendChild(acoes);
+  cx.appendChild(linha);
+  p.appendChild(cx);
 }
 
 /* ---------------------------------------------------------------- rodape e utilidades */
@@ -636,6 +882,7 @@ function relogios() {
 function trocarTela(tela) {
   S.tela = tela; S.pagina = 1;
   document.querySelectorAll('.item[data-tela]').forEach((b) => b.classList.toggle('on', b.dataset.tela === tela));
+  if (tela === 'transmissao' || tela === 'configuracao' || tela === 'gravacoes') { carregarTransmissao().then(desenharTela); }
   if (tela === 'visualizar') { desenharVisualizar(); }
   else if (S.eventos.length === 0) dadosExtras().then(desenharTela);
   else desenharTela();
@@ -686,4 +933,11 @@ $('limpar').addEventListener('click', () => { S.selecionadas = new Set(); S.pagi
 $('todos-alertas').addEventListener('click', () => trocarTela('alertas'));
 $('ir-relatorios').addEventListener('click', () => trocarTela('relatorios'));
 setInterval(relogios, 1000); setInterval(() => { if (S.tela === 'visualizar') pintarEstados(); }, 2000);
+/* "estou aqui" da transmissao (10 s): e' o que mantem viva a sessao aberta nesta tela */
+setInterval(baterPonto, 10000);
+/* fechou a aba/navegador: avisa na hora; desligar o computador fica por conta do batimento */
+window.addEventListener('pagehide', () => {
+  for (const id of (S.minhas || [])) navigator.sendBeacon('/api/transmissao/' + id + '/encerrar');
+});
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') baterPonto(); });
 abrir();
