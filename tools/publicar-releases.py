@@ -21,7 +21,7 @@ TOKEN = (os.environ.get("GITHUB_TOKEN_FOR_RELEASES") or os.environ.get("GH_TOKEN
 DIST = pathlib.Path.home() / "lecsor-pipeline-video" / "desktop" / "dist"
 PAPEIS = ("Captura", "Terra", "Admin", "Cliente")
 # Ordem de publicacao: o PRIMEIRO e' o `latest` do GitHub. Nova versao entra na frente.
-VERSOES_PUBLICADAS = ("0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
+VERSOES_PUBLICADAS = ("0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
 
 
 def instaladores(versao: str) -> list:
@@ -36,6 +36,32 @@ def instaladores(versao: str) -> list:
     return [DIST / papel.lower() / f"LECSOR-{papel}-{versao}-x64.exe" for papel in PAPEIS]
 
 NOTAS = {
+    "0.6.2": (
+        "**Plug & play de verdade: o admin ja nasce com tudo liberado.**\n\n"
+        "O dono ficou preso em *\"e-mail ou senha invalidos\"* ao entrar com a conta de administrador "
+        "(18/11/2026: \"o admin tem acesso a tudo. ja deve ter por padrao todas as autorizacoes\"). A causa "
+        "foi medida: a instalacao estava falando com o **servidor LOCAL da propria maquina** "
+        "(`127.0.0.1:8765`), cujo banco nao tem usuario nenhum — e **com a senha correta o lado terra "
+        "aceitava** o login (HTTP 200, papel `admin`). Quem levava a instalacao para esse estado era o "
+        "item de menu *\"Subir servidor nesta maquina\"*, que trocava o endereco da tela para o loopback.\n\n"
+        "O que muda:\n\n"
+        "* o pacote nasce no papel `unico` **com o servidor local e as funcoes de captura ligados**: "
+        "instalar, entrar e capturar, sem tocar em menu;\n"
+        "* o item de menu virou *\"Subir o servidor local nesta maquina (captura — as telas e o login "
+        "continuam no lado terra)\"*: sobe o servidor, libera a captura e **nao** troca o endereco da tela;\n"
+        "* config gravado por instalacao anterior (endereco em loopback, captura desligada) e **corrigido "
+        "sozinho ao abrir** — nada de editar `config.json` na mao;\n"
+        "* login numa instalacao **sem usuario nenhum** deixou de acusar a senha: a tela diz que esta "
+        "falando com o servidor local desta maquina e abre o cadastro do **primeiro administrador**;\n"
+        "* a tela de erro distingue *\"o servidor LOCAL desta maquina nao respondeu\"* do lado terra e "
+        "informa qual e' o lado terra desta instalacao.\n\n"
+        "Provado na bancada: `tests/test-entrada-instalacao-vazia.py` (novo, API de verdade com banco "
+        "vazio), secao 5 do `tests/test-config-endereco.py` (3 casos do app `unico`) e o "
+        "`tests/test-instalador-plug-and-play.py` com 105 checagens verdes.\n\n"
+        "**Atualizacao:** instale por cima (o banco e os cadastros ficam). Se o login insistir em "
+        "*e-mail ou senha invalidos*, feche as janelas antigas do aplicativo e entre pela que carrega do "
+        "lado terra."
+    ),
     "0.6.1": (
         "**Transmissao ao vivo pela camera do PC de captura: o envio pedia um TAMANHO que a camera nao "
         "aceita.**\n\n"

@@ -19,6 +19,19 @@ sistema comprime na máquina e o vídeo comprimido sobe para o lado terra (`dest
 ## Instaladores prontos (Windows x64) — PLUG & PLAY desde a 0.2.0
 Na página de releases: https://github.com/gm-innovation/video_compressor/releases
 
+### 0.6.2 — **plug & play: o admin já nasce com tudo liberado**
+- **`LECSOR-0.6.2-x64.exe`** — mesmo aplicativo único, sem etapa manual depois de instalar.
+- O pacote nasce no papel `unico` **com o servidor local e as funções de captura ligados**; o item de
+  menu virou *"Subir o servidor local nesta maquina (captura — as telas e o login continuam no lado
+  terra)"* e **não troca mais o endereço da tela** (era ele que jogava o login no banco local vazio e
+  devolvia "e-mail ou senha invalidos" com a senha certa).
+- Config antigo (endereço em `127.0.0.1`, captura desligada) é **corrigido sozinho ao abrir**.
+- Entrada numa instalação **sem usuário nenhum** diz o que falta e abre o cadastro do primeiro
+  administrador, em vez de acusar a senha; a tela de erro distingue o servidor **local** do **lado
+  terra** e informa qual é o lado terra desta instalação.
+- Provas: `tests/test-entrada-instalacao-vazia.py` (novo), seção 5 do `tests/test-config-endereco.py`
+  e `tests/test-instalador-plug-and-play.py` (105 checagens).
+
 ### 0.6.1 — **a transmissão ao vivo pela câmera do PC de captura funciona**
 - **`LECSOR-0.6.1-x64.exe`** — mesmo aplicativo único da 0.6.0, com a captura corrigida.
 - O defeito: o envio pedia `1920x1080` (o padrão) e a webcam do PC só aceita 1280x720/640x480/640x360 →
