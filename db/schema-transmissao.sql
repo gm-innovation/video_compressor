@@ -56,3 +56,12 @@ CREATE TABLE IF NOT EXISTS configs_do_cliente (
   tempo_maximo_s INTEGER NOT NULL DEFAULT 900,
   atualizado_em  TEXT NOT NULL
 );
+
+-- Teto do PRODUTO (quem define e' o administrador): nenhum cliente passa disso, por mais que a tela
+-- dele ofereca mais. Uma linha so': chave = 'tempo_maximo_do_produto' (valor em segundos; ausente = sem
+-- teto). O cliente ve a lista JA' cortada pelo teto, e o servidor corta de novo no pedido.
+CREATE TABLE IF NOT EXISTS configs_do_produto (
+  chave         TEXT PRIMARY KEY,
+  valor         TEXT NOT NULL,
+  atualizado_em TEXT NOT NULL
+);

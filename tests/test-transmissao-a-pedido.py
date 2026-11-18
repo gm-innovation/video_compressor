@@ -185,6 +185,7 @@ def main() -> int:
         tok_cli2 = usuario(con, "cli2", "cliente2@pipeline.test", "cliente")
         tok_op = usuario(con, "ope1", "operacao@pipeline.test", "operador")
         tok_outro = usuario(con, "cli3", "cliente@outra.test", "cliente", cliente_id="outra")
+        tok_adm = usuario(con, "adm1", "admin@pipeline.test", "admin")
         con.commit()
         con.close()
 
@@ -390,6 +391,62 @@ def main() -> int:
                "cada transmissao fechada tem o motivo no historico")
         exigir(all("senha" not in json.dumps(t).lower() and "rtsp" not in json.dumps(t).lower() for t in hist),
                "o historico nao devolve endereco nem credencial de camera")
+
+        # --- 11) a OPERACAO ve os pedidos abertos e cancela (plano, Fase 2 P1) ----------------------
+        s, j = pedir("GET", base + "/api/transmissao/pedidos", token_sessao=tok_cli)
+        exigir(s == 403, f"o CLIENTE nao ve a lista da operacao ({s})")
+        s, _junto = pedir("POST", base + "/api/transmissao/iniciar", {"camera_id": "cam-02"},
+                          token_sessao=tok_cli2)
+        tid7 = (_junto.get("transmissao") or {}).get("id", "")
+        exigir(bool(tid7), f"o cliente pediu a cam-02 para o teste do cancelamento ({s})")
+        s, j = pedir("GET", base + "/api/transmissao/pedidos", token_sessao=tok_op)
+        exigir(s == 200, f"a operacao ve os pedidos abertos ({s} {j.get('erro')})")
+        pedidos = j.get("pedidos") or []
+        exigir(any(p["id"] == tid7 for p in pedidos), f"a lista traz o pedido do cliente ({len(pedidos)})")
+        exigir(all("senha" not in json.dumps(p).lower() and "rtsp" not in json.dumps(p).lower() for p in pedidos),
+               "a lista da operacao nao devolve credencial nem endereco de camera")
+        s, j = pedir("POST", base + f"/api/transmissao/{tid7}/cancelar", {}, token_sessao=tok_op)
+        exigir(s == 200 and j.get("cancelada") is True, f"a operacao cancela o pedido ({s} {j})")
+        exigir(j.get("camera_mandada_parar") is True,
+               "sem ninguem mais vendo, o bordo recebe a ordem de PARAR")
+        s, j2 = pedir("GET", base + "/api/transmissao?embarcacao=bancada", token_sessao=tok_op)
+        linha7 = [x for x in (j2.get("historico") or []) if x["id"] == tid7]
+        exigir(bool(linha7) and linha7[0]["estado"] == "cancelada", "o historico guarda 'cancelada'")
+        exigir("operacao" in (linha7[0].get("motivo") or "").lower(),
+               f"o historico diz QUEM cancelou ({linha7[0].get('motivo')})")
+        s, j = pedir("POST", base + f"/api/transmissao/{tid7}/cancelar", {}, token_sessao=tok_op)
+        exigir(s == 200 and j.get("cancelada") is False, f"cancelar de novo nao faz nada ({s} {j})")
+        s, j = pedir("POST", base + f"/api/transmissao/{tid7}/cancelar", {}, token_sessao=tok_cli)
+        exigir(s == 403, f"o CLIENTE nao cancela pela porta da operacao ({s})")
+        s, j = pedir("POST", base + "/api/transmissao/nao-existe/cancelar", {}, token_sessao=tok_op)
+        exigir(s == 404, f"cancelar o que nao existe devolve 404 ({s})")
+
+        # --- 12) TETO DO PRODUTO: so' o admin define, e o cliente nao passa dele (Fase 3 P2) --------
+        s, j = pedir("POST", base + "/api/transmissao/teto", {"tempo_maximo_s": 1800}, token_sessao=tok_op)
+        exigir(s == 403, f"a OPERACAO nao define o teto do produto ({s})")
+        s, j = pedir("POST", base + "/api/transmissao/teto", {"tempo_maximo_s": 123}, token_sessao=tok_adm)
+        exigir(s == 422, f"teto fora da lista e' recusado, nao arredondado ({s})")
+        s, j = pedir("POST", base + "/api/transmissao/teto", {"tempo_maximo_s": 300}, token_sessao=tok_adm)
+        exigir(s == 200 and j.get("teto_do_produto_s") == 300, f"o admin define o teto ({s} {j})")
+        s, j = pedir("GET", base + "/api/transmissao?embarcacao=bancada", token_sessao=tok_cli)
+        exigir(j.get("tempos") == [300], f"o cliente ve a lista JA' cortada pelo teto ({j.get('tempos')})")
+        exigir(j.get("teto_do_produto_s") == 300, "a tela do cliente sabe qual e' o teto do produto")
+        s, j = pedir("POST", base + "/api/transmissao/config", {"tempo_maximo_s": 1800}, token_sessao=tok_cli)
+        exigir(s == 422 and "liberado" in (j.get("erro") or ""),
+               f"o cliente NAO configura acima do teto ({s} {j})")
+        s, j = pedir("POST", base + "/api/transmissao/iniciar",
+                     {"camera_id": "cam-02", "segundos_max": 3600}, token_sessao=tok_cli)
+        linha_teto = j.get("transmissao") or {}
+        exigir(s == 201 and linha_teto.get("segundos_max") == 300,
+               f"pedido acima do teto e' cortado no teto ({s}, pediu 3600, saiu {linha_teto.get('segundos_max')})")
+        exigir(j.get("cortado_pelo_teto_do_produto") is True,
+               "o pedido diz que foi cortado pelo teto do produto")
+        s, j = pedir("POST", base + "/api/transmissao/teto", {"tempo_maximo_s": 0}, token_sessao=tok_adm)
+        exigir(s == 200 and j.get("teto_do_produto_s") == 0, f"o admin tira o teto ({s} {j})")
+        s, j = pedir("GET", base + "/api/transmissao?embarcacao=bancada", token_sessao=tok_cli)
+        tempos_volta = j.get("tempos") or []
+        exigir(300 in tempos_volta and 7200 in tempos_volta,
+               f"sem teto, a lista volta inteira ({tempos_volta})")
     finally:
         api.terminate()
         try:

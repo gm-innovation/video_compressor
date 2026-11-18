@@ -347,6 +347,19 @@ function telaClientes(t) {
     }));
     t.appendChild(caixa);
   }
+  /* O ENDERECO que vai junto com o acesso do cliente (plano, Fase 1 P1): quem recebe o login recebe o
+     link da tela — o cliente so' abre o endereco, sem manual e sem instalar nada. */
+  const endCliente = document.createElement('p'); endCliente.className = 'nota'; endCliente.id = 'end-cliente';
+  const urlCliente = location.origin + '/app/';
+  endCliente.appendChild(Object.assign(document.createElement('b'),
+    { textContent: 'Endereço da tela do cliente (manda junto com o acesso — não instala nada): ' }));
+  endCliente.appendChild(Object.assign(document.createElement('code'), { textContent: urlCliente }));
+  endCliente.appendChild(document.createTextNode(' '));
+  endCliente.appendChild(botao('copiar endereço', 'mini', async () => {
+    try { await navigator.clipboard.writeText(urlCliente); mostrarRecado('endereço copiado: ' + urlCliente, false); }
+    catch (e) { mostrarRecado('não consegui copiar — selecione o endereço e copie na mão', true); }
+  }));
+  t.appendChild(endCliente);
   t.appendChild(tabela([{ rotulo: 'Cliente', campo: 'nome' }, { rotulo: 'Identificador', campo: 'id' },
     { rotulo: 'Embarcações', campo: 'embarcacoes' }, { rotulo: 'Usuários', campo: 'usuarios' },
     { rotulo: 'Ativo', valor: (l) => (l.ativo ? 'sim' : 'não') }], A.clientes, 'nenhum cliente cadastrado'));
@@ -1004,6 +1017,80 @@ function telaEnvios(t) {
     t.appendChild(recado('Só a operação e o administrador enviam vídeo de teste.', true)); return;
   }
   const guardado = A.envioForm || {};
+
+  /* PEDIDOS DOS CLIENTES (plano, Fase 2 P1): a operacao ve o que o cliente pediu e cancela o que quiser.
+     Sem isto o pedido ficava so' no banco — ninguem na operacao enxergava nem podia parar. */
+  const caixaPedidos = document.createElement('div'); caixaPedidos.className = 'caixa-form'; caixaPedidos.id = 'env-pedidos';
+  caixaPedidos.appendChild(Object.assign(document.createElement('h2'),
+    { textContent: 'Transmissões pedidas pelos clientes' }));
+  const listaPedidos = document.createElement('div'); caixaPedidos.appendChild(listaPedidos);
+  caixaPedidos.appendChild(botao('atualizar lista', 'mini', () => carregarPedidos()));
+
+  /* TETO DO PRODUTO (plano, Fase 3 P2): o maximo que QUALQUER cliente pode escolher. So' o
+     administrador mexe; o cliente ve a lista dele ja' cortada por este numero. */
+  const linhaTeto = document.createElement('p'); linhaTeto.className = 'nota'; linhaTeto.id = 'env-teto';
+  if (A.usuario.papel === 'admin') {
+    linhaTeto.appendChild(Object.assign(document.createElement('b'),
+      { textContent: 'Teto do produto (o máximo que qualquer cliente pode escolher): ' }));
+    const selTeto = document.createElement('select'); selTeto.className = 'mini'; selTeto.id = 'teto-produto';
+    const OPCOES = [['0', 'sem teto'], ['300', '5 min'], ['900', '15 min'], ['1800', '30 min'],
+                    ['3600', '60 min'], ['7200', '120 min']];
+    for (const [v, r] of OPCOES) {
+      selTeto.appendChild(Object.assign(document.createElement('option'), { value: v, textContent: r }));
+    }
+    linhaTeto.appendChild(selTeto);
+    linhaTeto.appendChild(document.createTextNode(' '));
+    linhaTeto.appendChild(botao('gravar teto', 'mini', async () => {
+      const rr = await api('/api/transmissao/teto',
+                           { method: 'POST', body: JSON.stringify({ tempo_maximo_s: selTeto.value }) });
+      const dd = rr.corpo || {};
+      mostrarRecado(rr.ok
+        ? ('teto do produto = ' + (dd.teto_do_produto_s ? (dd.teto_do_produto_s / 60) + ' min' : 'sem teto'))
+        : ('recusado: ' + JSON.stringify(dd)), !rr.ok);
+      carregarPedidos();
+    }));
+  } else {
+    linhaTeto.textContent = 'só o administrador define o teto do produto.';
+  }
+  caixaPedidos.appendChild(linhaTeto);
+  t.appendChild(caixaPedidos);
+
+  function restanteEmTexto(seg) {
+    const s = Math.max(0, parseInt(seg || 0, 10));
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  }
+
+  async function carregarPedidos() {
+    listaPedidos.textContent = 'procurando os pedidos abertos...';
+    const r = await api('/api/transmissao/pedidos');
+    const d = r.corpo || {};
+    limpar(listaPedidos);
+    if (!r.ok) { listaPedidos.appendChild(recado('não consegui ler os pedidos: ' + JSON.stringify(d), true)); return; }
+    const selTeto = document.getElementById('teto-produto');
+    if (selTeto) selTeto.value = String(d.teto_do_produto_s || 0);
+    listaPedidos.appendChild(tabela([
+      { rotulo: 'Embarcação', valor: (l) => l.embarcacao_nome || l.embarcacao_id },
+      { rotulo: 'Câmera', valor: (l) => l.camera_rotulo || l.camera_id },
+      { rotulo: 'Quem pediu', valor: (l) => l.usuario_email },
+      { rotulo: 'Tempo', valor: (l) => Math.round((l.segundos_max || 0) / 60) + ' min' },
+      { rotulo: 'Estado', valor: (l) => (l.estado === 'no_ar' ? 'no ar' : 'pedido enviado')
+          + (l.gravando ? ' · gravando' : '') },
+      { rotulo: 'Restante', valor: (l) => restanteEmTexto(l.segundos_restantes) },
+      { rotulo: 'Cancelar', valor: (l) => botao('cancelar pedido', 'mini', async () => {
+          const rr = await api('/api/transmissao/' + encodeURIComponent(l.id) + '/cancelar',
+                               { method: 'POST', body: '{}' });
+          const dd = rr.corpo || {};
+          mostrarRecado(rr.ok
+            ? (dd.cancelada
+                ? ('pedido cancelado' + (dd.camera_mandada_parar
+                    ? ' — o bordo foi mandado parar' : ' — outro cliente continua vendo'))
+                : ('nada a cancelar: ' + (dd.motivo || '')))
+            : ('recusado: ' + JSON.stringify(dd)), !rr.ok);
+          carregarPedidos();
+        }) }], (d.pedidos || []), 'nenhum pedido aberto agora'));
+  }
+  carregarPedidos();
+
   const caixa = document.createElement('div'); caixa.className = 'caixa-form';
   caixa.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Teste de vídeo (bancada): comprimir, medir e publicar' }));
 

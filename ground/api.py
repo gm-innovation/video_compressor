@@ -158,6 +158,29 @@ def texto_do_tempo(segundos: int) -> str:
     return f"{max(1, int(segundos) // 60)} min"
 
 
+def tempo_maximo_do_produto() -> int:
+    """Teto do PRODUTO (o administrador define). ZERO quer dizer sem teto.
+
+    Sem a tabela (instalacao antiga que ainda nao subiu) ou com valor torto, vale "sem teto" — nunca
+    derruba a tela do cliente por causa de configuracao.
+    """
+    try:
+        with conexao() as c:
+            r = c.execute("SELECT valor FROM configs_do_produto WHERE chave='tempo_maximo_do_produto'").fetchone()
+        v = int(str(r["valor"]).strip()) if r else 0
+    except Exception:
+        return 0
+    return v if v in TEMPOS_DE_TRANSMISSAO else 0
+
+
+def aplicar_teto_do_produto(segundos: int) -> tuple[int, bool]:
+    """Corta o pedido do cliente no teto do produto. Devolve (segundos, foi_cortado)."""
+    teto = tempo_maximo_do_produto()
+    if teto and int(segundos) > teto:
+        return teto, True
+    return int(segundos), False
+
+
 def enfileirar_ordem(embarcacao_id: str, camera_id: str, fluxo_id: str, acao: str,
                      motivo: str = "", transmissao_id: str = "") -> dict:
     """Poe a ordem na fila do bordo. A acao NASCE no lado terra: o bordo so' obedece (sem tecnico)."""
@@ -1248,6 +1271,25 @@ class Handler(SimpleHTTPRequestHandler):
                 else:
                     linhas = c.execute("SELECT * FROM embarcacoes WHERE cliente_id=? ORDER BY nome", (u["cliente_id"],)).fetchall()
             return self._json(200, {"embarcacoes": [dict(x) for x in linhas]})
+        if rota == "/api/transmissao/pedidos":
+            # A OPERACAO ve os pedidos ABERTOS de todas as embarcacoes e cancela o que quiser (plano,
+            # Fase 2 P1: "a operacao ve e pode cancelar o pedido"). O cliente nunca ve esta lista.
+            if not u:
+                return self._json(401, {"erro": "entre no sistema"})
+            if u["papel"] not in PAPEL_ADMIN:
+                return self._json(403, {"erro": "esta lista e' da operacao"})
+            with conexao() as c:
+                abertas = [self._json_transmissao(dict(x)) for x in c.execute(
+                    """SELECT * FROM transmissoes WHERE estado IN ('pedida','no_ar')
+                       ORDER BY criada_em""").fetchall()]
+                nomes_emb = {r["id"]: r["nome"] for r in c.execute("SELECT id,nome FROM embarcacoes")}
+                nomes_cam = {r["id"]: r["rotulo"] for r in c.execute("SELECT id,rotulo FROM cameras")}
+            for a in abertas:
+                a["embarcacao_nome"] = nomes_emb.get(a["embarcacao_id"], a["embarcacao_id"])
+                a["camera_rotulo"] = nomes_cam.get(a["camera_id"], a["camera_id"])
+            return self._json(200, {"agora": em_iso(), "tempos": list(TEMPOS_DE_TRANSMISSAO),
+                                    "teto_do_produto_s": tempo_maximo_do_produto(),
+                                    "pedidos": abertas}, {"Cache-Control": "no-store"})
         if rota == "/api/transmissao":
             # A TELA DO CLIENTE: o que esta' no ar, o historico e o tempo configurado. O cliente so'
             # alcanca embarcacao da propria empresa; operacao/admin acompanham qualquer uma.
@@ -1267,9 +1309,15 @@ class Handler(SimpleHTTPRequestHandler):
                 hist = [dict(x) for x in c.execute(
                     """SELECT * FROM transmissoes WHERE embarcacao_id=?
                        ORDER BY criada_em DESC LIMIT 100""", (emb,)).fetchall()]
+            teto = tempo_maximo_do_produto()
+            oferecidos = [t for t in TEMPOS_DE_TRANSMISSAO if not teto or t <= teto] or [TEMPO_MAXIMO_PADRAO]
+            meu_tempo = self._tempo_do_cliente(u["id"])
+            if teto and meu_tempo > teto:
+                meu_tempo = teto          # o teto do produto manda
             return self._json(200, {"agora": em_iso(), "embarcacao_id": emb,
-                                    "tempos": list(TEMPOS_DE_TRANSMISSAO),
-                                    "tempo_maximo_s": self._tempo_do_cliente(u["id"]),
+                                    "tempos": oferecidos,
+                                    "tempo_maximo_s": meu_tempo,
+                                    "teto_do_produto_s": teto,
                                     "papel": u["papel"],
                                     "abertas": abertas,
                                     "historico": [self._json_transmissao(t) for t in hist]},
@@ -2294,6 +2342,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(422, {"erro": f"tempo invalido; escolha um de {list(TEMPOS_DE_TRANSMISSAO)}"})
             if seg not in TEMPOS_DE_TRANSMISSAO:
                 return self._json(422, {"erro": f"tempo fora da lista; escolha um de {list(TEMPOS_DE_TRANSMISSAO)}"})
+            seg, cortado_pelo_teto = aplicar_teto_do_produto(seg)   # o teto do produto manda na lista do cliente
             aberta = self._transmissao_aberta(u["email"], cam_id)
             if aberta:
                 # pedir de novo o que ja' esta' aberto nao abre uma segunda sessao (a tela pode
@@ -2318,6 +2367,7 @@ class Handler(SimpleHTTPRequestHandler):
                                      f"pedido do cliente {u['email']}", tid)
             auditar(u, "transmissao_pedida", f"{cam_id} ({texto_do_tempo(seg)})", self.client_address[0])
             return self._json(201, {"ok": True, "transmissao": self._json_transmissao(linha),
+                                    "cortado_pelo_teto_do_produto": bool(cortado_pelo_teto),
                                     "ordem": ordem}, {"Cache-Control": "no-store"})
         if rota.startswith("/api/transmissao/") and rota.endswith("/batimento"):
             # "estou aqui": enquanto a tela bate, a sessao vive. Sem batimento por
@@ -2347,6 +2397,30 @@ class Handler(SimpleHTTPRequestHandler):
                                        "nao havia mais ninguem vendo")
                 auditar(u, "transmissao_encerrada", f"{t['camera_id']}", self.client_address[0])
             return self._json(200, {"ok": True, "encerrada": bool(fechada)}, {"Cache-Control": "no-store"})
+        if rota.startswith("/api/transmissao/") and rota.endswith("/cancelar"):
+            # A OPERACAO cancela o pedido do cliente (plano, Fase 2 P1). Quem PEDE e' o cliente; quem
+            # cancela por cima e' a operacao/admin — e o HISTORICO guarda quem cancelou.
+            if not u:
+                return self._json(401, {"erro": "entre no sistema"})
+            if u["papel"] not in PAPEL_ADMIN:
+                return self._json(403, {"erro": "quem cancela o pedido e' a operacao"})
+            tid = rota[len("/api/transmissao/"):-len("/cancelar")]
+            with conexao() as c:
+                t = c.execute("SELECT * FROM transmissoes WHERE id=?", (tid,)).fetchone()
+            if not t:
+                return self._json(404, {"erro": "transmissao nao encontrada"})
+            fechada = fechar_transmissao(tid, "cancelada", f"cancelada pela operacao ({u['email']})")
+            if not fechada:
+                return self._json(200, {"ok": True, "cancelada": False,
+                                        "motivo": f"esta transmissao ja' estava {t['estado']}"},
+                                  {"Cache-Control": "no-store"})
+            parou = parar_se_ninguem_vendo(t["embarcacao_id"], t["camera_id"], t["fluxo_id"],
+                                           f"pedido cancelado pela operacao ({u['email']})")
+            auditar(u, "transmissao_cancelada", f"{t['camera_id']} de {t['usuario_email']}",
+                    self.client_address[0])
+            return self._json(200, {"ok": True, "cancelada": True,
+                                    "camera_mandada_parar": bool(parou)},
+                              {"Cache-Control": "no-store"})
         if rota.startswith("/api/transmissao/") and rota.endswith("/gravando"):
             # GRAVACAO NO LADO TERRA (decisao do dono, 17/11/2026): grava o video que JA' CHEGOU pela
             # rede, aqui na VPS — nao gasta banda do link da embarcacao. Enquanto grava, o corte por
@@ -2378,6 +2452,34 @@ class Handler(SimpleHTTPRequestHandler):
                     self.client_address[0])
             return self._json(200, {"ok": True, "gravando": False, "gravacao": r},
                               {"Cache-Control": "no-store"})
+        if rota == "/api/transmissao/teto":
+            # TETO DO PRODUTO (plano, Fase 3 P2): so' o ADMINISTRADOR define o maximo que qualquer
+            # cliente pode escolher. Zero quer dizer sem teto.
+            if not u:
+                return self._json(401, {"erro": "entre no sistema"})
+            if u["papel"] != "admin":
+                return self._json(403, {"erro": "o teto do produto e' do administrador"})
+            d = self._corpo()
+            bruto = str(d.get("tempo_maximo_s", "")).strip().lower()
+            if bruto in ("0", "", "sem teto", "nenhum", "none"):
+                valor = 0
+            else:
+                try:
+                    valor = int(bruto)
+                except Exception:
+                    return self._json(422, {"erro": f"informe um de {list(TEMPOS_DE_TRANSMISSAO)} "
+                                                    f"(segundos) ou 0 para sem teto"})
+                if valor not in TEMPOS_DE_TRANSMISSAO:
+                    return self._json(422, {"erro": f"teto fora da lista; escolha um de "
+                                                    f"{list(TEMPOS_DE_TRANSMISSAO)} ou 0"})
+            with conexao() as c:
+                c.execute("""INSERT INTO configs_do_produto (chave,valor,atualizado_em)
+                             VALUES ('tempo_maximo_do_produto',?,?) ON CONFLICT(chave)
+                             DO UPDATE SET valor=excluded.valor, atualizado_em=excluded.atualizado_em""",
+                          (str(valor), em_iso()))
+            auditar(u, "teto_do_produto_definido", (texto_do_tempo(valor) if valor else "sem teto"),
+                    self.client_address[0])
+            return self._json(200, {"ok": True, "teto_do_produto_s": valor}, {"Cache-Control": "no-store"})
         if rota == "/api/transmissao/config":
             # Tela de configuracao do cliente: o tempo maximo de cada transmissao.
             if not u:
@@ -2389,6 +2491,10 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(422, {"erro": f"informe o tempo em segundos; escolha um de {list(TEMPOS_DE_TRANSMISSAO)}"})
             if seg not in TEMPOS_DE_TRANSMISSAO:
                 return self._json(422, {"erro": f"tempo fora da lista; escolha um de {list(TEMPOS_DE_TRANSMISSAO)}"})
+            teto = tempo_maximo_do_produto()
+            if teto and seg > teto:
+                return self._json(422, {"erro": f"o maximo liberado para a sua empresa e' {texto_do_tempo(teto)}",
+                                        "teto_do_produto_s": teto})
             with conexao() as c:
                 c.execute("""INSERT INTO configs_do_cliente (usuario_id,tempo_maximo_s,atualizado_em)
                              VALUES (?,?,?) ON CONFLICT(usuario_id)

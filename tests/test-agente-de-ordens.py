@@ -11,7 +11,10 @@ Provas:
   3) o que a API local responde volta para o lado terra (o bordo nao inventa sucesso): a camera que
      nunca foi transmitida desta maquina devolve erro, e o erro CHEGA ao historico do cliente;
   4) a ordem de PARAR tambem e' executada e contada ao lado terra;
-  5) API local fora do ar: o agente conta a falha, nunca "atendida".
+  5) API local fora do ar: o agente conta a falha, nunca "atendida";
+  6) TETO DO BORDO: o envio que este agente ligou e ninguem mandou parar e' cortado pela PROPRIA
+     maquina de captura depois do teto (envio orfao) — e ele nao finge corte quando a API local nao
+     responde. O que ele ligou fica em disco e sobrevive ao reinicio do agente.
 """
 from __future__ import annotations
 
@@ -203,6 +206,70 @@ def main() -> int:
         s, j = pedir("GET", base_terra + "/api/ordens?embarcacao_id=bancada&espera=0", token_bordo=TOKEN)
         exigir(s == 200 and not j.get("ordens"),
                f"nao sobra ordem pendente na fila do lado terra ({j.get('ordens')})")
+
+        # --- 5) TETO DO BORDO: o envio orfao e' cortado pela propria maquina de captura --------------
+        # A API local aqui e' um servidor de mentira que RESPONDE 200: o que se prova e' a regra do
+        # agente (quando corta, o que ele chama e o que ele nao inventa), nao o ffmpeg da camera.
+        import importlib.util
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        recebidas: list[tuple] = []
+
+        class LocalDeMentira(BaseHTTPRequestHandler):
+            def do_POST(self):
+                n = int(self.headers.get("Content-Length") or 0)
+                try:
+                    corpo = json.loads(self.rfile.read(n) or b"{}")
+                except Exception:
+                    corpo = {}
+                recebidas.append((self.path, corpo))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": True, "fluxo_id": "cam-01"}).encode())
+
+            def log_message(self, *a):
+                pass
+
+        p_fake = porta_livre()
+        fake = HTTPServer(("127.0.0.1", p_fake), LocalDeMentira)
+        threading.Thread(target=fake.serve_forever, daemon=True).start()
+        local_fake = f"http://127.0.0.1:{p_fake}"
+
+        spec = importlib.util.spec_from_file_location("agente_do_bordo", RAIZ / "ground" / "agente_de_ordens.py")
+        ag = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ag)
+        os.environ["LECSOR_ORDENS_ESTADO"] = str(tmp / "ligados.json")
+
+        os.environ["LECSOR_TETO_DO_BORDO"] = "3600"
+        ag.LIGADOS.clear()
+        ag.LIGADOS["cam-01"] = {"camera_id": "cam-01", "desde": time.time()}
+        ag._salvar_ligados()
+        ag.LIGADOS.clear()
+        ag.LIGADOS.update(ag._carregar_ligados())
+        exigir(ag.LIGADOS.get("cam-01"),
+               "o que o agente ligou fica guardado em disco (sobrevive ao reinicio do agente)")
+        exigir(ag.vigiar_teto(local_fake) == [] and not recebidas,
+               "antes do teto o agente NAO derruba o envio (nem toca na camera)")
+
+        os.environ["LECSOR_TETO_DO_BORDO"] = "1"
+        ag.LIGADOS["cam-01"] = {"camera_id": "cam-01", "desde": time.time() - 5}
+        cortados = ag.vigiar_teto(local_fake)
+        exigir([c["camera_id"] for c in cortados] == ["cam-01"],
+               f"passado o teto, o agente corta o envio orfao sozinho ({cortados})")
+        exigir(any(p == "/api/cameras/desligar" and c.get("camera_id") == "cam-01" for p, c in recebidas),
+               f"o corte chama a API local de desligar ({recebidas})")
+        exigir(not ag.LIGADOS, "depois de cortar, o agente esquece o envio (nao corta duas vezes)")
+
+        os.environ["LECSOR_TETO_DO_BORDO"] = "1"
+        ag.LIGADOS["cam-09"] = {"camera_id": "cam-09", "desde": time.time() - 5}
+        cortados2 = ag.vigiar_teto("http://127.0.0.1:1")   # ninguem escutando nesta porta
+        exigir(cortados2 == [] and bool(ag.LIGADOS.get("cam-09")),
+               "API local fora do ar: o agente nao finge que cortou (vai tentar de novo)")
+        os.environ.pop("LECSOR_TETO_DO_BORDO", None)
+        os.environ.pop("LECSOR_ORDENS_ESTADO", None)
+        fake.shutdown()
     finally:
         for proc in (api_terra, api_bordo):
             if proc:

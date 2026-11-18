@@ -171,6 +171,28 @@ nada hoje manda ordem de terra para a máquina de captura.
 - **Não feito de propósito:** *retenção/limpeza das gravações* (fase 5, P2) — o dono fixou que **nada é
   apagado** do histórico; apagar por tempo contraria isso. Fica para decisão dele.
 
+### Segunda rodada (mesmo dia): o que faltava do plano foi feito
+
+- **Fase 2 P1 — a OPERAÇÃO vê e cancela o pedido:** `GET /api/transmissao/pedidos` (operador/admin: os
+  pedidos abertos de todas as embarcações) e `POST /api/transmissao/<id>/cancelar` (só operação/admin;
+  encerra a sessão, manda parar se ninguém mais estiver vendo e grava **quem cancelou** no histórico).
+  Na tela `/admin`, menu **"Enviar vídeo"**, o cartão **"Transmissões pedidas pelos clientes"** lista os
+  pedidos com o botão de cancelar. Prova de tela nova: `tests/e2e-operacao-cancela.py` (dois navegadores
+  de verdade — cliente pede, operador cancela — **9 checagens, rc=0**) + 11 checagens novas em
+  `tests/test-transmissao-a-pedido.py`.
+- **Fase 4 P1 — envio órfão cortado pelo PRÓPRIO bordo:** o agente lembra o que ligou (em
+  `ground/ordens/ligados.json`, sobrevive ao reboot da máquina de captura) e corta sozinho depois do
+  **teto do bordo** (`LECSOR_TETO_DO_BORDO`, padrão 2 h) quando o `parar` nunca chegou. Ele diz na cara
+  quando não conseguiu desligar e não finge corte. 6 checagens novas em `tests/test-agente-de-ordens.py`.
+- **Fase 1 P1 — o atalho do cliente:** a entrada do `/app` mostra o endereço da tela (com "copiar") e a
+  tela **Clientes** do admin mostra o mesmo endereço para mandar junto com o acesso.
+- **Fase 3 P2 — teto do produto pelo administrador:** `POST /api/transmissao/teto` (só admin; 5/15/30/60/120
+  min ou sem teto, valor fora da lista é recusado). O cliente vê a lista **já cortada** pelo teto e o
+  servidor corta de novo no pedido (`cortado_pelo_teto_do_produto`). Campo na tela "Enviar vídeo".
+  10 checagens novas em `tests/test-transmissao-a-pedido.py`.
+- **Continua NÃO feito de propósito:** retenção/limpeza das gravações (Fase 5 P2) — contraria o "nada é
+  apagado" fixado pelo dono; e o instalável PWA (Fase 1 P2), que o plano condiciona ao dono querer.
+
 ### Defeitos REAIS que as provas pegaram (todos corrigidos na causa)
 
 1. `_json` não retorna → um cliente **encerrava a sessão de outro**; agora `_transmissao_da_tela` devolve

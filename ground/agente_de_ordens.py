@@ -10,6 +10,9 @@ O que ele faz com cada ordem:
   - `iniciar` -> chama a API LOCAL (`/api/cameras/ligar`) e a camera entra no ar (mesma cadeia do
     "Enviar video": comprime nesta maquina e o fluxo comprimido vai para o lado terra);
   - `parar`   -> chama `/api/cameras/desligar` e a camera sai do ar.
+Alem disso, o agente guarda o que ELE ligou e corta sozinho depois do TETO (`LECSOR_TETO_DO_BORDO`,
+padrao 2 h): e' a rede de seguranca do envio ORFAO — a ordem foi entregue, o `parar` nunca chegou e a
+camera ficaria no ar para sempre. So' mexe no que ele mesmo ligou.
 O resultado (abriu? falhou? por que?) volta ao lado terra, e e' isso que aparece no historico do
 cliente.
 
@@ -38,6 +41,46 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parent.parent
 LOG_DIR = RAIZ / "ground" / "ordens" / "log"
 ESPERA_PADRAO = 20.0
+TETO_DO_BORDO_PADRAO = 7200.0      # 2 h: o maior tempo que o produto oferece ao cliente
+
+# O que ESTE agente ligou e ainda nao foi mandado parar: {fluxo: {"camera_id", "desde"}}.
+# Fica em DISCO (ground/ordens/ligados.json): se o agente reiniciar (reboot da maquina de captura),
+# ele ainda sabe o que estava no ar — sem isso, a camera ficaria ligada para sempre depois do reboot.
+LIGADOS: dict[str, dict] = {}
+
+
+def caminho_do_estado() -> Path:
+    """Onde fica o que este agente ligou (LECSOR_ORDENS_ESTADO troca o caminho — usado nos testes)."""
+    trocado = (os.environ.get("LECSOR_ORDENS_ESTADO") or "").strip()
+    return Path(trocado) if trocado else (LOG_DIR.parent / "ligados.json")
+
+
+def _carregar_ligados() -> dict:
+    """Le do disco o que ja' estava ligado. Arquivo torto/ausente nao derruba o agente."""
+    try:
+        d = json.loads(caminho_do_estado().read_text(encoding="utf-8"))
+        return {str(k): v for k, v in d.items() if isinstance(v, dict)}
+    except Exception:
+        return {}
+
+
+def _salvar_ligados() -> None:
+    """Guarda o que esta' ligado. Falhar aqui nao pode derrubar o atendimento das ordens."""
+    try:
+        alvo = caminho_do_estado()
+        alvo.parent.mkdir(parents=True, exist_ok=True)
+        alvo.write_text(json.dumps(LIGADOS, ensure_ascii=False, indent=1), encoding="utf-8")
+    except Exception as e:
+        _log(f"aviso: nao consegui guardar o que liguei ({type(e).__name__}: {e})")
+
+
+def teto_do_bordo() -> float:
+    """Teto LOCAL do bordo (segundos). Zero/valor torto volta ao padrao — nunca fica sem teto."""
+    try:
+        v = float(os.environ.get("LECSOR_TETO_DO_BORDO") or TETO_DO_BORDO_PADRAO)
+    except Exception:
+        v = TETO_DO_BORDO_PADRAO
+    return v if v > 0 else TETO_DO_BORDO_PADRAO
 
 
 def _log(linha: str) -> None:
@@ -102,8 +145,18 @@ def atender(ordem: dict, local: str, base: str, token: str) -> dict:
         erro = str(r.get("erro") or f"a API local respondeu {s}")
         detalhe = f"camera {cam_id}: {acao} falhou ({erro})"
         _log(detalhe)
-    corpo = {"estado": "atendida" if s == 200 and not r.get("erro") else "erro",
+    deu_certo = s == 200 and not r.get("erro")
+    corpo = {"estado": "atendida" if deu_certo else "erro",
              "resultado": detalhe, "fluxo_id": str(r.get("fluxo_id") or ordem.get("fluxo_id") or "")}
+    if deu_certo and acao == "iniciar":
+        fluxo = corpo["fluxo_id"] or cam_id
+        LIGADOS[fluxo] = {"camera_id": cam_id, "desde": time.time()}
+        _salvar_ligados()
+    elif acao == "parar":
+        # o lado terra mandou parar: sai da conta do teto (mesmo se a ordem falhou, nao insistimos)
+        for f in [f for f, d in LIGADOS.items() if d.get("camera_id") == cam_id or f == corpo["fluxo_id"]]:
+            LIGADOS.pop(f, None)
+        _salvar_ligados()
     # o resultado volta pelo mesmo lado terra que deu a ordem
     try:
         s2, r2 = _http("POST", f"{base}/api/ordens/{ordem['id']}/resultado", corpo, token=token)
@@ -113,6 +166,34 @@ def atender(ordem: dict, local: str, base: str, token: str) -> dict:
     if s2 != 200:
         _log(f"aviso: nao consegui contar o resultado da ordem {ordem['id']} ({s2} {r2.get('erro')})")
     return {"ok": corpo["estado"] == "atendida", "resultado": detalhe, "resposta_lado_terra": r2}
+
+
+def vigiar_teto(local: str) -> list[dict]:
+    """Corta no PROPRIO bordo o envio que passou do teto sem ordem viva (envio orfao).
+
+    O lado terra ja' corta pelo tempo da sessao; isto cobre o caso em que o `parar` nunca chegou
+    (a ordem foi atendida por outro caminho). So' mexe no que ESTE agente ligou, e diz na cara quando
+    nao conseguiu desligar — nunca finge que cortou.
+    """
+    agora, teto, cortados = time.time(), teto_do_bordo(), []
+    for fluxo, dado in list(LIGADOS.items()):
+        passou = agora - float(dado.get("desde") or agora)
+        if passou < teto:
+            continue
+        cam = str(dado.get("camera_id") or fluxo)
+        try:
+            s, r = _http("POST", local + "/api/cameras/desligar", {"camera_id": cam})
+        except Exception as e:
+            s, r = 0, {"erro": f"nao alcancei a API local ({type(e).__name__}: {e})"}
+        if s == 200 and not r.get("erro"):
+            _log(f"teto do bordo: a camera {cam} passou de {teto:g}s sem ordem viva — desliguei")
+            LIGADOS.pop(fluxo, None)
+            _salvar_ligados()
+            cortados.append({"fluxo": fluxo, "camera_id": cam})
+        else:
+            _log(f"teto do bordo: a camera {cam} passou de {teto:g}s sem ordem viva e eu NAO consegui "
+                 f"desligar ({r.get('erro') or s}) — vou tentar de novo")
+    return cortados
 
 
 def uma_rodada(base: str, local: str, token: str, emb: str, espera: float) -> int:
@@ -129,6 +210,7 @@ def uma_rodada(base: str, local: str, token: str, emb: str, espera: float) -> in
             atender(ordem, local, base, token)
         except Exception as e:   # uma ordem torta nao pode parar as outras
             _log(f"aviso: falha ao atender a ordem {ordem.get('id')} ({type(e).__name__}: {e})")
+    vigiar_teto(local)
     return len(ordens)
 
 
@@ -149,7 +231,10 @@ def principal() -> int:
         _log("sem lado terra, sem LECSOR_TOKEN_INGESTAO ou sem LECSOR_EMBARCACAO: o agente nao pergunta "
              "nada (a ordem do cliente nao chega nesta maquina). Configure o mesmo ambiente do envio.")
         return 2
-    _log(f"agente de ordens no ar: embarcacao {emb} · lado terra {base} · API local {local}")
+    LIGADOS.clear()
+    LIGADOS.update(_carregar_ligados())
+    _log(f"agente de ordens no ar: embarcacao {emb} · lado terra {base} · API local {local}"
+         + (f" · {len(LIGADOS)} envio(s) meu(s) no ar antes de eu comecar" if LIGADOS else ""))
     while True:
         try:
             uma_rodada(base, local, token, emb, espera)

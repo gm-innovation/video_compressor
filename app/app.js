@@ -892,6 +892,19 @@ function trocarTela(tela) {
 
 /* ---------------------------------------------------------------- eventos de interface */
 $('form-entrar').addEventListener('submit', entrar);
+
+/* O ENDERECO da tela do cliente (plano, Fase 1 P1): quem recebe o acesso recebe tambem o link — o
+   cliente so' abre o endereco, sem manual e sem instalar nada. */
+(function mostrarEndereco() {
+  const url = location.origin + '/app/';
+  const alvo = document.getElementById('endereco-texto');
+  if (alvo) alvo.textContent = url;
+  const b = document.getElementById('copiar-endereco');
+  if (b) b.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(url); b.textContent = 'copiado'; }
+    catch (e) { b.textContent = 'selecione e copie'; }
+  });
+})();
 document.querySelectorAll('.item[data-tela]').forEach((b) => b.addEventListener('click', () => trocarTela(b.dataset.tela)));
 document.querySelectorAll('#controles button[data-layout]').forEach((b) => b.addEventListener('click', () => {
   S.auto = false; S.layout = parseInt(b.dataset.layout, 10); S.pagina = 1;

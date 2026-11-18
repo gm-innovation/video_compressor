@@ -128,6 +128,10 @@ def main() -> int:
                 device_scale_factor=3, is_mobile=True, has_touch=True,
             )
             pag = ctx.new_page()
+            pag.goto(base + "/app/")
+            endereco = pag.locator("#endereco-texto").inner_text()
+            checar("a entrada mostra o endereco da tela (o cliente so' abre o link)",
+                   endereco.startswith("http") and endereco.endswith("/app/"), endereco)
             entrar(pag, base, "cliente@lecsor.test")
 
             # 1) o menu do cliente cabe e a tela nao estoura para o lado

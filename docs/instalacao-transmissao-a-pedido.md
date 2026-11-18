@@ -22,6 +22,10 @@ Este documento diz o que muda na máquina de captura e o que o cliente faz (nada
 A tela do cliente foi medida num telefone de 390 px de largura (iPhone 14 / Android médio):
 cabe sem beliscar a tela, e os botões têm 40 px de altura (alvo de dedo).
 
+O agente guarda em disco o que ele ligou (`ground/ordens/ligados.json`): se a máquina de captura
+reiniciar, ele ainda sabe o que estava no ar e corta sozinho o envio que passar do **teto do bordo**
+(`LECSOR_TETO_DO_BORDO`, padrão 2 h) sem ordem viva — é a rede de segurança do envio órfão.
+
 ## 2. O que instala na MÁQUINA DE CAPTURA (uma vez, no cliente)
 
 Duas peças, as duas no computador onde as câmeras estão ligadas:
@@ -79,7 +83,20 @@ fragmentado (sobrevive a queda) e vira `.mp4` ao parar. O download exige a sess�
 | A câmera na captura | ligou (status no sistema de captura) | "nao alcancei a API local" → o sistema de captura está parado |
 | A tela do cliente, alguns segundos depois | **no ar**, com tempo restante | passou de 90 s sem resposta: a tela avisa e a sessão morre sozinha |
 
-## 6. O que o cliente NÃO precisa
+## 6. Quem mais mexe (operação e administrador)
+
+- **Operação (tela `/admin`, menu "Enviar vídeo")**: em **"Transmissões pedidas pelos clientes"** a
+  operação vê os pedidos abertos de todas as embarcações (embarcação, câmera, quem pediu, tempo,
+  estado, quanto resta) e **cancela** o pedido de um cliente. Cancelar encerra **aquela** sessão e,
+  se ninguém mais estiver vendo, o bordo recebe a ordem de parar. O histórico guarda
+  "cancelada pela operação (e-mail)" — nada apagado.
+- **Administrador (mesma tela, mesmo menu)**: define o **teto do produto** — o maior tempo que
+  **qualquer** cliente pode escolher (5/15/30/60/120 min ou sem teto). O cliente vê a lista dele já
+  cortada pelo teto e o servidor corta de novo no pedido (pedido acima do teto sai com o teto).
+- **Endereço do cliente**: a tela **Clientes** mostra o endereço da tela do cliente
+  (`http://<lado-terra>/app/`) com o botão de copiar — vai junto com o acesso, sem manual.
+
+## 7. O que o cliente NÃO precisa
 
 - **Não** instala aplicativo (é web, inclusive no telefone).
 - **Não** precisa de técnico a bordo para iniciar a transmissão.
