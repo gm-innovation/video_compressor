@@ -200,6 +200,45 @@ checar(d["base"] == unico.get("base") and d["capturaLocal"] is True,
        f"(base={d['base']}, captura={d['capturaLocal']})")
 
 print()
+print("6) de onde vem a ENTRADA (dono, 18/11/2026: o app se organiza pelo usuário)")
+print()
+CASOS_ENTRADA = [
+    # config de captura local ligada, servidor local ligado
+    ({"base": "http://187.127.60.250:8085", "capturaLocal": True,
+      "servidorLocal": {"ligado": True, "portaApi": 8765}},
+     {"temUsuarios": False, "ladoTerraResponde": True}, "http://187.127.60.250:8085",
+     "servidor local VAZIO + lado terra respondendo: a entrada vem do lado terra (era o login caindo "
+     "no banco local vazio)"),
+    ({"base": "http://187.127.60.250:8085", "capturaLocal": True,
+      "servidorLocal": {"ligado": True, "portaApi": 8765}},
+     {"temUsuarios": False, "ladoTerraResponde": False}, "http://127.0.0.1:8765",
+     "bordo SEM internet (ninguem responde): a entrada continua a do servidor local, onde o primeiro "
+     "acesso e' criado na propria maquina"),
+    ({"base": "http://187.127.60.250:8085", "capturaLocal": True,
+      "servidorLocal": {"ligado": True, "portaApi": 8765}},
+     {"temUsuarios": True, "ladoTerraResponde": True}, "http://127.0.0.1:8765",
+     "servidor local com cadastro proprio: a entrada e' a dele"),
+    ({"base": "http://187.127.60.250:8085", "capturaLocal": False,
+      "servidorLocal": {"ligado": False, "portaApi": 8765}},
+     {"temUsuarios": None, "ladoTerraResponde": True}, "http://187.127.60.250:8085",
+     "sem captura nesta maquina: a entrada e' a do lado terra, como as outras telas"),
+]
+for i, (cfg, medido, esperado, prova) in enumerate(CASOS_ENTRADA, 1):
+    js = f"""
+const {{enderecoDaEntrada}} = require({json.dumps(str(RAIZ / 'desktop' / 'configuracao.js'))});
+console.log(JSON.stringify(enderecoDaEntrada({json.dumps(cfg)}, {json.dumps(medido)})));
+"""
+    r = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=60)
+    d = json.loads(r.stdout.strip().splitlines()[-1])
+    checar(d == esperado, f"entrada {i}: {prova} (endereco={d})")
+
+checar("await definirEnderecoDaEntrada();" in main and "for (const nome of config.abrirAoIniciar) abrir(nome);" in main
+       and main.index("await definirEnderecoDaEntrada();") < main.index("for (const nome of config.abrirAoIniciar) abrir(nome);"),
+       "main.js decide o endereco da entrada ANTES de abrir as janelas")
+checar("await definirEnderecoDaEntrada();" in main.split("async function recarregarTelas")[1][:200],
+       "e volta a decidir quando as telas sao recarregadas (subir/desligar a captura muda o lado)")
+
+print()
 if falhas:
     print(f"FALHOU — endereço do app: {len(falhas)} verificação(ões)")
     sys.exit(1)

@@ -19,6 +19,18 @@ sistema comprime na máquina e o vídeo comprimido sobe para o lado terra (`dest
 ## Instaladores prontos (Windows x64) — PLUG & PLAY desde a 0.2.0
 Na página de releases: https://github.com/gm-innovation/video_compressor/releases
 
+### 0.6.3 — **o app se organiza pelo usuário: a entrada não vem mais de um servidor local vazio**
+- **`LECSOR-0.6.3-x64.exe`** — corrige o relato de 18/11/2026: com a captura liberada nesta máquina, a
+  tela de **entrada** era servida pelo servidor **local** (`127.0.0.1`), cujo banco não tem usuário
+  nenhum → o login batia num banco vazio mesmo com a senha certa ("esta instalação ainda não tem usuário
+  nenhum").
+- Agora o app **mede** antes de abrir a janela: servidor local **sem** usuário e lado terra respondendo →
+  a entrada vem do **lado terra** (onde estão as contas); bordo **sem internet** → segue no servidor
+  local (primeiro acesso criado na própria máquina); servidor local **com** cadastro próprio → a entrada
+  é a dele. A escolha aparece no relatório (`enderecoEntrada=...`).
+- Provado no app de verdade (`tests/test_captura_liberada_no_app.py`: `base` e `enderecoEntrada` no lado
+  terra, `enderecoCaptura` em `127.0.0.1`) e em 4 casos de `tests/test-config-endereco.py` (seção 6).
+
 ### 0.6.2 — **plug & play: o admin já nasce com tudo liberado**
 - **`LECSOR-0.6.2-x64.exe`** — mesmo aplicativo único, sem etapa manual depois de instalar.
 - O pacote nasce no papel `unico` **com o servidor local e as funções de captura ligados**; o item de

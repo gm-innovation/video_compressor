@@ -21,7 +21,7 @@ TOKEN = (os.environ.get("GITHUB_TOKEN_FOR_RELEASES") or os.environ.get("GH_TOKEN
 DIST = pathlib.Path.home() / "lecsor-pipeline-video" / "desktop" / "dist"
 PAPEIS = ("Captura", "Terra", "Admin", "Cliente")
 # Ordem de publicacao: o PRIMEIRO e' o `latest` do GitHub. Nova versao entra na frente.
-VERSOES_PUBLICADAS = ("0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
+VERSOES_PUBLICADAS = ("0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
 
 
 def instaladores(versao: str) -> list:
@@ -36,6 +36,30 @@ def instaladores(versao: str) -> list:
     return [DIST / papel.lower() / f"LECSOR-{papel}-{versao}-x64.exe" for papel in PAPEIS]
 
 NOTAS = {
+    "0.6.3": (
+        "**O app se organiza pelo usuario: a tela de entrada nunca mais vem de um servidor local vazio.**\n\n"
+        "Relato do dono depois de instalar a 0.6.2 (18/11/2026): *\"tentei acessar como admin e continua nao "
+        "encontrando o meu cadastro: 'esta instalacao ainda nao tem usuario nenhum'... isso nao deveria mais "
+        "acontecer, o proprio app deveria se organizar de acordo com o usuario\"*.\n\n"
+        "Causa: com as funcoes de captura liberadas nesta maquina, a tela de **entrada** era servida pelo "
+        "**servidor local** (`127.0.0.1`) — e o banco local nao tem usuario nenhum (quem tem cadastro e' o "
+        "lado terra). O login entao batia num banco vazio, mesmo com a senha certa.\n\n"
+        "Agora o aplicativo **mede** antes de abrir a janela: consulta o servidor local desta maquina e o "
+        "lado terra e decide —\n\n"
+        "* servidor local **sem** usuario e lado terra respondendo: a entrada vem do **lado terra** (e' onde "
+        "estao as contas);\n"
+        "* bordo **sem internet** (ninguem responde): a entrada continua a do servidor local, onde o primeiro "
+        "acesso e' criado na propria maquina;\n"
+        "* servidor local **com** cadastro proprio: a entrada e' a dele.\n\n"
+        "A decisao mora em `enderecoDaEntrada()` (`configuracao.js`, testavel sem Electron) e a escolha "
+        "aparece no relatorio do app (`enderecoEntrada=...`).\n\n"
+        "Provado no aplicativo de verdade: `tests/test_captura_liberada_no_app.py` sobe o app com o servidor "
+        "local de banco vazio e o relatorio mostra `base=http://187.127.60.250:8085`, "
+        "`enderecoEntrada=http://187.127.60.250:8085` e `enderecoCaptura=http://127.0.0.1:<porta>` — telas no "
+        "lado terra, captura na maquina. Mais 4 casos em `tests/test-config-endereco.py` (secao 6).\n\n"
+        "**Atualizacao:** instale por cima. Se o login insistir em *e-mail ou senha invalidos*, feche as "
+        "janelas antigas do aplicativo antes de abrir esta versao."
+    ),
     "0.6.2": (
         "**Plug & play de verdade: o admin ja nasce com tudo liberado.**\n\n"
         "O dono ficou preso em *\"e-mail ou senha invalidos\"* ao entrar com a conta de administrador "

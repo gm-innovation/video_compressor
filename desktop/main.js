@@ -22,6 +22,8 @@ let PAPEL = 'bancada';
 try { PAPEL = process.env.LECSOR_PAPEL || require('./package.json').papel || 'bancada'; } catch (e) {}
 const PAPEIS = require('./papeis.json');
 const PADRAO = require('./config.json');
+// A decisao de ONDE a entrada vem (servidor local x lado terra) e' funcao pura, testada sem Electron.
+const { enderecoDaEntrada } = require('./configuracao');
 const servidor = require('./servidor');
 function caminhoConfig() { return path.join(app.getPath('userData'), 'config.json'); }
 function lerConfig() {
@@ -101,7 +103,8 @@ function buscarJson(url, ms = 6000) {
   });
 }
 
-function recarregarTelas() {
+async function recarregarTelas() {
+  await definirEnderecoDaEntrada();   // a entrada pode mudar de lado (servidor local vazio x lado terra)
   const abertas = Array.from(janelas.keys());
   for (const [, j] of janelas) { try { j.close(); } catch (e) {} }
   janelas.clear();
@@ -155,12 +158,35 @@ const SUPERFICIES = {
 };
 const janelas = new Map();
 
-// Endereco da entrada: com as funcoes de captura liberadas NESTA maquina, a entrada vem do servidor
-// LOCAL — e' ele que tem o banco desta maquina (a embarcacao pode estar sem internet, e o tecnico
-// precisa entrar para chegar em "Enviar video"). Fora disso, a entrada vem do lado terra, como as
-// outras telas. Ver `aplicarEnderecoDaCaptura()`.
+// Endereco da entrada: decidido com o que a MAQUINA responde (dono, 18/11/2026: "o próprio app deveria
+// se organizar de acordo com o usuário"). Com as funcoes de captura liberadas aqui, a entrada vem do
+// servidor LOCAL só quando ele tem cadastro proprio (bordo sem internet, onde o primeiro acesso e'
+// criado na propria maquina); se o servidor local esta vazio e o lado terra responde, a entrada vem do
+// lado terra — era ali que estavam as contas (o login caindo no banco local vazio dizia "esta
+// instalacao ainda nao tem usuario nenhum"). `enderecoEntrada` guarda a decisao; sem medicao ainda,
+// cai no comportamento antigo. Ver `enderecoDaEntrada()` em `configuracao.js` (testado sem Electron).
+let enderecoEntrada = null;
+async function definirEnderecoDaEntrada() {
+  const porta = (config.servidorLocal || {}).portaApi || 8765;
+  const local = 'http://127.0.0.1:' + porta;
+  let temUsuarios = null, ladoTerraResponde = null;
+  if (config.capturaLocal && config.servidorLocal && config.servidorLocal.ligado) {
+    // O servidor local pode estar subindo agora (python + banco levam alguns segundos): espera ele
+    // responder antes de decidir — decidir no escuro mandaria a entrada para o lado errado.
+    for (let i = 0; i < 6 && temUsuarios === null; i++) {
+      const pa = await buscarJson(local + '/api/primeiro-acesso', 2500);
+      if (pa.status === 200 && pa.json) temUsuarios = pa.json.precisa === false;
+      else await new Promise((r) => setTimeout(r, 1500));
+    }
+    const saude = await buscarJson(config.base + '/api/saude', 2500);
+    ladoTerraResponde = saude.status === 200;
+  }
+  enderecoEntrada = enderecoDaEntrada(config, { temUsuarios, ladoTerraResponde });
+  return enderecoEntrada;
+}
 function baseDaEntrada() {
   const porta = (config.servidorLocal || {}).portaApi || 8765;
+  if (enderecoEntrada) return enderecoEntrada;
   if (config.capturaLocal && config.servidorLocal && config.servidorLocal.ligado) {
     return 'http://127.0.0.1:' + porta;
   }
@@ -416,13 +442,17 @@ function aplicar() { for (const [, j] of janelas) j.setFullScreen(config.modoQui
 
 app.whenReady().then(async () => {
   menu();
-  for (const nome of config.abrirAoIniciar) abrir(nome);
   try { app.setLoginItemSettings({ openAtLogin: !!config.abrirComWindows }); } catch (e) {}
   if (config.servidorLocal && config.servidorLocal.ligado) {
     const r = servidor.subir(config);
     // Falha do servidor local não pode ser silenciosa: sem ele o PC de captura não lista câmera nenhuma.
     setTimeout(() => { if (r.erro) dialog.showErrorBox('Servidor local NAO subiu', r.erro); }, 1500);
   }
+  // Decide de onde a ENTRADA vem ANTES de abrir as janelas: com o servidor local vazio o login é o do
+  // lado terra (é onde estão as contas). Antes as telas abriam primeiro e a entrada vinha do servidor
+  // local — era o "esta instalação ainda não tem usuário nenhum" com a senha certa (18/11/2026).
+  await definirEnderecoDaEntrada();
+  for (const nome of config.abrirAoIniciar) abrir(nome);
   if (VERIFICAR) {
     // Prova de vida para o teste: cada janela respondeu? Nada de credencial no processo?
     setTimeout(async () => {
@@ -467,6 +497,7 @@ app.whenReady().then(async () => {
       }
       linhas.unshift(`config\tbase=${config.base}\tcapturaLocal=${!!config.capturaLocal}` +
         `\tservidorLocal=${!!(config.servidorLocal && config.servidorLocal.ligado)}` +
+        `\tenderecoEntrada=${enderecoEntrada || baseDaEntrada()}` +
         `\tenderecoCaptura=${process.env.LECSOR_CAPTURA_BASE || '(nenhum)'}` +
         `\tcaptura_servidor=${saude.status === 200 ? 'ok' : 'sem resposta (' + (saude.erro || saude.status) + ')'}`);
       const relatorio = 'VERIFICACAO\n' + linhas.join('\n') + '\n';

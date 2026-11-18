@@ -93,4 +93,22 @@ function resolver(PADRAO, PAPEIS, PAPEL, doUsuario) {
   return { config, herdado, corrigido };
 }
 
-module.exports = { resolver, ehLoopback };
+/// De onde vem a tela de ENTRADA. Regra do dono (18/11/2026): "o próprio app deveria se organizar de
+/// acordo com o usuário" — a entrada NUNCA pode vir de um servidor local que ainda não tem usuário
+/// nenhum quando o lado terra responde: era ali que estavam as contas, e o login caía num banco local
+/// vazio ("esta instalação ainda não tem usuário nenhum"). `medido` traz o que foi MEDIDO na máquina:
+///   temUsuarios         -> o servidor local desta máquina já tem cadastro próprio
+///   ladoTerraResponde   -> o lado terra desta instalação respondeu
+/// Sem nada medido (ou ninguém respondendo) mantém o servidor local: é o bordo sem internet, onde o
+/// primeiro acesso é criado na própria máquina e "Enviar vídeo" precisa abrir mesmo assim.
+function enderecoDaEntrada(config, medido) {
+  const m = medido || {};
+  const cfg = config || {};
+  const local = `http://127.0.0.1:${(cfg.servidorLocal || {}).portaApi || 8765}`;
+  if (!(cfg.capturaLocal && cfg.servidorLocal && cfg.servidorLocal.ligado)) return cfg.base;
+  if (m.temUsuarios === true) return local;
+  if (m.ladoTerraResponde === true) return cfg.base;
+  return local;
+}
+
+module.exports = { resolver, ehLoopback, enderecoDaEntrada };
