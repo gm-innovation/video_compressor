@@ -105,6 +105,7 @@ function buscarJson(url, ms = 6000) {
 
 async function recarregarTelas() {
   await definirEnderecoDaEntrada();   // a entrada pode mudar de lado (servidor local vazio x lado terra)
+  await esperarServidorLocal();       // idem para as telas de captura: só depois do servidor local responder
   const abertas = Array.from(janelas.keys());
   for (const [, j] of janelas) { try { j.close(); } catch (e) {} }
   janelas.clear();
@@ -184,6 +185,21 @@ async function definirEnderecoDaEntrada() {
   enderecoEntrada = enderecoDaEntrada(config, { temUsuarios, ladoTerraResponde });
   return enderecoEntrada;
 }
+// O servidor LOCAL desta maquina leva alguns segundos para responder (sobe python, banco e ffmpeg). As
+// telas de captura NAO podem abrir antes disso: a lista de cameras fica vazia e as rotas de captura
+// estouram com "Failed to fetch" (era o "nao esta' reconhecendo cameras", dono, 18/11/2026). Espera o
+// servidor local responder; se nao responder, as telas abrem e a propria tela diz o motivo.
+async function esperarServidorLocal(tentativas = 12, intervaloMs = 1000) {
+  if (!(config.capturaLocal && config.servidorLocal && config.servidorLocal.ligado)) return null;
+  const local = 'http://127.0.0.1:' + ((config.servidorLocal || {}).portaApi || 8765);
+  for (let i = 0; i < tentativas; i++) {
+    const s = await buscarJson(local + '/api/saude', 2000);
+    if (s.status === 200) return local;
+    await new Promise((r) => setTimeout(r, intervaloMs));
+  }
+  return null;
+}
+
 function baseDaEntrada() {
   const porta = (config.servidorLocal || {}).portaApi || 8765;
   if (enderecoEntrada) return enderecoEntrada;
@@ -452,6 +468,9 @@ app.whenReady().then(async () => {
   // lado terra (é onde estão as contas). Antes as telas abriam primeiro e a entrada vinha do servidor
   // local — era o "esta instalação ainda não tem usuário nenhum" com a senha certa (18/11/2026).
   await definirEnderecoDaEntrada();
+  // ...e espera o servidor LOCAL responder antes de abrir as telas de captura: abrir antes dele deixava
+  // a lista de câmeras vazia e as rotas de captura em "Failed to fetch" (dono, 18/11/2026).
+  await esperarServidorLocal();
   for (const nome of config.abrirAoIniciar) abrir(nome);
   if (VERIFICAR) {
     // Prova de vida para o teste: cada janela respondeu? Nada de credencial no processo?

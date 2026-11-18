@@ -271,19 +271,33 @@ class AplicativoEAvisarATela(unittest.TestCase):
         self.assertIn("urlDeCaptura", s)
         self.assertIn("fetchCaptura('/api/dispositivos')", s)
         self.assertIn("fetchCaptura('/api/ingestao/comprimir'", s)
-        # a leitura do cadastro de cameras tem de continuar no lado terra
-        self.assertIn("fetchCaptura('/api/cameras')", s)
+        # a leitura do cadastro de cameras tem de continuar no lado terra: `cameras` NAO esta em
+        # ROTAS_CAPTURA, entao `/api/cameras` sai por `fetch` puro (nunca pelo servidor local).
+        self.assertIn("await api('/api/cameras')", s)
+        self.assertNotIn("fetchCaptura('/api/cameras')", s)
 
     def test_nomes_das_telas(self):
         s = self.ler("admin/admin.js")
         self.assertIn("envios: ['Enviar vídeo',", s)
-        self.assertIn("Teste de vídeo (bancada)", s)
+        # a bancada e' da OPERACAO; a tela do ADMIN e' transmissao ao vivo (dono, 18/11/2026)
+        self.assertIn("Teste de vídeo (bancada): comprimir, medir e publicar + transmissão ao vivo", s)
+        self.assertIn("Transmitir ao vivo (contínuo)", s)
 
-    def test_qualidade_por_camera_esta_na_tela_de_envio(self):
+    def test_qualidade_por_camera_saiu_e_a_banda_do_vivo_ficou(self):
         s = self.ler("admin/admin.js")
-        for degrau in ("'1500k'", "'1200k'", "'1000k'", "'800k'", "'500k'", "'300k'"):
-            self.assertIn(degrau, s)
-        self.assertIn("env-qualidade-camera", s)
+        # a "Qualidade por câmera (lista fechada)" saiu da tela: uma escolha de banda, num lugar so'
+        self.assertNotIn("env-qualidade-camera", s)
+        self.assertNotIn("Qualidade por câmera (lista fechada) — vale no ar", s)
+        self.assertIn("const LISTA_ALVO = ['', '1500k', '1200k', '1000k', '800k', '500k', '300k']", s)
+        # a caixa de qualidade do ao vivo passa a mandar BANDA para a API
+        self.assertIn("bitrate: (qualidade.value || 'auto')", s)
+
+    def test_blocos_que_saem_da_tela_do_admin(self):
+        s = self.ler("admin/admin.js")
+        # pedidos, bancada e a lista de compressoes ficam so' com a OPERACAO (ehOperador)
+        for trecho in ("if (ehOperador) {\n" , "if (ehOperador) t.appendChild(legenda)",
+                       "if (!ehOperador) t.appendChild(caixaNoAr)"):
+            self.assertIn(trecho, s)
 
     def test_admin_continua_com_as_telas_de_cadastro(self):
         s = self.ler("admin/admin.js")

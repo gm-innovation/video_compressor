@@ -1018,13 +1018,25 @@ function telaEnvios(t) {
   }
   const guardado = A.envioForm || {};
 
-  /* PEDIDOS DOS CLIENTES (plano, Fase 2 P1): a operacao ve o que o cliente pediu e cancela o que quiser.
-     Sem isto o pedido ficava so' no banco — ninguem na operacao enxergava nem podia parar. */
-  const caixaPedidos = document.createElement('div'); caixaPedidos.className = 'caixa-form'; caixaPedidos.id = 'env-pedidos';
-  caixaPedidos.appendChild(Object.assign(document.createElement('h2'),
-    { textContent: 'Transmissões pedidas pelos clientes' }));
-  const listaPedidos = document.createElement('div'); caixaPedidos.appendChild(listaPedidos);
-  caixaPedidos.appendChild(botao('atualizar lista', 'mini', () => carregarPedidos()));
+  const ehOperador = A.usuario.papel === 'operador';
+
+  /* PEDIDOS DOS CLIENTES: SO' A OPERACAO ve' e cancela (dono, 18/11/2026: "nao vejo motivo pra
+     'Transmissoes pedidas pelos clientes' existir no admin, esse tipo de informacao e' irrelevante pra
+     mim, precisa estar apenas no canal do cliente"). O admin nao ve' esta lista; o cliente ja' tem a
+     dele (pedir/ver a transmissao) em app/app.js. Quem cancela o pedido de outra pessoa e' a operacao. */
+  let caixaPedidos = null, listaPedidos = null;
+  if (ehOperador) {
+    caixaPedidos = document.createElement('div'); caixaPedidos.className = 'caixa-form'; caixaPedidos.id = 'env-pedidos';
+    caixaPedidos.appendChild(Object.assign(document.createElement('h2'),
+      { textContent: 'Transmissões pedidas pelos clientes' }));
+    listaPedidos = document.createElement('div'); caixaPedidos.appendChild(listaPedidos);
+    caixaPedidos.appendChild(botao('atualizar lista', 'mini', () => carregarPedidos()));
+    t.appendChild(caixaPedidos);
+  }
+
+  /* TETO DO PRODUTO + TRILHA DAS GRAVACOES: caixa propria — vale para o admin e para a operacao. */
+  const caixaOps = document.createElement('div'); caixaOps.className = 'caixa-form'; caixaOps.id = 'env-operacao';
+  t.appendChild(caixaOps);
 
   /* TETO DO PRODUTO (plano, Fase 3 P2): o maximo que QUALQUER cliente pode escolher. So' o
      administrador mexe; o cliente ve a lista dele ja' cortada por este numero. */
@@ -1052,17 +1064,16 @@ function telaEnvios(t) {
   } else {
     linhaTeto.textContent = 'só o administrador define o teto do produto.';
   }
-  caixaPedidos.appendChild(linhaTeto);
+  caixaOps.appendChild(linhaTeto);
 
   /* TRILHA DAS GRAVACOES (dono, 18/11/2026): a VPS guarda o arquivo so' ate' o cliente baixar e sair
      — o que FICA e' esta trilha: quem gravou, quanto tinha, se baixou e quando o arquivo foi apagado. */
   const tituloGrav = document.createElement('p'); tituloGrav.className = 'nota'; tituloGrav.id = 'env-grav-titulo';
   tituloGrav.textContent = 'Gravações (o arquivo só fica na VPS até o cliente baixar e sair da tela; '
     + 'o histórico fica):';
-  caixaPedidos.appendChild(tituloGrav);
+  caixaOps.appendChild(tituloGrav);
   const listaGravacoes = document.createElement('div'); listaGravacoes.id = 'env-gravacoes';
-  caixaPedidos.appendChild(listaGravacoes);
-  t.appendChild(caixaPedidos);
+  caixaOps.appendChild(listaGravacoes);
 
   function restanteEmTexto(seg) {
     const s = Math.max(0, parseInt(seg || 0, 10));
@@ -1074,12 +1085,17 @@ function telaEnvios(t) {
   function horaCurta(carimbo) { return carimbo ? (carimbo + '').replace('T', ' ').slice(0, 19) : '—'; }
 
   async function carregarPedidos() {
-    listaPedidos.textContent = 'procurando os pedidos abertos...';
+    if (listaPedidos) listaPedidos.textContent = 'procurando os pedidos abertos...';
     const r = await api('/api/transmissao/pedidos');
     const d = r.corpo || {};
-    limpar(listaPedidos);
+    if (listaPedidos) limpar(listaPedidos);
     limpar(listaGravacoes);
-    if (!r.ok) { listaPedidos.appendChild(recado('não consegui ler os pedidos: ' + JSON.stringify(d), true)); return; }
+    if (!r.ok) {
+      // o admin NAO tem a lista de pedidos (so' a operacao tem): a falha aparece junto das gravacoes.
+      const aviso = recado('não consegui ler os pedidos/gravações: ' + JSON.stringify(d), true);
+      (listaPedidos || listaGravacoes).appendChild(aviso);
+      return;
+    }
     const selTeto = document.getElementById('teto-produto');
     if (selTeto) selTeto.value = String(d.teto_do_produto_s || 0);
     listaGravacoes.appendChild(tabela([
@@ -1095,7 +1111,7 @@ function telaEnvios(t) {
           : (l.apagada_em ? 'apagado em ' + horaCurta(l.apagada_em) : 'ainda não pronto')) },
     ], (d.gravacoes || []), 'nenhuma gravação ainda'));
 
-    listaPedidos.appendChild(tabela([
+    if (listaPedidos) listaPedidos.appendChild(tabela([
       { rotulo: 'Embarcação', valor: (l) => l.embarcacao_nome || l.embarcacao_id },
       { rotulo: 'Câmera', valor: (l) => l.camera_rotulo || l.camera_id },
       { rotulo: 'Quem pediu', valor: (l) => l.usuario_email },
@@ -1118,8 +1134,15 @@ function telaEnvios(t) {
   }
   carregarPedidos();
 
+  /* O QUE FICA NA TELA DO ADMIN (dono, 18/11/2026: "por que esses testes de video estao na minha tela?
+     isso nao e' necessario e ainda da' o aspecto de baguncado"): transmissao ao vivo, teto do produto e a
+     trilha das gravacoes. O caminho de bancada (comprimir, medir, publicar) fica so' com a OPERACAO. */
+  const LISTA_ALVO = ['', '1500k', '1200k', '1000k', '800k', '500k', '300k'];
+
   const caixa = document.createElement('div'); caixa.className = 'caixa-form';
-  caixa.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Teste de vídeo (bancada): comprimir, medir e publicar' }));
+  caixa.appendChild(Object.assign(document.createElement('h2'),
+    { textContent: ehOperador ? 'Teste de vídeo (bancada): comprimir, medir e publicar + transmissão ao vivo'
+                              : 'Transmitir ao vivo (contínuo)' }));
 
   // Para onde vão os fluxos DESTA máquina (PC de captura -> lado terra). Endereço de serviço interno:
   // a API só entrega para a operação, e o navegador do cliente nunca recebe este dado.
@@ -1132,56 +1155,18 @@ function telaEnvios(t) {
       : 'Nada sai desta máquina: o repasse para o lado terra não está configurado (config.json: destinoSrt).';
   }).catch((e) => { linhaDestino.textContent = 'não consegui falar com o servidor: ' + e.message; });
 
-  /* Qualidade POR CAMERA na propria tela "Enviar video" (pedido do dono, 16/11/2026: "tem que ser em
-     'Enviar video', que e' onde selecionamos a fonte do video"). Lista FECHADA (1500k...300k) — a
-     mesma da tela de cameras; escolher aqui vale no ar: o servidor reabre o envio SO' daquela camera. */
-  const caixaQualidade = document.createElement('div');
-  caixaQualidade.className = 'nota'; caixaQualidade.id = 'env-qualidade-camera';
-  caixaQualidade.textContent = 'qualidade por câmera: procurando as câmeras cadastradas...';
-  caixa.appendChild(caixaQualidade);
-  const LISTA_ALVO = ['', '1500k', '1200k', '1000k', '800k', '500k', '300k'];
-  fetchCaptura('/api/cameras').then((r) => r.json()).then((d) => {
-    const cams = (d && d.cameras) || [];
-    limpar(caixaQualidade);
-    if (!cams.length) {
-      caixaQualidade.textContent = 'qualidade por câmera: nenhuma câmera cadastrada ainda — cadastre em Câmeras.';
-      return;
-    }
-    caixaQualidade.appendChild(Object.assign(document.createElement('b'), { textContent: 'Qualidade por câmera (lista fechada) — vale no ar: ' }));
-    for (const c of cams) {
-      const cx = document.createElement('span');
-      cx.style.display = 'inline-flex'; cx.style.gap = '.35rem'; cx.style.alignItems = 'center';
-      cx.style.marginRight = '.9rem'; cx.style.whiteSpace = 'nowrap';
-      cx.appendChild(Object.assign(document.createElement('span'), { textContent: c.rotulo || c.id }));
-      const sel = document.createElement('select'); sel.className = 'mini';
-      for (const op of LISTA_ALVO) {
-        sel.appendChild(Object.assign(document.createElement('option'), { value: op,
-          textContent: op ? op.replace('k', ' kbps') : 'padrão da tela', selected: (c.alvo || '') === op }));
-      }
-      if (c.alvo && !LISTA_ALVO.includes(c.alvo)) {
-        sel.appendChild(Object.assign(document.createElement('option'), { value: c.alvo, textContent: c.alvo + ' (fora da lista)', selected: true }));
-      }
-      cx.appendChild(sel);
-      cx.appendChild(botao('aplicar', 'mini', async () => {
-        const rr = await api('/api/cameras/' + encodeURIComponent(c.id) + '/alvo', { method: 'POST', body: JSON.stringify({ alvo: sel.value }) });
-        const dd = rr.corpo || {};
-        caixaQualidade.appendChild(recado(rr.ok
-          ? ('qualidade de ' + (c.rotulo || c.id) + ' = ' + (dd.alvo || 'padrão da tela') + ' — ' + (dd.aplicado ? 'aplicada no ar (envio reaberto)' : (dd.motivo || '')))
-          : ('recusado: ' + JSON.stringify(dd)), !rr.ok));
-      }));
-      caixaQualidade.appendChild(cx);
-    }
-  }).catch((e) => {
-    caixaQualidade.textContent = 'qualidade por câmera: não consegui falar com o servidor (' + e.message + ')';
-  });
+  /* A "Qualidade por câmera (lista fechada)" SAIU da tela (dono, 18/11/2026). A banda do que esta' no ar
+     agora e' escolhida na propria transmissao ao vivo, abaixo — uma escolha, num lugar so'. */
 
   const linha1 = document.createElement('div'); linha1.className = 'linha-form'; caixa.appendChild(linha1);
   const rm = document.createElement('div'); rm.appendChild(Object.assign(document.createElement('label'), { textContent: 'De onde vem o vídeo' }));
   const modo = document.createElement('select'); modo.id = 'env-modo';
-  for (const [v, r] of [['arquivo', 'arquivo do computador'], ['url', 'link (http ou YouTube)'],
-                        ['camera', 'câmera ligada nesta máquina (ao vivo)'],
-                        ['sintetica', 'teste sintético (sem câmera nenhuma)'],
-                        ['radar', 'radar da embarcação (sinal .drq ou pela rede)']]) {
+  const MODOS = [['arquivo', 'arquivo do computador'], ['url', 'link (http ou YouTube)'],
+                 ['camera', 'câmera ligada nesta máquina (ao vivo)'],
+                 ['sintetica', 'teste sintético (sem câmera nenhuma)'],
+                 ['radar', 'radar da embarcação (sinal .drq ou pela rede)']];
+  // bancada (arquivo/link) so' aparece para a OPERACAO: a tela do admin e' transmissao ao vivo.
+  for (const [v, r] of MODOS.filter(([vv]) => ehOperador || (vv !== 'arquivo' && vv !== 'url'))) {
     const o = document.createElement('option'); o.value = v; o.textContent = r; modo.appendChild(o);
   }
   rm.appendChild(modo); linha1.appendChild(rm);
@@ -1202,12 +1187,29 @@ function telaEnvios(t) {
 
   const linha2 = document.createElement('div'); linha2.className = 'linha-form'; caixa.appendChild(linha2);
   const rotulo = campo(linha2, 'env-rotulo', 'Rótulo na tela', '');
-  const rq = document.createElement('div'); rq.appendChild(Object.assign(document.createElement('label'), { textContent: 'Qualidade (quanto comprimir)' }));
+  /* QUALIDADE (dono, 18/11/2026: "diferente dos testes de video, nao consigo escolher a qualidade do
+     video, continua com a caixa de selecao antiga, sem a selecao de 1500 a 300 kbps"). Fonte VIVA escolhe
+     BANDA na lista fechada (a mesma do radar e do alvo por camera); arquivo/link (bancada) continuam
+     escolhendo CRF — ali "qualidade" e' compressao, nao banda. */
+  const rq = document.createElement('div');
+  const rotuloQualidade = Object.assign(document.createElement('label'), { textContent: 'Qualidade (banda do vídeo)' });
+  rq.appendChild(rotuloQualidade);
   const qualidade = document.createElement('select'); qualidade.id = 'env-qualidade';
-  const ops = [['auto', 'automático — maior compressão sem perder qualidade (recomendado)'],
-               ['crf26', 'melhor imagem (comprime menos)'], ['crf30', 'equilibrado'],
-               ['crf34', 'máxima compressão (imagem mais simples)']];
-  for (const [v, r] of ops) { const o = document.createElement('option'); o.value = v; o.textContent = r; qualidade.appendChild(o); }
+  const QUALIDADE_CRF = [['auto', 'automático — maior compressão sem perder qualidade (recomendado)'],
+                         ['crf26', 'melhor imagem (comprime menos)'], ['crf30', 'equilibrado'],
+                         ['crf34', 'máxima compressão (imagem mais simples)']];
+  const ehVivo = () => (modo.value === 'camera' || modo.value === 'sintetica' || modo.value === 'radar');
+  const preencherQualidade = () => {
+    const querido = qualidade.value;
+    qualidade.innerHTML = '';
+    const lista = ehVivo() ? LISTA_ALVO.map((v) => [v, v ? v.replace('k', ' kbps') : 'padrão da tela'])
+                           : QUALIDADE_CRF;
+    for (const [v, r] of lista) {
+      const o = document.createElement('option'); o.value = v; o.textContent = r; qualidade.appendChild(o);
+    }
+    qualidade.value = lista.some(([v]) => v === querido) ? querido : (ehVivo() ? '' : 'auto');
+    rotuloQualidade.textContent = ehVivo() ? 'Qualidade (banda do vídeo)' : 'Qualidade (quanto comprimir)';
+  };
   rq.appendChild(qualidade); linha2.appendChild(rq);
   const rf = document.createElement('div'); rf.appendChild(Object.assign(document.createElement('label'), { textContent: 'Quadros por segundo' }));
   const fps = document.createElement('select'); fps.id = 'env-fps';
@@ -1350,7 +1352,7 @@ function telaEnvios(t) {
 
   linha3.appendChild(btnComprimir);
   const btnPublicar = botao('2) Publicar no ar (a última compressão)', '', () => {});
-  linha3.appendChild(btnPublicar);
+  if (ehOperador) linha3.appendChild(btnPublicar);   // publicar a compressão é bancada (só a operação)
   const progresso = document.createElement('div'); progresso.className = 'sub'; progresso.id = 'env-progresso';
   linha3.appendChild(progresso);
   const dizer = (txt) => { A.envioProgresso = txt; progresso.textContent = txt; };
@@ -1366,7 +1368,7 @@ function telaEnvios(t) {
     'original (1,000 = idêntico) · No ar = desde quando o vídeo comprimido está publicado.' +
         ' · PISO: compressão de pelo menos 73% e qualidade de pelo menos 0,9733 nominal, com margem de 0,002 ' +
     '(aceita 0,9713: 0,9720 numa compressão de 78% entra) — abaixo disso a linha fica com ✗.';
-  t.appendChild(legenda);
+  if (ehOperador) t.appendChild(legenda);   // a legenda de medições (CRF, SSIM, pisos) é da bancada
 
   const guardar = () => { A.envioForm = { modo: modo.value, url: url.value, rotulo: rotulo.value,
     qualidade: qualidade.value, fps: fps.value, audio: audio.value, repetir: repetir.value,
@@ -1381,9 +1383,27 @@ function telaEnvios(t) {
     if (guardado.segundos) segundos.value = guardado.segundos;
   }
   let semCamera = false;                 // nenhuma camera nesta maquina (nunca finge uma)
-  const preencherDispositivos = async () => {
+  const preencherDispositivos = async (tentativa = 0) => {
     if (dispositivo.dataset.pronto) return;
-    const r = await fetchCaptura('/api/dispositivos');
+    const MOTIVO = 'Câmera ligada NESTA máquina aparece com o Servidor local no ar e base http://127.0.0.1:8765 '
+      + '— o menu do aplicativo tem "Testar câmeras desta máquina".';
+    let r = null;
+    try {
+      r = await fetchCaptura('/api/dispositivos');
+    } catch (e) {
+      // O SERVIDOR LOCAL PODE ESTAR SUBINDO (python + banco + ffmpeg levam alguns segundos) ou ter caído.
+      // Antes isto deixava a caixa VAZIA e calada — era o "não está reconhecendo câmeras" (18/11/2026).
+      if (tentativa < 6) { setTimeout(() => preencherDispositivos(tentativa + 1), 1500); return; }
+      dispositivo.innerHTML = '';
+      const o = document.createElement('option');
+      o.value = ''; o.textContent = '— lista de câmeras indisponível —'; o.disabled = true;
+      dispositivo.appendChild(o);
+      semCamera = true;
+      avisoDisp.style.display = '';
+      avisoDisp.textContent = 'não consegui falar com o servidor que lista as câmeras (' + e.message + '). ' + MOTIVO;
+      btnComprimir.disabled = (modo.value === 'camera');
+      return;                      // sem `pronto`: quando o servidor subir, a próxima troca de modo tenta de novo
+    }
     if (!r.ok) {
       // Antes voltava calada: com o endereco apontado para o lado terra e sem sessao a API responde
       // erro, a lista ficava vazia e nada dizia o motivo (foi o "nao acha as cameras" no cliente).
@@ -1446,6 +1466,9 @@ function telaEnvios(t) {
     rv.style.display = modo.value === 'camera' ? '' : 'none';
     linhaRadar.style.display = ehRadar ? '' : 'none';
     rs.style.display = 'none';            // fonte viva: envio CONTÍNUO, sem tempo determinado
+    cy.style.display = ehViva ? 'none' : '';   // transmissão contínua não repete em laço
+    // a lista de qualidade muda com o modo: fonte viva escolhe BANDA (1500k...300k), bancada escolhe CRF
+    preencherQualidade();
     // streaming não tem "comprimir e medir" nem "publicar depois": é ao vivo, direto
     btnComprimir.textContent = ehRadar ? 'Transmitir o radar ao vivo' : (ehViva ? 'Transmitir ao vivo (contínuo)' : '1) Comprimir e medir');
     btnComprimir.disabled = (modo.value === 'camera' && semCamera);
@@ -1454,9 +1477,19 @@ function telaEnvios(t) {
   };
   modo.onchange = () => { trocarModo(); guardar(); };
   trocarModo();
+  // O guardado volta DEPOIS do primeiro desenho: a lista de qualidade muda com o modo (banda no vivo,
+  // CRF na bancada) e um valor salvo so' pode ser reposto quando as opcoes certas ja' estao na tela.
+  if (LISTA_ALVO.includes(guardado.qualidade || '') && ehVivo()) qualidade.value = guardado.qualidade;
 
-  const lista = document.createElement('div'); t.appendChild(lista);
+  const lista = document.createElement('div'); if (ehOperador) t.appendChild(lista);
   let ultimos = [];
+
+  /* NO AR AGORA (tela do ADMIN): a bancada sai, mas o envio contínuo que o próprio admin ligou precisa
+     de um botão de PARAR — sem isto o "Transmitir ao vivo" não teria como ser encerrado. */
+  const caixaNoAr = document.createElement('div'); caixaNoAr.className = 'caixa-form'; caixaNoAr.id = 'env-no-ar';
+  caixaNoAr.appendChild(Object.assign(document.createElement('h2'), { textContent: 'No ar agora' }));
+  const listaNoAr = document.createElement('div'); caixaNoAr.appendChild(listaNoAr);
+  if (!ehOperador) t.appendChild(caixaNoAr);
 
   const montarTabela = (linhas, ingestoes) => {
     const porFluxo = {};
@@ -1502,12 +1535,32 @@ function telaEnvios(t) {
     ], linhas, 'Nenhuma compressão ainda: escolha o vídeo e clique em "Comprimir e medir".');
   };
 
+  const pararIngestao = async (id) => {
+    await fetchCaptura('/api/ingestao/parar', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id, remover: false }) });
+    carregar();
+  };
+  const tabelaNoAr = (ing) => tabela([
+    { rotulo: 'Rótulo', valor: (l) => l.rotulo || l.fluxo_id },
+    { rotulo: 'Fluxo', valor: (l) => l.fluxo_id },
+    { rotulo: 'Desde', valor: (l) => horaCurta(l.criado_em) },
+    { rotulo: 'Banda', valor: (l) => (l.bitrate_alvo || '—') + (l.fps ? ' · ' + numOu(l.fps) + ' fps' : '') },
+    { rotulo: 'Estado', valor: (l) => (l.estado === 'no_ar' ? 'no ar' : (l.estado || '—')) },
+    { rotulo: 'Parar', valor: (l) => botao('parar', 'mini', () => pararIngestao(l.id)) },
+  ], (ing || []).filter((l) => l.estado === 'no_ar' || l.estado === 'iniciando'), 'nada no ar agora');
+
   const carregar = async () => {
+    const ri = await fetchCaptura('/api/ingestoes');
+    const ing = ri.ok ? ((await ri.json()).ingestoes || []) : [];
+    if (!ehOperador) {
+      limpar(listaNoAr);
+      if (!ri.ok) { listaNoAr.appendChild(recado('não consegui ler os envios desta máquina.', true)); return; }
+      listaNoAr.appendChild(tabelaNoAr(ing));
+      return;
+    }
     const r = await fetchCaptura('/api/compressoes');
     if (!r.ok) { limpar(lista); lista.appendChild(recado('Sem permissão para ver as compressões.', true)); return; }
     const d = await r.json();
-    const ri = await fetchCaptura('/api/ingestoes');
-    const ing = ri.ok ? ((await ri.json()).ingestoes || []) : [];
     ultimos = d.compressoes || [];
     limpar(lista);
     lista.appendChild(montarTabela(ultimos, ing));
@@ -1569,6 +1622,7 @@ function telaEnvios(t) {
       dizer('ligando o envio contínuo de ' + nomeFonte + '… (sem tempo determinado: só para quando você mandar)');
       fetchCaptura('/api/ingestao/ao-vivo', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tipo: tipo, dispositivo: dispositivo.value, fps: Number(qf) || 30,
+          bitrate: (qualidade.value || 'auto'),          // banda escolhida na tela (1500k...300k)
           rotulo: r || nomeFonte }) })
         .then(async (x) => ({ s: x.status, j: await x.json() }))
         .then(({ s, j }) => {

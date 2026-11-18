@@ -239,6 +239,18 @@ checar("await definirEnderecoDaEntrada();" in main.split("async function recarre
        "e volta a decidir quando as telas sao recarregadas (subir/desligar a captura muda o lado)")
 
 print()
+print("7) as telas de captura so' abrem depois do servidor local responder (dono, 18/11/2026)")
+print()
+checar("await esperarServidorLocal();" in main and
+       main.index("await esperarServidorLocal();") < main.index("for (const nome of config.abrirAoIniciar) abrir(nome);"),
+       "main.js espera o servidor local antes de abrir as janelas")
+checar("await esperarServidorLocal();" in main.split("async function recarregarTelas")[1][:300],
+       "e espera de novo quando as telas sao recarregadas (subir/desligar a captura muda o lado)")
+checar("async function esperarServidorLocal(tentativas = 12, intervaloMs = 1000)" in main
+       and "return null;" in main.split("async function esperarServidorLocal")[1][:600],
+       "a espera desiste em vez de travar a abertura para sempre")
+
+print()
 if falhas:
     print(f"FALHOU — endereço do app: {len(falhas)} verificação(ões)")
     sys.exit(1)

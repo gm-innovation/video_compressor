@@ -21,7 +21,7 @@ TOKEN = (os.environ.get("GITHUB_TOKEN_FOR_RELEASES") or os.environ.get("GH_TOKEN
 DIST = pathlib.Path.home() / "lecsor-pipeline-video" / "desktop" / "dist"
 PAPEIS = ("Captura", "Terra", "Admin", "Cliente")
 # Ordem de publicacao: o PRIMEIRO e' o `latest` do GitHub. Nova versao entra na frente.
-VERSOES_PUBLICADAS = ("0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
+VERSOES_PUBLICADAS = ("0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
 
 
 def instaladores(versao: str) -> list:
@@ -36,6 +36,31 @@ def instaladores(versao: str) -> list:
     return [DIST / papel.lower() / f"LECSOR-{papel}-{versao}-x64.exe" for papel in PAPEIS]
 
 NOTAS = {
+    "0.6.4": (
+        "**A tela do admin fica limpa e a qualidade do vídeo ao vivo passa a ser a banda (1500 a 300 kbps).**\n\n"
+        "Pedido do dono (18/11/2026, verbatim): *\"1. não vejo motivo pra 'Transmissões pedidas pelos clientes' "
+        "existir no admin, esse tipo de informação é irrelevante pra mim, precisa estar apenas no canal do "
+        "cliente; 2. por que esses testes de vídeo estão na minha tela? isso não é necessário e ainda dá o "
+        "aspecto de bagunçado; 3. não está reconhecendo câmeras na máquina e ... não consigo escolher a "
+        "qualidade do vídeo, continua com a caixa de seleção antiga, sem a seleção de 1500 a 300 kbps\"*.\n\n"
+        "Na tela **Enviar vídeo**:\n\n"
+        "* sai a caixa **\"Transmissões pedidas pelos clientes\"** — ela é da **operação** (é ela que cancela "
+        "um pedido de outra pessoa) e o cliente tem a dele em `/app`;\n"
+        "* sai o **\"Teste de vídeo (bancada)\"** e a **\"Qualidade por câmera\"** da tela do administrador — "
+        "comprimir, medir e publicar continua com a **operação**;\n"
+        "* entram no lugar o **Transmitir ao vivo** (câmera desta máquina, teste sintético ou radar) e o "
+        "**No ar agora**, com o botão de **parar**;\n"
+        "* a **qualidade do ao vivo é a lista fechada de banda**: 1500, 1200, 1000, 800, 500 e 300 kbps "
+        "(a caixa antiga de CRF só fica no caminho de arquivo/link, onde \"qualidade\" é compressão) e o "
+        "valor escolhido **chega na API** no envio.\n\n"
+        "Câmera desta máquina: a lista de dispositivos **tenta de novo** (o servidor local leva alguns "
+        "segundos para subir) e, se não vier, **diz o motivo** em vez de ficar em branco — era isso o \"não "
+        "está reconhecendo câmeras\". O aplicativo também passou a **esperar o servidor local responder "
+        "antes de abrir as telas de captura** (mesma correção que a 0.6.3 fez para o login).\n\n"
+        "Provas: `tests/e2e-tela-limpa-do-admin.py` (dois navegadores de verdade, administrador e operação, "
+        "com a API de verdade), `tests/test_captura_no_admin.py` e `tests/test-config-endereco.py`.\n\n"
+        "**Atualização:** instale por cima. Feche as janelas antigas do aplicativo antes de abrir esta versão."
+    ),
     "0.6.3": (
         "**O app se organiza pelo usuario: a tela de entrada nunca mais vem de um servidor local vazio.**\n\n"
         "Relato do dono depois de instalar a 0.6.2 (18/11/2026): *\"tentei acessar como admin e continua nao "

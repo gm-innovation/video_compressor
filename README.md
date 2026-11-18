@@ -19,6 +19,22 @@ sistema comprime na máquina e o vídeo comprimido sobe para o lado terra (`dest
 ## Instaladores prontos (Windows x64) — PLUG & PLAY desde a 0.2.0
 Na página de releases: https://github.com/gm-innovation/video_compressor/releases
 
+### 0.6.4 — **tela do admin limpa + a banda do vídeo ao vivo (1500 a 300 kbps)**
+- **`LECSOR-0.6.4-x64.exe`** — pedido do dono (18/11/2026): o admin não tem "Transmissões pedidas pelos
+  clientes" (é do canal do cliente; a **operação** mantém a dela, que cancela) nem os **testes de vídeo**
+  da bancada ("Comprimir e medir", "Publicar no ar", "Qualidade por câmera").
+- A tela do admin passa a ter: **Transmitir ao vivo** (câmera desta máquina / teste sintético / radar),
+  o **No ar agora** (com "parar", para encerrar o envio contínuo), o **Teto do produto** e a trilha de
+  **Gravações**.
+- **Qualidade do ao vivo = banda**: lista fechada de **1500/1200/1000/800/500/300 kbps** (+ padrão da
+  tela), escolhida na tela e **enviada na API** (`bitrate`); a caixa antiga de CRF fica só no caminho de
+  arquivo/link (bancada), onde qualidade é compressão.
+- **Câmera desta máquina**: a lista de dispositivos **tenta de novo** enquanto o servidor local sobe e,
+  se não vier, **mostra o motivo**; o aplicativo **espera o servidor local responder antes de abrir as
+  telas de captura** (o "Failed to fetch" e a caixa vazia silenciosa saíram).
+- Provas: `tests/e2e-tela-limpa-do-admin.py` (navegadores de verdade: administrador × operação),
+  `tests/test_captura_no_admin.py`, `tests/test-config-endereco.py` (seção 7).
+
 ### 0.6.3 — **o app se organiza pelo usuário: a entrada não vem mais de um servidor local vazio**
 - **`LECSOR-0.6.3-x64.exe`** — corrige o relato de 18/11/2026: com a captura liberada nesta máquina, a
   tela de **entrada** era servida pelo servidor **local** (`127.0.0.1`), cujo banco não tem usuário
