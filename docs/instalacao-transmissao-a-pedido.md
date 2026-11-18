@@ -101,6 +101,8 @@ O dono fixou: **a VPS mantém só o que foi gravado, e só até o cliente baixar
 | O log do agente no bordo | "ordem recebida" / "atendeu" | "o lado terra recusou… (401 token…)" → token errado |
 | A câmera na captura | ligou (status no sistema de captura) | "nao alcancei a API local" → o sistema de captura está parado |
 | A tela do cliente, alguns segundos depois | **no ar**, com tempo restante | passou de 90 s sem resposta: a tela avisa e a sessão morre sozinha |
+| A faixa **"Gravação pronta — baixe agora"** na tela do cliente | aparece quando a gravação para, com tamanho e prazo | não aparece: a gravação não parou (o botão continua em "Parar gravação") ou a tela está velha — recarregue |
+| Depois de o cliente **sair da tela** (ou de 15 min sem download) | o arquivo some do disco e a linha de `gravacoes` mostra **quando o arquivo saiu** | arquivo ainda no disco com download em curso é o **esperado**: o apagamento espera o download terminar |
 
 ## 6. Quem mais mexe (operação e administrador)
 

@@ -72,6 +72,15 @@ Cada instalador tem `productName` próprio (logo, `%APPDATA%\<nome do app>\confi
 Os `.exe` são construídos por `desktop/construir-instaladores.sh` e **não** entram no git
 (`desktop/dist/` está no `.gitignore`): o pacote de download é a página de releases.
 
+## Transmissão a pedido do cliente (e a gravação)
+O **cliente** abre a transmissão pela web (computador ou telefone), **sem instalar nada**: `/app` →
+*Transmitir* → *Iniciar transmissão*. A ordem nasce no **lado terra** e chega ao bordo pelo agente
+(`ground/agente_de_ordens.py`), que **não abre porta nenhuma**. O vídeo gravado fica no **lado terra**
+(`-c copy` do que já chegou) e a VPS **mantém só o arquivo gravado**: ao fim da gravação a tela **avisa
+o cliente para baixar** e, quando ele **sai da tela ou desliga o sistema**, o arquivo é **apagado** — a
+**trilha de auditoria nunca é apagada** (pedido, gravação, aviso, download e apagamento ficam com autor
+e data). Passo a passo, diagnóstico e a parte da operação/admin: `docs/instalacao-transmissao-a-pedido.md`.
+
 ## Como rodar na bancada
 ```
 # 1. lado terra (mediamtx): recebe SRT e publica WebRTC/HLS/RTSP
