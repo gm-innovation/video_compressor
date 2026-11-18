@@ -299,6 +299,8 @@ def main() -> int:
         # saída, economia de banda e qualidade; e a coluna "no ar" precisa dizer algo
         ctx4 = nav.new_context(viewport={"width": 1600, "height": 1000})
         pb = ctx4.new_page()
+        erros_5c: list[str] = []
+        pb.on("pageerror", lambda e: erros_5c.append(str(e)[:160]))
         pb.goto(BASE + "/admin", wait_until="domcontentloaded")
         pb.fill("#email", "operacao@lecsor.test"); pb.fill("#senha", SENHA)
         pb.click("#form-entrar button")
@@ -324,6 +326,25 @@ def main() -> int:
         # a tabela precisa trazer as colunas que o dono pediu, com número
         pb.wait_for_timeout(4000)
         cabecalho = pb.inner_text("#tela, main, body")
+        # diagnostico: a tabela de compresses vem de /api/compressoes (rota de captura). Se ela nao
+        # aparecer, e' aqui que se ve' se a rota respondeu e o que a tela mostra no lugar.
+        try:
+            diag = pb.evaluate("(async () => { const r = await fetch('/api/compressoes');"
+                               " const t = await r.text(); return r.status + '|' + t.slice(0, 220); })()")
+        except Exception as e:
+            diag = "erro no diagnostico: " + str(e)[:120]
+        print("    diagnostico /api/compressoes:", str(diag)[:280])
+        try:
+            caixa = pb.evaluate("(() => { const e = document.getElementById('env-compressoes');"
+                                " return e ? ('TEM #env-compressoes: ' + e.innerHTML.slice(0,180)) : 'SEM #env-compressoes na tela'; })()")
+        except Exception as e:
+            caixa = "erro lendo a caixa: " + str(e)[:120]
+        print("    caixa de compressoes:", str(caixa)[:220])
+        print("    erros de script na tela:", erros_5c[:3])
+        if "não consegui montar a tabela" in cabecalho:
+            i = cabecalho.find("não consegui montar a tabela")
+            print("    recado da tabela:", cabecalho[i:i + 200].replace("\n", " "))
+        print("    texto da tela:", cabecalho.replace("\n", " | ")[:400])
         for coluna in ["Entrada (original)", "Saída (comprimido)", "Compressão", "Tempo da compressão", "Qualidade"]:
             checar(coluna in cabecalho, f"a tabela tem a coluna \"{coluna}\"")
         checar("MB" in cabecalho and "kbps" in cabecalho, "a tabela mostra o tamanho real e o bitrate de entrada e saída")

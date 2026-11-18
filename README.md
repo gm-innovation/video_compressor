@@ -19,6 +19,18 @@ sistema comprime na máquina e o vídeo comprimido sobe para o lado terra (`dest
 ## Instaladores prontos (Windows x64) — PLUG & PLAY desde a 0.2.0
 Na página de releases: https://github.com/gm-innovation/video_compressor/releases
 
+### 0.6.6 — **o redesenho da tela não apaga mais o que o operador escolheu, e o teste do envio está verde**
+- **`LECSOR-0.6.6-x64.exe`** — a tela do admin se repinta sozinha quando os dados mudam; ao repintar ela
+  **recriava os campos do formulário de envio** e o arquivo já escolhido / o texto digitado se perdiam.
+  Medido (18/11/2026): "Comprimir e medir" respondia *escolha o arquivo de vídeo* com o arquivo já escolhido,
+  e a tabela de compressões da operação aparecia **sem as colunas**.
+- **A tela de envio não é repintada enquanto você está preenchendo** (arquivo escolhido ou texto digitado);
+  as listas seguem atualizando pelo timer delas e trocar de tela pelo menu continua funcionando.
+- **Falha ao montar a tabela de compressões agora diz o motivo na tela**, em vez de deixar a área vazia.
+- **`tests/e2e-envios.py` não depende mais da máquina**: sobe a própria bancada (`api.py --semear-demo`, banco
+  temporário), o servidor de mídia local, e lê a senha de bancada de uma fonte só (`ground/.env.local`).
+  Medido: **72 checagens ok, 0 falhas** (antes: 69 ok + 3 falhas na tabela de compressões).
+
 ### 0.6.5 — **a webcam não é arrancada do envio que já está no ar**
 - **`LECSOR-0.6.5-x64.exe`** — dois defeitos achados ao destravar o teste de ponta a ponta (18/11/2026):
 - **Segundo envio da MESMA webcam**: a limpeza de "câmera presa" rodava antes de perguntar se havia um

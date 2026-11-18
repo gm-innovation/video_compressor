@@ -21,7 +21,7 @@ TOKEN = (os.environ.get("GITHUB_TOKEN_FOR_RELEASES") or os.environ.get("GH_TOKEN
 DIST = pathlib.Path.home() / "lecsor-pipeline-video" / "desktop" / "dist"
 PAPEIS = ("Captura", "Terra", "Admin", "Cliente")
 # Ordem de publicacao: o PRIMEIRO e' o `latest` do GitHub. Nova versao entra na frente.
-VERSOES_PUBLICADAS = ("0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
+VERSOES_PUBLICADAS = ("0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
 
 
 def instaladores(versao: str) -> list:
@@ -36,6 +36,22 @@ def instaladores(versao: str) -> list:
     return [DIST / papel.lower() / f"LECSOR-{papel}-{versao}-x64.exe" for papel in PAPEIS]
 
 NOTAS = {
+    "0.6.6": (
+        "**O redesenho da tela não apaga mais o que o operador escolheu ou digitou, e o teste de ponta a "
+        "ponta do envio passou a rodar sozinho (verde).**\n\n"
+        "A tela do admin se repinta sozinha quando os dados mudam. Ao repintar, ela recriava os campos do "
+        "formulário de envio — e o arquivo já escolhido e o texto digitado se perdiam. Medido 18/11/2026: o "
+        "botão \"Comprimir e medir\" respondia *\"escolha o arquivo de vídeo\"* com o arquivo já escolhido, e a "
+        "tabela de compressões da operação aparecia sem as colunas.\n\n"
+        "* **A tela de envio não é mais repintada enquanto você está preenchendo** (arquivo escolhido ou texto "
+        "digitado). As listas continuam se atualizando pelo timer delas; trocar de tela pelo menu sempre "
+        "funciona.\n"
+        "* **Falha ao montar a tabela de compressões agora diz o motivo na tela** em vez de deixar a área "
+        "vazia — o operador vê que algo deu errado.\n"
+        "* **`tests/e2e-envios.py` roda sem depender da máquina**: sobe a própria bancada (`api.py "
+        "--semear-demo`, banco temporário), o servidor de mídia local e lê a senha de bancada de uma fonte só "
+        "(`ground/.env.local`) — medido: **72 checagens ok, 0 falhas**."
+    ),
     "0.6.5": (
         "**A webcam não é mais arrancada do envio que já estava no ar, e o campo não interrompe mais quem "
         "está digitando.**\n\n"

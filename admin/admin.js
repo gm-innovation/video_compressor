@@ -245,7 +245,24 @@ const SUBS = {
 };
 
 /* --------------------------------------------------------- telas */
-function desenhar() {
+function envioEmAndamento() {
+  /* Ha' algo escolhido/digitado na tela de envio que o redesenho apagaria? */
+  if (A.tela !== 'envios') return false;
+  const arq = document.getElementById('env-arquivo');
+  if (arq && arq.files && arq.files.length) return true;
+  for (const id of ['env-rotulo', 'env-url']) {
+    const e = document.getElementById(id);
+    if (e && (e.value || '').trim()) return true;
+  }
+  return false;
+}
+
+function desenhar(forcado) {
+  /* NAO repinta a tela de envio enquanto o operador esta' preenchendo: o redesenho recria os campos e
+     o que ele digitou/escolheu se perde (medido 18/11/2026: o rotulo digitado sumia e o "Comprimir e
+     medir" respondia "escolha o arquivo de video" com o arquivo ja' escolhido). As listas continuam
+     se atualizando sozinhas pelo timer delas. Trocar de tela pelo menu manda `forcado` e passa. */
+  if (!forcado && envioEmAndamento()) { statusAtualizar('segurando a tela: você está preenchendo o envio'); return; }
   const [titulo, sub] = SUBS[A.tela] || SUBS.painel;
   $('titulo-tela').textContent = titulo; $('sub-tela').textContent = sub;
   const tela = $('tela'); limpar(tela);
@@ -1497,7 +1514,7 @@ function telaEnvios(t) {
   // CRF na bancada) e um valor salvo so' pode ser reposto quando as opcoes certas ja' estao na tela.
   if (LISTA_ALVO.includes(guardado.qualidade || '') && ehVivo()) qualidade.value = guardado.qualidade;
 
-  const lista = document.createElement('div'); if (ehOperador) t.appendChild(lista);
+  const lista = document.createElement('div'); lista.id = 'env-compressoes'; if (ehOperador) t.appendChild(lista);
   let ultimos = [];
 
   /* NO AR AGORA (tela do ADMIN): a bancada sai, mas o envio contínuo que o próprio admin ligou precisa
@@ -1579,7 +1596,13 @@ function telaEnvios(t) {
     const d = await r.json();
     ultimos = d.compressoes || [];
     limpar(lista);
-    lista.appendChild(montarTabela(ultimos, ing));
+    // Se a montagem da tabela falhar (um campo inesperado numa linha), a tela diz o motivo em vez de
+    // ficar sem tabela nenhuma — o operador precisa ver que algo deu errado, nao uma area vazia.
+    try {
+      lista.appendChild(montarTabela(ultimos, ing));
+    } catch (e) {
+      lista.appendChild(recado('não consegui montar a tabela de compressões: ' + (e && e.message ? e.message : e), true));
+    }
   };
   const publicar = async (id) => {
     dizer('publicando no ar…');
@@ -1727,7 +1750,7 @@ $('btn-atualizar').addEventListener('click', atualizar);
 document.querySelectorAll('.item[data-tela]').forEach((b) => b.addEventListener('click', () => {
   A.tela = b.dataset.tela;
   document.querySelectorAll('.item[data-tela]').forEach((x) => x.classList.toggle('on', x === b));
-  desenhar();
+  desenhar(true);   // troca de tela pelo menu sempre redesenha
 }));
 function relogio() { const d = new Date(); const p = (n) => String(n).padStart(2, '0');
   $('relogio-servidor').textContent = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; }
