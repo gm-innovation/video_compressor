@@ -34,9 +34,10 @@
     "base": "http://187.127.60.250:8085",
     "destinoSrt": "187.127.60.250:8890",
     "servidorLocal": {
-      "ligado": false,
+      "ligado": true,
       "portaApi": 8765
     },
+    "capturaLocal": true,
     "abrirAoIniciar": [
       "entrada"
     ],

@@ -32,7 +32,7 @@ function lerConfig() {
   try { doUsuario = JSON.parse(fs.readFileSync(caminhoConfig(), 'utf8')); } catch (e) { doUsuario = null; }
   // A resolução (fábrica do papel + o que o usuário gravou) mora em `configuracao.js`, testável sem
   // Electron. Ver lá os itens 2 e 3: o guard de papel e a incoerência loopback x servidor local.
-  const { resolver } = require('./configuracao');
+  const { resolver, ehLoopback } = require('./configuracao');
   const resolvido = resolver(PADRAO, PAPEIS, PAPEL, doUsuario);
   const c = resolvido.config;
   c.papel = PAPEL;
@@ -175,18 +175,28 @@ function urlDe(nome) {
 // Tela de erro quando o lado terra nao responde: diz o endereco tentado e o motivo, em vez de
 // deixar a janela vazia (parecia "nao aparece os campos de autenticacao").
 function paginaDeErro(alvo, motivo) {
-  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Lado terra fora do ar</title>
+  // Endereco de loopback = o servidor LOCAL desta maquina (captura), nao o lado terra. Dizer qual dos
+  // dois caiu importa: sem isso, "o lado terra nao respondeu" com 127.0.0.1 na tela levava a procurar
+  // defeito no servidor errado (caso de 18/11/2026).
+  const ehLocal = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/i.test(String(alvo || ''));
+  const ladoTerra = (PAPEIS[PAPEL] || {}).base || PADRAO.base || '';
+  const titulo = ehLocal ? 'O servidor LOCAL desta maquina nao respondeu' : 'O lado terra nao respondeu';
+  const dica = ehLocal
+    ? `<p>Este e' o servidor <b>local de captura</b> desta maquina (o que ve as cameras ligadas aqui). O
+       <b>lado terra</b> desta instalacao e' <code>${ladoTerra}</code> — e' nele que se entra com usuario e senha.</p>`
+    : `<p>O aplicativo abre a tela de autenticacao servida por esse endereco; sem ele, nao ha o que mostrar.</p>`;
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${titulo}</title>
 <style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
 background:#0b1220;color:#e6edf7;font:15px/1.55 "Segoe UI",system-ui,sans-serif}
 .caixa{max-width:620px;padding:28px 32px;border:1px solid #24334d;border-radius:14px;background:#111b2e}
 h1{margin:0 0 10px;font-size:20px;color:#ffd166}p{margin:8px 0}b{color:#9fc4ff}
 code{background:#0a1424;border:1px solid #24334d;border-radius:6px;padding:2px 6px}</style></head>
 <body><div class="caixa">
-<h1>O lado terra nao respondeu</h1>
+<h1>${titulo}</h1>
 <p>Endereco tentado: <code>${alvo}</code></p>
 <p>Motivo: <b>${motivo}</b></p>
-<p>O aplicativo abre a tela de autenticacao servida por esse endereco; sem ele, nao ha o que mostrar.
-Confira se o servico esta rodando nessa maquina ou no servidor do lado terra, e se o endereco em
+${dica}
+<p>Confira se o servico esta rodando nessa maquina ou no servidor do lado terra, e se o endereco em
 <code>config.json</code> (ao lado do aplicativo) esta certo. Depois use <b>Modo &rarr; Recarregar a tela</b>.</p>
 </div></body></html>`;
 }
@@ -245,7 +255,7 @@ function menu() {
       { label: 'Quiosque (tela cheia)', type: 'radio', checked: config.modoQuiosque, click: () => { config.modoQuiosque = true; gravarConfig(config); aplicar(); } }
     ] },
     { label: 'Servidor local', submenu: [
-      { label: 'Subir servidor nesta maquina (API, mediamtx, agente)', click: () => {
+      { label: 'Subir o servidor local nesta maquina (captura — as telas e o login continuam no lado terra)', click: () => {
           const r = servidor.subir(config);
           if (r.erro) return dialog.showErrorBox('Servidor local NAO subiu', r.erro);
           // Ligar o servidor local tem que mudar para onde a tela aponta: é o servidor LOCAL que
@@ -258,15 +268,18 @@ function menu() {
           config.servidorLocal = Object.assign({}, config.servidorLocal, { ligado: true, portaApi: porta });
           if (!config.servidorLocal.repo) config.servidorLocal.repo = servidor.repoDe(config);
           if (!config.destinoSrt) config.destinoSrt = (PAPEIS[PAPEL] || {}).destinoSrt || PADRAO.destinoSrt || '';
-          // Com as funcoes de captura liberadas o servidor local sobe PARA A CAPTURA e a tela continua
-          // no lado em que esta (o Admin segue logado no lado terra) — trocar a base para o loopback
-          // aqui era o que abria a tela de "primeiro acesso" num banco local vazio.
-          if (!config.capturaLocal) config.base = local;
+          // Dono, 18/11/2026 ("o admin tem acesso a tudo, ja deve ter por padrao todas as
+          // autorizacoes"): subir o servidor local JA libera a captura nesta maquina e a base NAO
+          // vira loopback — as telas e o login continuam os do lado terra (quem trocava a base aqui
+          // jogava o login num banco local vazio: "e-mail ou senha invalidos" sem ser senha errada).
+          config.capturaLocal = true;
+          if (ehLoopback(config.base)) config.base = (PAPEIS[PAPEL] || {}).base || PADRAO.base || config.base;
           gravarConfig(config);
           if (config.base !== antes) setTimeout(recarregarTelas, 1800);
-          caixaServidor('Servidor disparado agora; as telas carregam em alguns segundos.'
-            + (config.base !== antes ? `\n\nEsta instalacao agora fala com o servidor desta maquina (${config.base}):`
-              + ' é ele que lista as cameras ligadas aqui e repassa o fluxo para o lado terra.' : ''));
+          const aviso = config.base !== antes
+            ? `\n\nEsta instalacao agora fala com o servidor desta maquina (${config.base}): é ele que lista as cameras ligadas aqui e repassa o fluxo para o lado terra.`
+            : `\n\nAs funcoes de captura ficaram liberadas NESTA maquina; o login e as telas continuam em ${config.base}.`;
+          caixaServidor('Servidor disparado agora; as telas carregam em alguns segundos.' + aviso);
         } },
       { label: 'Testar câmeras desta maquina', click: async () => {
           // Olha SEMPRE a maquina do aplicativo (loopback), mesmo com o endereco apontado para o

@@ -259,7 +259,11 @@ class AplicativoEAvisarATela(unittest.TestCase):
     def test_menu_cria_a_opcao_sem_trocar_a_base(self):
         s = self.ler("desktop/main.js")
         self.assertIn("Liberar as funcoes de captura nesta maquina", s)
-        self.assertIn("if (!config.capturaLocal) config.base = local;", s)
+        # Subir o servidor local libera a captura e NAO joga a tela no loopback (dono, 18/11/2026: o
+        # login caia num banco local vazio e parecia senha errada). A troca de base so' existe como
+        # preset explicito ("Usar como PC de captura"), nunca por subir o servidor.
+        self.assertIn("config.capturaLocal = true;", s)
+        self.assertNotIn("if (!config.capturaLocal) config.base = local;", s)
         self.assertIn("aplicarEnderecoDaCaptura", s)
 
     def test_tela_roteia_so_as_rotas_de_captura(self):

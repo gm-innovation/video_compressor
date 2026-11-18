@@ -134,8 +134,9 @@ checar("LECSOR Captura" not in sh and "LECSOR Admin" not in sh and "LECSOR Clien
 papeis = json.loads(ler("desktop/papeis.json") or "{}")
 unico = papeis.get("unico") or {}
 checar(unico.get("abrirAoIniciar") == ["entrada"], "papeis.json: o papel unico abre a tela de ENTRADA")
-checar(unico.get("servidorLocal", {}).get("ligado") is False,
-       "papeis.json: o pacote unico NAO nasce subindo servidor local (isso e' a opcao da captura)")
+checar(unico.get("servidorLocal", {}).get("ligado") is True and unico.get("capturaLocal") is True,
+       "papeis.json: o pacote unico nasce com o servidor local e a captura liberados (dono, 18/11/2026: "
+       "'o admin tem acesso a tudo, ja deve ter por padrao todas as autorizacoes')")
 checar(str(unico.get("base", "")).startswith("http://187.127.60.250:8085"),
        "papeis.json: o pacote unico nasce apontado para o lado terra")
 
@@ -159,8 +160,8 @@ checar(resolvido.get("abrir") == ["entrada"],
        "configuracao.js (logica real, node): o papel unico abre ['entrada']")
 checar(str(resolvido.get("base", "")).startswith("http://187.127.60.250:8085"),
        "configuracao.js: a base do pacote unico e' o lado terra")
-checar(resolvido.get("servidor", {}).get("ligado") is False,
-       "configuracao.js: servidor local desligado de fabrica no pacote unico")
+checar(resolvido.get("servidor", {}).get("ligado") is True and resolvido.get("captura") is True,
+       "configuracao.js: o pacote unico ja nasce com servidor local e captura liberados (plug & play)")
 
 pkg = json.loads(ler("desktop/package.json") or "{}")
 

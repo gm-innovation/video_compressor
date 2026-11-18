@@ -127,16 +127,77 @@ console.log(JSON.stringify({{base: r.config.base, destinoSrt: r.config.destinoSr
     checar(d["base"] == base_esp and d["destinoSrt"] == destino_esp,
            f"local {i}: {prova} (base={d['base']}, destino={d['destinoSrt']!r})")
 
-# o menu "Subir servidor nesta maquina" tem que reapontar a tela (nao basta subir o processo)
+# o menu "Subir o servidor local" libera a CAPTURA sem trocar o endereco da tela (dono, 18/11/2026:
+# "o admin tem acesso a tudo, ja deve ter por padrao todas as autorizacoes"). Antes este item trocava a
+# base para o loopback e o login caia num banco local vazio -> "e-mail ou senha invalidos".
 main = (RAIZ / "desktop" / "main.js").read_text(encoding="utf-8")
-checar("Subir servidor nesta maquina" in main and "config.base = local" in main,
-       "subir o servidor local reaponta a tela para ele (o menu nao so sobe o processo)")
+checar("Subir o servidor local nesta maquina" in main and "config.capturaLocal = true" in main
+       and "config.base = local" not in main,
+       "subir o servidor local libera a captura SEM trocar o endereco da tela (login segue no lado terra)")
 checar("config.destinoSrt = (PAPEIS[PAPEL] || {}).destinoSrt || PADRAO.destinoSrt" in main,
        "subir o servidor local tambem preenche o destino do repasse quando esta vazio")
 
 # o pacote TEM que levar o módulo novo, senão o app quebra ao abrir
 pkg = json.loads((RAIZ / "desktop" / "package.json").read_text(encoding="utf-8"))
 checar("configuracao.js" in pkg["build"]["files"], "configuracao.js entra no pacote (build.files)")
+
+# --- o APLICATIVO UNICO nasce com a captura liberada e sem trocar o endereco (dono, 18/11/2026) ----
+print()
+print("5) aplicativo unico: captura liberada de fabrica, login sempre no lado terra")
+PAPEIS_UNICO = dict(PAPEIS)
+PAPEIS_UNICO["unico"] = {"base": "http://187.127.60.250:8085", "destinoSrt": "187.127.60.250:8890",
+                         "servidorLocal": {"ligado": True, "portaApi": 8765},
+                         "capturaLocal": True, "abrirComWindows": False}
+
+CASOS_UNICO = [
+    ("unico", None, "http://187.127.60.250:8085", True, True, False,
+     "instalacao limpa do app unico ja nasce com captura liberada e o login no lado terra"),
+    ("unico", {"papel": "unico", "base": "http://127.0.0.1:8765",
+               "servidorLocal": {"ligado": False, "portaApi": 8765}, "capturaLocal": False,
+               "ajuste_manual": False},
+     "http://187.127.60.250:8085", True, True, True,
+     "O CASO DO DONO: config velho (base loopback, capturaLocal false, servidor desligado) e corrigido "
+     "sozinho no boot"),
+    ("unico", {"papel": "unico", "base": "http://127.0.0.1:8765",
+               "servidorLocal": {"ligado": True, "portaApi": 8765}, "capturaLocal": False},
+     "http://187.127.60.250:8085", True, True, True,
+     "mesmo com o servidor local ligado, o app unico NAO joga a tela no loopback (era o login caindo "
+     "no banco local vazio)"),
+]
+for i, (papel, usuario, base_esp, cap_esp, lig_esp, corr_esp, prova) in enumerate(CASOS_UNICO, 1):
+    js = f"""
+const {{resolver}} = require({json.dumps(str(RAIZ / 'desktop' / 'configuracao.js'))});
+const r = resolver({json.dumps(PADRAO)}, {json.dumps(PAPEIS_UNICO)}, {json.dumps(papel)}, {json.dumps(usuario)});
+console.log(JSON.stringify({{base: r.config.base, capturaLocal: !!r.config.capturaLocal,
+  ligado: !!r.config.servidorLocal.ligado, corrigido: !!r.corrigido}}));
+"""
+    r = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=60)
+    d = json.loads(r.stdout.strip().splitlines()[-1])
+    checar(d["base"] == base_esp and d["capturaLocal"] is cap_esp and d["ligado"] is lig_esp
+           and d["corrigido"] is corr_esp,
+           f"unico {i}: {prova} (base={d['base']}, captura={d['capturaLocal']}, ligado={d['ligado']}, "
+           f"corrigido={d['corrigido']})")
+
+# o papel unico do pacote de VERDADE tem que declarar a captura (senao a maquina de captura nao captura)
+papeis_reais = json.loads((RAIZ / "desktop" / "papeis.json").read_text(encoding="utf-8"))
+unico = papeis_reais.get("unico", {})
+checar(unico.get("capturaLocal") is True and (unico.get("servidorLocal") or {}).get("ligado") is True,
+       f"o papel `unico` de fabrica libera a captura e sobe o servidor local ({unico.get('capturaLocal')}, "
+       f"{(unico.get('servidorLocal') or {}).get('ligado')})")
+checar("127.0.0.1" not in str(unico.get("base", "")) and "localhost" not in str(unico.get("base", "")),
+       f"e o endereco de fabrica do `unico` e' o lado terra, nao o loopback ({unico.get('base')})")
+js = f"""
+const {{resolver}} = require({json.dumps(str(RAIZ / 'desktop' / 'configuracao.js'))});
+const r = resolver({json.dumps(PADRAO)}, {json.dumps(papeis_reais)}, "unico",
+  {{papel: "unico", base: "http://127.0.0.1:8765", capturaLocal: false,
+    servidorLocal: {{ligado: false, portaApi: 8765}}, ajuste_manual: false}});
+console.log(JSON.stringify({{base: r.config.base, capturaLocal: !!r.config.capturaLocal}}));
+"""
+r = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=60)
+d = json.loads(r.stdout.strip().splitlines()[-1])
+checar(d["base"] == unico.get("base") and d["capturaLocal"] is True,
+       f"com o papeis.json do pacote, a config velha volta para o lado terra com a captura liberada "
+       f"(base={d['base']}, captura={d['capturaLocal']})")
 
 print()
 if falhas:

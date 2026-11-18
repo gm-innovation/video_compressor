@@ -1843,6 +1843,20 @@ class Handler(SimpleHTTPRequestHandler):
                 entrou = bool(veredito.get("ok")) and bool(alvo)
             if not entrou:
                 auditar(None, "entrada_falha", email[:80], self.client_address[0])
+                # Instalacao SEM usuario nenhum e chamada de dentro da propria maquina: o defeito nao e'
+                # a senha, e' a instalacao (dono, 18/11/2026: "já deve ter por padrão todas as
+                # autorizações" — a tela ficava repetindo "e-mail ou senha invalidos" quando o que
+                # faltava era justamente o primeiro administrador). Dizer o que falta, em vez de
+                # acusar a senha do usuario.
+                local_vazio = False
+                if self._local():
+                    with conexao() as c:
+                        local_vazio = not c.execute("SELECT 1 FROM usuarios LIMIT 1").fetchone()
+                if local_vazio:
+                    return self._json(401, {"erro": "esta instalacao ainda nao tem usuario nenhum: "
+                                                   "crie o primeiro administrador desta maquina (formulario "
+                                                   "abaixo) ou entre no lado terra",
+                                            "base_local": True, "primeiro_acesso": True})
                 return self._json(401, {"erro": "e-mail ou senha invalidos"})
             token = criar_sessao(alvo["id"], self.headers.get("User-Agent", ""))
             auditar(alvo, "entrada", alvo["email"], self.client_address[0])

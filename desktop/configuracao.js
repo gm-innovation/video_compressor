@@ -41,7 +41,12 @@ function resolver(PADRAO, PAPEIS, PAPEL, doUsuario) {
     modoQuiosque: !!PADRAO.modoQuiosque,
     abrirComWindows: !!papel.abrirComWindows,
     servidorLocal: Object.assign({ ligado: false, repo: '', portaApi: 8765 },
-      PADRAO.servidorLocal || {}, papel.servidorLocal || {})
+      PADRAO.servidorLocal || {}, papel.servidorLocal || {}),
+    // 7) O PAPEL manda tambem nas funcoes de captura (dono, 18/11/2026: "o admin tem acesso a tudo,
+    // ja deve ter por padrao todas as autorizacoes" / "precisa ser plug & play"). O papel `unico`
+    // nasce com `capturaLocal` ligado: quem instala no PC de captura ja captura, sem passar por menu
+    // — e nesse modo a base NUNCA vira loopback (regra 5), entao o login continua o do lado terra.
+    capturaLocal: !!(papel.capturaLocal === true || PADRAO.capturaLocal === true)
   };
   const herdado = !!doUsuario && doUsuario.papel !== PAPEL && !doUsuario.ajuste_manual;
   if (herdado) {
@@ -56,6 +61,14 @@ function resolver(PADRAO, PAPEIS, PAPEL, doUsuario) {
   let corrigido = false;
   const porta = config.servidorLocal.portaApi || 8765;
   const local = `http://127.0.0.1:${porta}`;
+  // 8) O PAPEL declara as funcoes de captura (item 7): config velha gravada na MAQUINA nao pode
+  // desfazer isso — senao a instalacao que ja existia continuava trocando a base para o loopback no
+  // "Subir servidor nesta maquina" e o login caia no banco local vazio (o caso de 18/11/2026).
+  // Com a captura declarada pelo papel, o servidor local tambem sobe junto (e' ele que captura).
+  if (papel.capturaLocal === true) {
+    if (config.capturaLocal !== true) { config.capturaLocal = true; corrigido = true; }
+    if (!config.servidorLocal.ligado) { config.servidorLocal.ligado = true; corrigido = true; }
+  }
   if (config.servidorLocal.ligado) {
     // Servidor local LIGADO nesta maquina: o aplicativo fala com ELE. É o servidor que conhece as
     // câmeras ligadas aqui, e é quem empacota e repassa o fluxo para o lado terra. Sem isto, ligar o

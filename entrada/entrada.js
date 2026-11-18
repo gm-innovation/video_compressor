@@ -39,7 +39,20 @@ async function entrar(ev) {
   aviso('entrada-erro', '');
   const d = await api('/api/entrar', { method: 'POST',
     body: JSON.stringify({ email: $('email').value.trim(), senha: $('senha').value }) });
-  if (!d.ok) { aviso('entrada-erro', (d.corpo && d.corpo.erro) || 'não foi possível entrar'); return; }
+  if (!d.ok) {
+    const c = d.corpo || {};
+    aviso('entrada-erro', c.erro || 'não foi possível entrar');
+    // Instalacao sem usuario nenhum (o proprio servidor respondeu assim): em vez de deixar a pessoa
+    // repetindo a senha, abrir o cadastro do primeiro administrador desta maquina — o que falta nao e'
+    // a senha (caso de 18/11/2026, com a base apontada para o banco local vazio).
+    if (c.primeiro_acesso) {
+      $('#entrada').classList.add('oculto');
+      $('#primeiro').classList.remove('oculto');
+      aviso('primeiro-erro', 'esta instalação ainda não tem usuário nenhum — crie o primeiro administrador desta máquina');
+      $('#p-nome').focus();
+    }
+    return;
+  }
   irParaTela(d.corpo && d.corpo.papel);
 }
 
