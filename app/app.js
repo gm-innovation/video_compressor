@@ -664,8 +664,86 @@ async function carregarTransmissao() {
   if (!S.embarcacaoId) return;
   const d = await api('/api/transmissao?embarcacao=' + encodeURIComponent(S.embarcacaoId));
   if (d.ok && d.corpo) S.transmissao = d.corpo;
+  // gravacoes prontas esperando o cliente baixar (o aviso da tela sai daqui)
+  S.gravacoesProntas = (S.transmissao && S.transmissao.gravacoes_prontas) || [];
   const meu = (S.usuario || {}).email;
   S.minhas = (S.transmissao.abertas || []).filter((t) => t.usuario_email === meu).map((t) => t.id);
+}
+
+/* --------------------------------------------------------------------------------------------
+   GRAVACAO: aviso para baixar e apagamento quando o cliente sai (dono, 18/11/2026).
+
+   O que o dono fixou: ao fim da gravacao o cliente E' AVISADO para baixar; quando ele sair da tela
+   (ou desligar o sistema) o ARQUIVO e' apagado — o que fica e' o historico. Aqui fica o aviso, o
+   botao de baixar, o "ja' baixei" (que apaga na hora) e o aviso do navegador antes de sair.
+   -------------------------------------------------------------------------------------------- */
+function baixadosLocal() {
+  try { return JSON.parse(localStorage.getItem('lecsor-baixei') || '[]'); } catch (e) { return []; }
+}
+
+function marcarBaixado(id) {
+  const l = baixadosLocal();
+  if (!l.includes(id)) l.push(id);
+  try { localStorage.setItem('lecsor-baixei', JSON.stringify(l)); } catch (e) { /* sem memoria local */ }
+}
+
+function gravacoesNaoBaixadas() {
+  const feitas = baixadosLocal();
+  return (S.gravacoesProntas || []).filter((g) => !feitas.includes(g.transmissao_id));
+}
+
+async function jaBaixei(g, botao) {
+  if (botao) { botao.disabled = true; botao.textContent = 'apagando…'; }
+  const d = await api('/api/gravacoes/' + encodeURIComponent(g.transmissao_id) + '/pronto',
+                      { method: 'POST', body: '{}' });
+  if (!d.ok) {
+    alert((d.corpo && d.corpo.erro) || 'não deu para apagar agora');
+    if (botao) { botao.disabled = false; botao.textContent = 'Já baixei — pode apagar'; }
+    return;
+  }
+  marcarBaixado(g.transmissao_id);
+  await carregarTransmissao();
+  desenharTela();
+}
+
+function minutosAte(carimbo) {
+  if (!carimbo) return null;
+  const resta = Math.round((new Date(carimbo) - new Date()) / 60000);
+  return resta > 0 ? resta : 0;
+}
+
+/* A faixa fica no alto da tela de transmissão enquanto houver gravacao pronta para baixar. */
+function avisoDeGravacao(p) {
+  const prontas = S.gravacoesProntas || [];
+  if (!prontas.length || (S.usuario || {}).papel !== 'cliente') return;
+  const cx = document.createElement('div'); cx.className = 'aviso-gravacao'; cx.id = 'aviso-gravacao';
+  const t = document.createElement('div'); t.className = 'aviso-titulo';
+  t.textContent = prontas.length === 1 ? 'Gravação pronta — baixe agora'
+                                       : prontas.length + ' gravações prontas — baixe agora';
+  cx.appendChild(t);
+  const explica = document.createElement('div'); explica.className = 'aviso-explica';
+  explica.textContent = 'O arquivo é apagado quando você sair da tela ou desligar o computador.';
+  cx.appendChild(explica);
+  for (const g of prontas) {
+    const l = document.createElement('div'); l.className = 'aviso-linha'; l.dataset.gravacao = g.transmissao_id;
+    const nome = document.createElement('span'); nome.className = 'aviso-nome';
+    nome.textContent = rotuloDe(g.camera_id) + ' · ' + emMB(g.bytes) + ' · ' + mmss(g.segundos || 0);
+    const resta = minutosAte(g.baixar_ate);
+    if (resta !== null) nome.textContent += ' · restam ' + resta + ' min para baixar';
+    l.appendChild(nome);
+    const baixar = document.createElement('a'); baixar.className = 'pil'; baixar.id = 'baixar-' + g.transmissao_id;
+    baixar.href = '/api/gravacoes/' + encodeURIComponent(g.transmissao_id);
+    baixar.textContent = 'Baixar';
+    baixar.addEventListener('click', () => marcarBaixado(g.transmissao_id));
+    l.appendChild(baixar);
+    const pronto = document.createElement('button'); pronto.className = 'pil';
+    pronto.id = 'ja-baixei-' + g.transmissao_id;
+    pronto.textContent = 'Já baixei — pode apagar';
+    pronto.onclick = () => jaBaixei(g, pronto);
+    l.appendChild(pronto);
+    cx.appendChild(l);
+  }
+  p.appendChild(cx);
 }
 
 function mmss(seg) {
@@ -733,6 +811,7 @@ async function baterPonto() {
 function desenharTransmissao() {
   const p = $('palco');
   limpar(p); p.dataset.montado = '';
+  avisoDeGravacao(p);
   const meu = (S.usuario || {}).email;
   const cams = S.cameras || [];
   if (!cams.length) {
@@ -937,7 +1016,34 @@ $('btn-cheia').addEventListener('click', () => {
   const alvo = $('palco');
   if (document.fullscreenElement) document.exitFullscreen(); else if (alvo.requestFullscreen) alvo.requestFullscreen();
 });
-$('btn-sair').addEventListener('click', async () => { await api('/api/sair', { method: 'POST' }); location.reload(); });
+/* O cliente saiu da tela (fechou, desligou o computador): avisa o lado terra na hora — e' o que faz o
+   arquivo da gravacao ser apagado. Sem isto, a varredura do lado terra apaga sozinha depois do prazo. */
+function avisarQueSaio() {
+  try {
+    const corpo = JSON.stringify({ embarcacao_id: S.embarcacaoId || '' });
+    const bolo = new Blob([corpo], { type: 'application/json' });
+    if (!(navigator.sendBeacon && navigator.sendBeacon('/api/transmissao/sair', bolo))) {
+      fetch('/api/transmissao/sair', { method: 'POST', body: corpo, keepalive: true });
+    }
+  } catch (e) { /* a varredura do lado terra apaga depois do prazo */ }
+}
+
+/* Gravacao pronta e ainda NAO baixada: o navegador avisa antes de a tela sumir. */
+window.addEventListener('beforeunload', (ev) => {
+  if (gravacoesNaoBaixadas().length) {
+    ev.preventDefault();
+    ev.returnValue = 'Há gravação para baixar: ela é apagada quando você sair da tela.';
+    return ev.returnValue;
+  }
+});
+
+window.addEventListener('pagehide', avisarQueSaio);
+
+$('btn-sair').addEventListener('click', async () => {
+  avisarQueSaio();                                        /* apaga o que foi gravado para ele */
+  await api('/api/sair', { method: 'POST' });
+  location.reload();
+});
 $('embarcacao').addEventListener('change', (ev) => {
   S.embarcacaoId = ev.target.value; S.cameras = []; S.selecionadas = new Set(); S.pagina = 1;
   atualizar();

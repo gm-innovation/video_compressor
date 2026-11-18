@@ -21,6 +21,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -110,6 +111,53 @@ def estado(tid: str) -> dict:
             "bytes": vendo.stat().st_size if vendo.exists() else 0,
             "segundos": _segundos_desde(f.get("iniciado_em")) if vivo else 0,
             "fluxo_id": f.get("fluxo_id", "")}
+
+
+# --- Download x apagamento ----------------------------------------------------------------
+# O cliente baixa e SAI da tela; o arquivo e' apagado (decisao do dono, 18/11/2026). Sem esta
+# trava, o arquivo podia ser apagado no meio de um download e o cliente levaria um mp4 pela
+# metade. `abrir_para_baixar`/`fechar_para_baixar` marcam o download em andamento; `apagar`
+# espera ele terminar (quem chama tenta de novo no proximo ciclo).
+_baixando: dict[str, int] = {}
+_trava_baixando = threading.Lock()
+
+
+def abrir_para_baixar(tid: str) -> None:
+    with _trava_baixando:
+        _baixando[tid] = _baixando.get(tid, 0) + 1
+
+
+def fechar_para_baixar(tid: str) -> None:
+    with _trava_baixando:
+        if _baixando.get(tid):
+            _baixando[tid] -= 1
+            if _baixando[tid] <= 0:
+                _baixando.pop(tid, None)
+
+
+def baixando(tid: str) -> bool:
+    with _trava_baixando:
+        return bool(_baixando.get(tid))
+
+
+def apagar(tid: str) -> dict:
+    """APAGA O ARQUIVO da gravacao (mp4 final, sobra .parcial, ficha e log).
+
+    Nao apaga o HISTORICO: quem pediu, quem gravou, quem baixou e quando foi apagado continuam na
+    auditoria. Devolve `adiado` quando ha' download em andamento — quem chama tenta depois.
+    """
+    if baixando(tid):
+        return {"ok": False, "adiado": True, "motivo": "tem download em andamento", "bytes": 0, "arquivos": []}
+    livre, apagados = 0, []
+    for p in (arquivo(tid), parcial(tid), _trava(tid), diretorio() / f"{sanitizar(tid)}.log"):
+        try:
+            if p.exists():
+                livre += p.stat().st_size
+                p.unlink()
+                apagados.append(p.name)
+        except Exception:
+            pass
+    return {"ok": True, "adiado": False, "bytes": livre, "arquivos": apagados}
 
 
 def _porta() -> int:
@@ -210,14 +258,38 @@ def listar() -> list:
 
 
 def limpar_orfas() -> int:
-    """Gravacao com processo morto (a maquina reiniciou): a ficha fica marcada, o arquivo nao some."""
+    """Sobra de gravacao (a maquina reiniciou no meio): remonta o que der, limpa a sobra e marca.
+
+    A VPS tem de ficar so' com o que foi gravado (dono, 18/11/2026): o fragmento bom vira mp4 final,
+    a sobra imprestavel some. Nada de HISTORICO se apaga aqui — so' arquivo de video.
+    Devolve quantas gravacoes ficaram orfas (marca na ficha), como antes.
+    """
     n = 0
-    for f in diretorio().glob("*.json"):
-        d = _ficha(f.stem)
-        if d.get("pid") and not _processo_vivo(d["pid"]):
-            # a maquina morreu gravando: o parcial continua no disco (nao se apaga nada) e fica marcado
-            _gravar_ficha(f.stem, {**d, "pid": 0, "orfao": True})
-            n += 1
+    for f in sorted(diretorio().glob("*.json")):
+        tid = f.stem
+        d = _ficha(tid)
+        if not (d.get("pid") and not _processo_vivo(d["pid"])):
+            continue
+        # o fragmento sobreviveu ao reboot: tenta fechar o mp4 final (senao ele fica imprestavel)
+        if parcial(tid).exists() and parcial(tid).stat().st_size > 0:
+            if not (arquivo(tid).exists() and arquivo(tid).stat().st_size > 0):
+                try:
+                    subprocess.run([caminho_ffmpeg(), "-nostdin", "-loglevel", "error", "-i", str(parcial(tid)),
+                                    "-c", "copy", "-movflags", "+faststart", "-y", str(arquivo(tid))],
+                                   capture_output=True, timeout=180)
+                    if arquivo(tid).exists() and arquivo(tid).stat().st_size > 0:
+                        d = {**d, "bytes": arquivo(tid).stat().st_size,
+                             "aviso": "mp4 final remontado no start (a maquina caiu gravando)"}
+                        parcial(tid).unlink(missing_ok=True)
+                except Exception:
+                    pass
+            else:
+                try:                       # o final esta' bom: o fragmento e' so' sobra
+                    parcial(tid).unlink()
+                except Exception:
+                    pass
+        _gravar_ficha(tid, {**d, "pid": 0, "orfao": True})
+        n += 1
     return n
 
 

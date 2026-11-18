@@ -216,7 +216,8 @@ def main() -> int:
             pag_b.on("pageerror", lambda e: erros.append("B: " + str(e)))
             entrar(pag_b, base, "segundo.cliente@lecsor.test")
             tela_transmitir(pag_b)
-            texto_b = estado_da(pag_b, cam)
+            # o render da tela depende do primeiro /api/transmissao: espera em vez de amostrar
+            texto_b = esperar_texto(pag_b, cam, "outro cliente")
             checar("o segundo cliente ve que outro esta' assistindo", "outro cliente" in texto_b.lower(), texto_b)
             pag_b.click(f"#iniciar-{cam}")
             esperar_texto(pag_b, cam, "pedido enviado")

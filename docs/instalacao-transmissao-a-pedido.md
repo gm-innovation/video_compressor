@@ -14,7 +14,8 @@ Este documento diz o que muda na máquina de captura e o que o cliente faz (nada
    Ao estourar, a transmissão **para**; o cliente **reinicia** se quiser (nada reinicia sozinho).
    **Exceção:** se estiver **gravando**, o corte não acontece.
 5. **Gravações** → histórico do que já foi transmitido, com o **tempo** e o **download** do arquivo.
-   Nada é apagado do histórico.
+   Ao terminar uma gravação, a tela **avisa para baixar**: o arquivo é **apagado quando ele sair da tela**
+   (ver §3.1). Do histórico, **nada** é apagado.
 6. **Fechar a tela ou desligar o computador derruba só a sessão de quem fechou.**
    Se outro cliente da mesma empresa estiver vendo, continua vendo; quando ninguém mais está vendo,
    a câmera para no bordo.
@@ -65,6 +66,24 @@ como atendida — ele nunca inventa sucesso.
 No **lado terra** (variável `LECSOR_GRAVACOES_DIR`), do vídeo que **já chegou** pela rede: gravar no bordo
 gastaria o link duas vezes. A cópia é `-c copy` (sem recodificar). O arquivo em andamento fica `.parcial.mp4`
 fragmentado (sobrevive a queda) e vira `.mp4` ao parar. O download exige a sessão do dono da transmissão.
+
+## 3.1 O ciclo da gravação: avisa para baixar, e o arquivo sai quando o cliente sai (18/11/2026)
+
+O dono fixou: **a VPS mantém só o que foi gravado, e só até o cliente baixar**. Na prática:
+
+1. Ao **final da gravação**, a tela do cliente mostra a faixa **"Gravação pronta — baixe agora"**, com o
+   tamanho, o tempo gravado e **até quando** o arquivo fica. A faixa fica enquanto ele estiver na tela.
+2. O cliente clica em **Baixar** (o navegador salva o `.mp4`) — ou em **"Já baixei — pode apagar"**, e o
+   arquivo sai na hora.
+3. **Quando ele sai da tela ou desliga o sistema, os arquivos dele são apagados**; o bordo é mandado
+   parar se ninguém mais estiver vendo.
+4. Se a tela morrer sem avisar (queda de luz, navegador travado), o lado terra **apaga sozinho** depois de
+   `LECSOR_MINUTOS_PARA_BAIXAR` (padrão **15 min**) — o arquivo nunca fica para sempre.
+5. **Download em curso não é cortado**: o apagamento espera o download terminar (o cliente nunca leva um
+   arquivo pela metade).
+6. **O que NUNCA é apagado é a trilha:** pedido, gravação, aviso, download e apagamento ficam na auditoria
+   e na tabela `gravacoes` (com autor e data). A operação vê tudo isso em "Enviar vídeo"
+   (*Gravações*: tamanho, quem gravou, se baixou e **quando o arquivo saiu**).
 
 ## 4. Regra de credencial (não é opcional)
 

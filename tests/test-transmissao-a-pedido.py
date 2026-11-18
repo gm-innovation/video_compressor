@@ -447,6 +447,106 @@ def main() -> int:
         tempos_volta = j.get("tempos") or []
         exigir(300 in tempos_volta and 7200 in tempos_volta,
                f"sem teto, a lista volta inteira ({tempos_volta})")
+
+        # --- 13) GRAVACAO: avisa para baixar, apaga quando o cliente sai, e o HISTORICO FICA --------
+        # A gravacao de VERDADE (mediamtx + ffmpeg + ffprobe) e' provada em test-gravacao-no-lado-terra.
+        # Aqui se prova o LADO DA API: o aviso ao cliente, o apagamento quando ele sai (ou confirma o
+        # download) e a trilha que NUNCA e' apagada — e o que o dono fixou em 18/11/2026.
+        pasta = pathlib.Path(env["LECSOR_GRAVACOES_DIR"])
+        pasta.mkdir(parents=True, exist_ok=True)
+
+        def sessao_encerrada(tid, email, cam):
+            """Uma sessao que ja' terminou (a gravacao dela ficou pronta para baixar)."""
+            c2 = sqlite3.connect(banco)
+            c2.execute("""INSERT OR REPLACE INTO transmissoes
+                          (id,seq,embarcacao_id,camera_id,fluxo_id,usuario_email,segundos_max,criada_em,
+                           batimento_em,termina_em,encerrada_em,estado,motivo,gravando)
+                          VALUES (?,0,'bancada',?,'',?,900,?,?,?,?,'encerrada','a gravacao acabou',0)""",
+                       (tid, cam, email, agora_iso(-700), agora_iso(-700), agora_iso(-400), agora_iso(-400)))
+            c2.commit(); c2.close()
+
+        def ficha_de_gravacao(tid, email, cam, arquivo, bytes_, segundos, pronta_ha_s):
+            arquivo.write_bytes(b"\x00" * bytes_)
+            sessao_encerrada(tid, email, cam)
+            c2 = sqlite3.connect(banco)
+            c2.execute("""INSERT OR REPLACE INTO gravacoes
+                          (transmissao_id,embarcacao_id,usuario_email,camera_id,comecou_em,bytes,segundos,
+                           pronta_em,avisada_em,baixada_em,apagada_em)
+                          VALUES (?,?,?,?,?,?,?,?,'','','')""",
+                       (tid, "bancada", email, cam, agora_iso(-700), bytes_, segundos,
+                        agora_iso(-pronta_ha_s)))
+            c2.commit(); c2.close()
+
+        tid_g = "t-gravacao-da-api"
+        arq_g = pasta / f"{tid_g}.mp4"
+        ficha_de_gravacao(tid_g, "cliente@pipeline.test", "cam-01", arq_g, 4096, 42, 60)
+
+        s, j = pedir("GET", base + "/api/transmissao?embarcacao=bancada", token_sessao=tok_cli)
+        prontas = j.get("gravacoes_prontas") or []
+        exigir(any(g["transmissao_id"] == tid_g for g in prontas),
+               f"o cliente e' avisado da gravacao pronta ({[g.get('transmissao_id') for g in prontas]})")
+        exigir(all(g.get("baixar_em") and g.get("baixar_ate") for g in prontas),
+               "o aviso traz o link de baixar e ate' quando o arquivo fica")
+        con = sqlite3.connect(banco)
+        avisos = con.execute("SELECT COUNT(*) FROM auditoria_acesso WHERE acao='gravacao_avisada'").fetchone()[0]
+        con.close()
+        exigir(avisos >= 1, f"a auditoria registra que o cliente foi avisado ({avisos})")
+
+        s, j = pedir("GET", base + "/api/transmissao?embarcacao=bancada", token_sessao=tok_op)
+        exigir(not (j.get("gravacoes_prontas") or []),
+               "o AVISO de baixar e' so' do cliente — a operacao nao recebe o link de download do cliente")
+        trilha_op = [g for g in (j.get("gravacoes") or []) if g.get("transmissao_id") == tid_g]
+        exigir(bool(trilha_op) and not trilha_op[0].get("baixar_em"),
+               "a operacao recebe a TRILHA (tamanho, quem gravou, quando saiu), sem link do arquivo")
+
+        s, j = pedir("GET", base + "/api/transmissao/pedidos", token_sessao=tok_op)
+        trilha = [g for g in (j.get("gravacoes") or []) if g.get("transmissao_id") == tid_g]
+        exigir(bool(trilha) and trilha[0].get("no_disco") is True,
+               f"a operacao ve a gravacao na trilha, com o arquivo no disco ({trilha[:1]})")
+        s, j = pedir("GET", base + "/api/transmissao/pedidos", token_sessao=tok_cli)
+        exigir(s == 403, f"o cliente nao entra na trilha da operacao ({s})")
+
+        s, corpo_baixado = baixar(base + "/api/gravacoes/" + tid_g, tok_cli)
+        exigir(s == 200 and len(corpo_baixado) == 4096,
+               f"o cliente baixa o arquivo pela web ({s}, {len(corpo_baixado)} B)")
+        s, _ = baixar(base + "/api/gravacoes/" + tid_g, tok_cli2)
+        exigir(s == 403, f"outro cliente nao baixa a gravacao alheia ({s})")
+
+        # SAIR DA TELA (ou desligar o sistema): o ARQUIVO e' apagado; o historico/auditoria ficam.
+        s, j = pedir("POST", base + "/api/transmissao/sair", {"embarcacao_id": "bancada"}, token_sessao=tok_cli)
+        exigir(s == 200 and tid_g in (j.get("apagadas") or []),
+               f"sair da tela apaga o arquivo ({s} {j.get('apagadas')})")
+        exigir(not arq_g.exists(), "e o arquivo NAO esta' mais no disco")
+        con = sqlite3.connect(banco)
+        quantas_apagadas = con.execute("SELECT COUNT(*) FROM auditoria_acesso "
+                                       "WHERE acao='gravacoes_apagadas'").fetchone()[0]
+        linha_g = con.execute("SELECT apagada_em, baixada_em, bytes FROM gravacoes "
+                              "WHERE transmissao_id=?", (tid_g,)).fetchone()
+        con.close()
+        exigir(quantas_apagadas >= 1, f"a auditoria guarda o apagamento ({quantas_apagadas})")
+        exigir(bool(linha_g) and bool(linha_g[0]) and bool(linha_g[1]),
+               f"a linha da gravacao FICA: quanto tinha, quando baixou e quando foi apagada ({linha_g})")
+        s, j = pedir("GET", base + "/api/transmissao?embarcacao=bancada", token_sessao=tok_cli)
+        exigir(not any(g.get("transmissao_id") == tid_g for g in (j.get("gravacoes_prontas") or [])),
+               "o aviso some depois que o arquivo sai")
+
+        # "JA' BAIXEI — pode apagar": o cliente confirma e o arquivo sai NA HORA (so' o dono apaga).
+        tid_g2 = "t-gravacao-ja-baixei"
+        arq_g2 = pasta / f"{tid_g2}.mp4"
+        ficha_de_gravacao(tid_g2, "cliente2@pipeline.test", "cam-02", arq_g2, 2048, 10, 10)
+        s, j = pedir("POST", base + f"/api/gravacoes/{tid_g2}/pronto", {}, token_sessao=tok_cli)
+        exigir(s == 403, f"o cliente nao apaga a gravacao de outro ({s})")
+        s, j = pedir("POST", base + f"/api/gravacoes/{tid_g2}/pronto", {}, token_sessao=tok_cli2)
+        exigir(s == 200 and j.get("apagada") is True, f"ja' baixei apaga o arquivo na hora ({s} {j})")
+        exigir(not arq_g2.exists(), "e o arquivo sai do disco")
+        con = sqlite3.connect(banco)
+        continuam = con.execute("SELECT COUNT(*) FROM gravacoes WHERE transmissao_id IN (?,?)",
+                                (tid_g, tid_g2)).fetchone()[0]
+        con.close()
+        exigir(continuam == 2, f"as LINHAS da trilha continuam (nada de historico apagado) ({continuam}/2)")
+
+        s, j = pedir("POST", base + "/api/transmissao/sair", {}, token_bordo=TOKEN)
+        exigir(s == 401, f"sem login, sair nao apaga nada ({s})")
     finally:
         api.terminate()
         try:

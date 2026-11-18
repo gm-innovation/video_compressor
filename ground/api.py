@@ -258,7 +258,169 @@ def _vigiar_uma_vez(agora: dt.datetime | None = None) -> dict:
         if            fechar_transmissao(t["id"], "sem_sinal",
                                "a maquina de captura nao concluiu o pedido (sem resposta)"):
             feitas["sem_resposta"].append(t["id"])
+    # gravacao pronta que ninguem baixou (a tela morreu sem avisar): o arquivo sai sozinho no prazo
+    try:
+        vencidas = apagar_gravacoes_vencidas()
+        if vencidas["apagadas"]:
+            feitas["gravacoes_vencidas"] = vencidas["apagadas"]
+    except Exception as e:
+        print("[api] aviso: limpeza das gravacoes vencidas:", type(e).__name__, e, flush=True)
     return feitas
+
+
+# -------------------------------------- gravacao: avisar para baixar e apagar quando o cliente sai
+# Decisao do dono (18/11/2026): a VPS mantem SO' O QUE FOI GRAVADO, e so' ate' o cliente baixar. No
+# fim da gravacao o cliente e' AVISADO para baixar; quando ele sai da tela (ou desliga o sistema) o
+# ARQUIVO e' apagado. O HISTORICO nao: `gravacoes` e a auditoria contam quem pediu, quem gravou, quem
+# baixou e quando o arquivo saiu — sempre se sabe quais acoes foram tomadas e por quem.
+MINUTOS_PARA_BAIXAR_PADRAO = 15.0
+
+
+def minutos_para_baixar() -> float:
+    """Quanto tempo o arquivo espera o cliente baixar (env `LECSOR_MINUTOS_PARA_BAIXAR`, padrao 15)."""
+    try:
+        return max(0.5, float(os.environ.get("LECSOR_MINUTOS_PARA_BAIXAR") or MINUTOS_PARA_BAIXAR_PADRAO))
+    except Exception:
+        return MINUTOS_PARA_BAIXAR_PADRAO
+
+
+def _somar_minutos(carimbo, minutos: float) -> str:
+    """`carimbo` + minutos, no mesmo formato do banco (ISO). Carimbo torto devolve ''."""
+    try:
+        return (dt.datetime.fromisoformat(str(carimbo))
+                + dt.timedelta(minutes=float(minutos))).isoformat(timespec="seconds")
+    except Exception:
+        return ""
+
+
+def registrar_gravacao_comecou(t) -> None:
+    """A gravacao comecou: abre a ficha no banco (bytes/segundos entram quando ela fica pronta)."""
+    with conexao() as c:
+        c.execute("""INSERT INTO gravacoes (transmissao_id,embarcacao_id,usuario_email,camera_id,comecou_em)
+                     VALUES (?,?,?,?,?) ON CONFLICT(transmissao_id) DO UPDATE SET
+                       usuario_email=excluded.usuario_email, camera_id=excluded.camera_id""",
+                  (t["id"], t["embarcacao_id"], t["usuario_email"], t["camera_id"], em_iso()))
+
+
+def registrar_gravacao_pronta(tid: str, r: dict) -> None:
+    """A gravacao acabou: o arquivo esta' pronto e o cliente TEM de ser avisado."""
+    with conexao() as c:
+        c.execute("UPDATE gravacoes SET bytes=?, segundos=?, pronta_em=? WHERE transmissao_id=?",
+                  (int(r.get("bytes") or 0), int(r.get("segundos") or 0), em_iso(), tid))
+
+
+def gravacoes_prontas_do_cliente(email: str, embarcacao_id: str = "") -> list:
+    """As gravacoes prontas e ainda no disco deste cliente — o aviso da tela sai daqui."""
+    with conexao() as c:
+        if embarcacao_id:
+            linhas = [dict(x) for x in c.execute(
+                """SELECT * FROM gravacoes WHERE usuario_email=? AND apagada_em='' AND embarcacao_id=?
+                   ORDER BY pronta_em DESC LIMIT 20""", (email, embarcacao_id)).fetchall()]
+        else:
+            linhas = [dict(x) for x in c.execute(
+                """SELECT * FROM gravacoes WHERE usuario_email=? AND apagada_em=''
+                   ORDER BY pronta_em DESC LIMIT 20""", (email,)).fetchall()]
+    saidas = []
+    for g in linhas:
+        if not g.get("pronta_em"):
+            continue                       # ainda gravando: nao ha' o que baixar
+        if not (gravacao_modulo.arquivo(g["transmissao_id"]).exists()
+                or gravacao_modulo.parcial(g["transmissao_id"]).exists()):
+            continue                       # o arquivo ja' nao esta' no disco
+        saidas.append({"transmissao_id": g["transmissao_id"], "camera_id": g["camera_id"],
+                       "embarcacao_id": g["embarcacao_id"], "bytes": int(g.get("bytes") or 0),
+                       "segundos": int(g.get("segundos") or 0), "pronta_em": g.get("pronta_em", ""),
+                       "avisada_em": g.get("avisada_em", ""), "baixada_em": g.get("baixada_em", ""),
+                       "baixar_em": f"/api/gravacoes/{g['transmissao_id']}",
+                       "baixar_ate": _somar_minutos(g.get("pronta_em"), minutos_para_baixar())})
+    return saidas
+
+
+def marcar_gravacoes_avisadas(email: str, ip: str = "") -> int:
+    """A primeira vez que o cliente ve o aviso: registra `gravacao_avisada` (uma vez por gravacao)."""
+    n = 0
+    for g in gravacoes_prontas_do_cliente(email):
+        if g.get("avisada_em"):
+            continue
+        with conexao() as c:
+            c.execute("UPDATE gravacoes SET avisada_em=? WHERE transmissao_id=? AND avisada_em=''",
+                      (em_iso(), g["transmissao_id"]))
+        auditar(None, "gravacao_avisada",
+                f"{g['camera_id']} de {email} ({g['bytes']} B) — baixe antes de sair da tela", ip)
+        n += 1
+    return n
+
+
+def apagar_gravacoes_do_cliente(u, motivo: str, ip: str = "", embarcacao_id: str = "") -> dict:
+    """APAGA os ARQUIVOS das gravacoes prontas deste cliente. Historico e auditoria NAO sao tocados."""
+    feito = {"apagadas": [], "adiadas": [], "bytes": 0, "motivo": motivo}
+    for g in gravacoes_prontas_do_cliente(u["email"], embarcacao_id):
+        r = gravacao_modulo.apagar(g["transmissao_id"])
+        if r.get("adiado"):
+            feito["adiadas"].append(g["transmissao_id"])      # tem download em andamento: tenta depois
+            continue
+        with conexao() as c:
+            c.execute("UPDATE gravacoes SET apagada_em=? WHERE transmissao_id=?",
+                      (em_iso(), g["transmissao_id"]))
+        feito["bytes"] += int(r.get("bytes") or 0)
+        feito["apagadas"].append(g["transmissao_id"])
+        auditar(u, "gravacoes_apagadas",
+                f"{g['camera_id']} de {u['email']} ({r.get('bytes', 0)} B) — {motivo}", ip)
+    return feito
+
+
+def gravacoes_recentes(limite: int = 50) -> list:
+    """As gravacoes recentes de TODAS as embarcacoes (a operacao ve a trilha: quem, quanto, quando
+    baixou e quando o ARQUIVO foi apagado — nunca o conteudo de outro cliente)."""
+    with conexao() as c:
+        linhas = [dict(x) for x in c.execute(
+            """SELECT * FROM gravacoes ORDER BY comecou_em DESC LIMIT ?""", (int(limite),)).fetchall()]
+        nomes_emb = {r["id"]: r["nome"] for r in c.execute("SELECT id,nome FROM embarcacoes")}
+    for g in linhas:
+        g["embarcacao_nome"] = nomes_emb.get(g["embarcacao_id"], g["embarcacao_id"])
+        g["no_disco"] = bool(gravacao_modulo.arquivo(g["transmissao_id"]).exists())
+        g["baixar_ate"] = _somar_minutos(g.get("pronta_em"), minutos_para_baixar()) if g.get("pronta_em") else ""
+    return linhas
+
+
+def gravacoes_da_embarcacao(embarcacao_id: str) -> list:
+    """O que a OPERACAO ve: as gravacoes da embarcacao e QUANDO cada arquivo foi apagado.
+
+    Nunca o conteudo de outro cliente — so' a trilha: quem pediu, quanto tinha, se baixou e quando o
+    arquivo saiu (o dono quer saber sempre quais acoes foram tomadas e por quem).
+    """
+    with conexao() as c:
+        linhas = [dict(x) for x in c.execute(
+            """SELECT * FROM gravacoes WHERE embarcacao_id=? ORDER BY comecou_em DESC LIMIT 50""",
+            (embarcacao_id,)).fetchall()]
+    for g in linhas:
+        g["no_disco"] = bool(gravacao_modulo.arquivo(g["transmissao_id"]).exists())
+        g["baixar_ate"] = _somar_minutos(g.get("pronta_em"), minutos_para_baixar()) if g.get("pronta_em") else ""
+    return linhas
+
+
+def apagar_gravacoes_vencidas() -> dict:
+    """Rede de seguranca: gravacao pronta que ninguem baixou (a tela morreu sem avisar) sai sozinha."""
+    limite = (dt.datetime.now(dt.timezone.utc)
+              - dt.timedelta(minutes=minutos_para_baixar())).isoformat(timespec="seconds")
+    with conexao() as c:
+        vencidas = [dict(x) for x in c.execute(
+            """SELECT * FROM gravacoes WHERE apagada_em='' AND pronta_em <> '' AND pronta_em < ?""",
+            (limite,)).fetchall()]
+    feito = {"apagadas": [], "adiadas": []}
+    for g in vencidas:
+        r = gravacao_modulo.apagar(g["transmissao_id"])
+        if r.get("adiado"):
+            feito["adiadas"].append(g["transmissao_id"])
+            continue
+        with conexao() as c:
+            c.execute("UPDATE gravacoes SET apagada_em=? WHERE transmissao_id=?",
+                      (em_iso(), g["transmissao_id"]))
+        feito["apagadas"].append(g["transmissao_id"])
+        auditar(None, "gravacoes_apagadas",
+                f"{g['camera_id']} de {g['usuario_email']} ({r.get('bytes', 0)} B) — "
+                "o prazo para baixar terminou", "")
+    return feito
 
 
 def vigiar_transmissoes(intervalo: float = 5.0) -> None:
@@ -1289,7 +1451,9 @@ class Handler(SimpleHTTPRequestHandler):
                 a["camera_rotulo"] = nomes_cam.get(a["camera_id"], a["camera_id"])
             return self._json(200, {"agora": em_iso(), "tempos": list(TEMPOS_DE_TRANSMISSAO),
                                     "teto_do_produto_s": tempo_maximo_do_produto(),
-                                    "pedidos": abertas}, {"Cache-Control": "no-store"})
+                                    "prazo_para_baixar_min": int(minutos_para_baixar()),
+                                    "pedidos": abertas,
+                                    "gravacoes": gravacoes_recentes()}, {"Cache-Control": "no-store"})
         if rota == "/api/transmissao":
             # A TELA DO CLIENTE: o que esta' no ar, o historico e o tempo configurado. O cliente so'
             # alcanca embarcacao da propria empresa; operacao/admin acompanham qualquer uma.
@@ -1300,6 +1464,12 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(422, {"erro": "informe a embarcacao"})
             if u["papel"] not in PAPEL_ADMIN and not self._embarcacao_do_cliente(u, emb):
                 return self._json(403, {"erro": "esta embarcacao nao e' da sua empresa"})
+            # avisou o cliente? registra UMA vez por gravacao (gravacao_avisada na auditoria)
+            if u["papel"] == "cliente":
+                try:
+                    marcar_gravacoes_avisadas(u["email"], self.client_address[0])
+                except Exception:
+                    pass
             with conexao() as c:
                 # as abertas passam pelo mesmo enfeite do historico: a tela precisa do estado da
                 # gravacao (e do tempo restante) tambem nas transmissoes que estao' no ar
@@ -1319,6 +1489,12 @@ class Handler(SimpleHTTPRequestHandler):
                                     "tempo_maximo_s": meu_tempo,
                                     "teto_do_produto_s": teto,
                                     "papel": u["papel"],
+                                    # o CLIENTE recebe o AVISO (o que ele pode baixar, so' o dele); a
+                                    # operacao recebe a TRILHA (o que foi gravado na embarcacao, com o
+                                    # tamanho e quando cada arquivo saiu) — nunca o arquivo alheio.
+                                    ("gravacoes_prontas" if u["papel"] == "cliente" else "gravacoes"):
+                                        (gravacoes_prontas_do_cliente(u["email"], emb)
+                                         if u["papel"] == "cliente" else gravacoes_da_embarcacao(emb)),
                                     "abertas": abertas,
                                     "historico": [self._json_transmissao(t) for t in hist]},
                               {"Cache-Control": "no-store"})
@@ -1334,7 +1510,16 @@ class Handler(SimpleHTTPRequestHandler):
             if not caminho.exists():
                 return self._json(404, {"erro": "esta transmissao nao tem gravacao"})
             auditar(u, "gravacao_baixada", f"{t['camera_id']}", self.client_address[0])
-            return self._enviar_arquivo(caminho, baixar=True)
+            # o arquivo NAO pode ser apagado no meio do download (o cliente pode sair da tela no meio
+            # dele): fica marcado enquanto o download rola, e o apagamento espera terminar.
+            gravacao_modulo.abrir_para_baixar(tid)
+            try:
+                with conexao() as c:
+                    c.execute("""UPDATE gravacoes SET baixada_em=? WHERE transmissao_id=?
+                                 AND baixada_em=''""", (em_iso(), tid))
+                return self._enviar_arquivo(caminho, baixar=True)
+            finally:
+                gravacao_modulo.fechar_para_baixar(tid)
         if rota == "/api/ordens":
             # O AGENTE DO BORDO pergunta o que fazer e obedece direto (nao ha tecnico confirmando).
             # Autorizado pelo token de ingestao. Segura a resposta ate' `espera` segundos quando nao
@@ -1722,6 +1907,24 @@ class Handler(SimpleHTTPRequestHandler):
                               {"Set-Cookie": f"sessao={token}; HttpOnly; SameSite=Lax; Path=/",
                                "Cache-Control": "no-store"})
         if rota == "/api/sair":
+            # SAIR DO SISTEMA: as sessoes do cliente caem e o que foi gravado para ele e' APAGADO
+            # (dono, 18/11/2026: o arquivo sai quando ele sair da tela ou desligar o sistema). O
+            # historico e a auditoria ficam: sempre se sabe quais acoes foram tomadas e por quem.
+            if u:
+                try:
+                    with conexao() as c:
+                        abertas = [dict(x) for x in c.execute(
+                            """SELECT * FROM transmissoes WHERE usuario_email=?
+                               AND estado IN ('pedida','no_ar')""", (u["email"],)).fetchall()]
+                    for t in abertas:
+                        if fechar_transmissao(t["id"], "encerrada", "o cliente saiu do sistema"):
+                            parar_se_ninguem_vendo(t["embarcacao_id"], t["camera_id"], t["fluxo_id"],
+                                                   "o cliente saiu do sistema")
+                    apagar_gravacoes_do_cliente(u, "o cliente saiu do sistema", self.client_address[0])
+                    auditar(u, "cliente_saiu_do_sistema", f"{len(abertas)} sessao(oes) fechada(s)",
+                            self.client_address[0])
+                except Exception as e:
+                    print("[api] aviso: limpeza ao sair:", type(e).__name__, e, flush=True)
             if "Cookie" in self.headers:
                 ck = SimpleCookie(self.headers["Cookie"])
                 if "sessao" in ck:
@@ -2443,6 +2646,7 @@ class Handler(SimpleHTTPRequestHandler):
                 with conexao() as c:
                     c.execute("UPDATE transmissoes SET gravando=1 WHERE id=?", (tid,))
                 auditar(u, "gravacao_iniciada", f"{t['camera_id']}", self.client_address[0])
+                registrar_gravacao_comecou(t)
                 return self._json(200, {"ok": True, "gravando": True, "gravacao": r},
                                   {"Cache-Control": "no-store"})
             r = gravacao_modulo.parar(tid)
@@ -2450,7 +2654,71 @@ class Handler(SimpleHTTPRequestHandler):
                 c.execute("UPDATE transmissoes SET gravando=0 WHERE id=?", (tid,))
             auditar(u, "gravacao_parada", f"{t['camera_id']} ({r.get('bytes', 0)} B)",
                     self.client_address[0])
+            # a gravacao ACABOU: o arquivo esta' pronto e o cliente passa a ser avisado na tela
+            registrar_gravacao_pronta(tid, r)
             return self._json(200, {"ok": True, "gravando": False, "gravacao": r},
+                              {"Cache-Control": "no-store"})
+        if rota.startswith("/api/gravacoes/") and rota.endswith("/pronto"):
+            # "JA' BAIXEI" (dono, 18/11/2026): o cliente confirma o download e o ARQUIVO sai agora — a
+            # linha de `gravacoes` e a auditoria ficam (nunca se perde o que foi feito e por quem).
+            if not u:
+                return self._json(401, {"erro": "entre no sistema"})
+            tid = rota[len("/api/gravacoes/"):-len("/pronto")].strip("/")
+            t, erro, codigo = self._transmissao_da_tela(tid, u)
+            if codigo:
+                return self._json(codigo, {"erro": erro})
+            if u["papel"] == "cliente" and t["usuario_email"] != u["email"]:
+                return self._json(403, {"erro": "esta gravacao nao e' sua"})
+            r = gravacao_modulo.apagar(tid)
+            if r.get("adiado"):
+                return self._json(409, {"erro": "tem um download desta gravacao em andamento; "
+                                                "tente de novo em instantes", "adiado": True},
+                                  {"Cache-Control": "no-store"})
+            with conexao() as c:
+                c.execute("""UPDATE gravacoes SET apagada_em=? WHERE transmissao_id=?""",
+                          (em_iso(), tid))
+            auditar(u, "gravacoes_apagadas", f"{t['camera_id']} ({r.get('bytes', 0)} B) "
+                                             "— o cliente confirmou o download", self.client_address[0])
+            return self._json(200, {"ok": True, "apagada": True, "bytes": r.get("bytes", 0)},
+                              {"Cache-Control": "no-store"})
+        if rota == "/api/transmissao/sair":
+            # O CLIENTE SAIU DA TELA (ou desligou o computador), decisao do dono (18/11/2026): as sessoes
+            # dele caem e o que foi gravado para ele e' APAGADO agora. O historico e a auditoria ficam:
+            # sempre se sabe quais acoes foram tomadas e por quem (o "nada e' apagado" e' a trilha).
+            # A tela chama isto no `pagehide` (sendBeacon) e no botao Sair.
+            if not u:
+                return self._json(401, {"erro": "entre no sistema"})
+            d = self._corpo()
+            emb = str(d.get("embarcacao_id") or "").strip()
+            with conexao() as c:
+                abertas = [dict(x) for x in c.execute(
+                    """SELECT * FROM transmissoes WHERE usuario_email=? AND estado IN ('pedida','no_ar')""",
+                    (u["email"],)).fetchall()]
+            fechadas = 0
+            for t in abertas:
+                if t.get("gravando"):
+                    # gravando, a sessao NAO morre no meio (o dono fixou: gravacao nao e' picada); a
+                    # tela do cliente esta' saindo, entao a gravacao PARA e o arquivo fica pronto para
+                    # ser apagado junto (o aviso nao teria onde aparecer: a tela foi embora).
+                    try:
+                        r = gravacao_modulo.parar(t["id"])
+                        registrar_gravacao_pronta(t["id"], r)
+                        with conexao() as c:
+                            c.execute("UPDATE transmissoes SET gravando=0 WHERE id=?", (t["id"],))
+                        auditar(u, "gravacao_parada",
+                                f"{t['camera_id']} ({r.get('bytes', 0)} B) — o cliente saiu da tela",
+                                self.client_address[0])
+                    except Exception:
+                        pass
+                if fechar_transmissao(t["id"], "encerrada", "a tela do cliente foi fechada"):
+                    fechadas += 1
+                    parar_se_ninguem_vendo(t["embarcacao_id"], t["camera_id"], t["fluxo_id"],
+                                           "o cliente saiu da tela")
+            feito = apagar_gravacoes_do_cliente(u, "o cliente saiu da tela", self.client_address[0], emb)
+            auditar(u, "cliente_saiu_da_tela",
+                    f"{fechadas} sessao(oes) fechada(s), {len(feito['apagadas'])} gravacao(oes) "
+                    f"apagada(s), {feito['bytes']} B", self.client_address[0])
+            return self._json(200, {"ok": True, "sessoes_fechadas": fechadas, **feito},
                               {"Cache-Control": "no-store"})
         if rota == "/api/transmissao/teto":
             # TETO DO PRODUTO (plano, Fase 3 P2): so' o ADMINISTRADOR define o maximo que qualquer

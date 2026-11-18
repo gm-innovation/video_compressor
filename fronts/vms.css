@@ -138,6 +138,16 @@ button.principal{background:var(--marca);color:#fff;border:0;border-radius:9px;p
 .destaque .janela{border-color:var(--borda2)}
 
 /* ---------- transmissao a pedido do cliente (17/11/2026) ---------- */
+/* ---------- aviso de gravacao pronta (baixe antes de sair: o arquivo e' apagado) ---------- */
+.aviso-gravacao{border:1px solid var(--aviso);border-left:4px solid var(--aviso);border-radius:11px;
+  background:#20180a;padding:12px 14px;margin-bottom:12px;min-width:0}
+.aviso-gravacao .aviso-titulo{font-weight:700;color:var(--aviso);font-size:14px}
+.aviso-gravacao .aviso-explica{color:var(--texto2);font-size:12.5px;margin:3px 0 9px}
+.aviso-gravacao .aviso-linha{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  border-top:1px solid #3a2d10;padding-top:9px;margin-top:9px;min-width:0}
+.aviso-gravacao .aviso-linha:first-of-type{border-top:0;padding-top:0;margin-top:0}
+.aviso-gravacao .aviso-nome{font-size:13px;color:var(--texto);min-width:0;flex:1 1 200px}
+.aviso-gravacao .pil{text-decoration:none;color:var(--texto);background:#131c2b}
 .transmissao-caixa,.config-caixa{border:1px solid var(--borda);border-radius:11px;background:var(--painel);overflow:hidden}
 .transmissao-linha{display:flex;align-items:center;gap:12px;padding:13px 15px;border-bottom:1px solid var(--borda)}
 .transmissao-linha:last-child{border-bottom:0}
@@ -169,6 +179,10 @@ table.historico tr:last-child td{border-bottom:0}
   .palco{padding:0 10px 8px}
   .rodape{flex-wrap:wrap;padding:10px 12px 12px}
   .rodape .dir{margin-left:0}
+  .aviso-gravacao{padding:10px 12px}
+  .aviso-gravacao .aviso-linha{gap:8px}
+  .aviso-gravacao .aviso-nome{flex:1 1 100%}
+  .aviso-gravacao .pil{flex:1;text-align:center;min-height:40px}
   .transmissao-linha{flex-wrap:wrap;gap:8px;padding:11px 12px}
   .transmissao-linha .nome{min-width:0;width:100%}
   .transmissao-linha .estado{width:100%;flex:0 0 auto}

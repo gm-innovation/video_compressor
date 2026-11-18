@@ -1053,6 +1053,15 @@ function telaEnvios(t) {
     linhaTeto.textContent = 'só o administrador define o teto do produto.';
   }
   caixaPedidos.appendChild(linhaTeto);
+
+  /* TRILHA DAS GRAVACOES (dono, 18/11/2026): a VPS guarda o arquivo so' ate' o cliente baixar e sair
+     — o que FICA e' esta trilha: quem gravou, quanto tinha, se baixou e quando o arquivo foi apagado. */
+  const tituloGrav = document.createElement('p'); tituloGrav.className = 'nota'; tituloGrav.id = 'env-grav-titulo';
+  tituloGrav.textContent = 'Gravações (o arquivo só fica na VPS até o cliente baixar e sair da tela; '
+    + 'o histórico fica):';
+  caixaPedidos.appendChild(tituloGrav);
+  const listaGravacoes = document.createElement('div'); listaGravacoes.id = 'env-gravacoes';
+  caixaPedidos.appendChild(listaGravacoes);
   t.appendChild(caixaPedidos);
 
   function restanteEmTexto(seg) {
@@ -1060,14 +1069,32 @@ function telaEnvios(t) {
     return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
   }
 
+  function tamanhoEmMB(bytes) { return (Math.max(0, bytes || 0) / 1048576).toFixed(1) + ' MB'; }
+
+  function horaCurta(carimbo) { return carimbo ? (carimbo + '').replace('T', ' ').slice(0, 19) : '—'; }
+
   async function carregarPedidos() {
     listaPedidos.textContent = 'procurando os pedidos abertos...';
     const r = await api('/api/transmissao/pedidos');
     const d = r.corpo || {};
     limpar(listaPedidos);
+    limpar(listaGravacoes);
     if (!r.ok) { listaPedidos.appendChild(recado('não consegui ler os pedidos: ' + JSON.stringify(d), true)); return; }
     const selTeto = document.getElementById('teto-produto');
     if (selTeto) selTeto.value = String(d.teto_do_produto_s || 0);
+    listaGravacoes.appendChild(tabela([
+      { rotulo: 'Começou', valor: (l) => horaCurta(l.comecou_em) },
+      { rotulo: 'Embarcação', valor: (l) => l.embarcacao_nome || l.embarcacao_id },
+      { rotulo: 'Câmera', valor: (l) => l.camera_id },
+      { rotulo: 'Quem gravou', valor: (l) => l.usuario_email },
+      { rotulo: 'Tamanho', valor: (l) => tamanhoEmMB(l.bytes)
+          + (l.segundos ? ' · ' + restanteEmTexto(l.segundos) : '') },
+      { rotulo: 'Baixou', valor: (l) => (l.baixada_em ? 'sim — ' + horaCurta(l.baixada_em) : 'não') },
+      { rotulo: 'Arquivo', valor: (l) => (l.no_disco
+          ? (l.baixar_ate ? 'no disco · o cliente tem até ' + horaCurta(l.baixar_ate) : 'no disco')
+          : (l.apagada_em ? 'apagado em ' + horaCurta(l.apagada_em) : 'ainda não pronto')) },
+    ], (d.gravacoes || []), 'nenhuma gravação ainda'));
+
     listaPedidos.appendChild(tabela([
       { rotulo: 'Embarcação', valor: (l) => l.embarcacao_nome || l.embarcacao_id },
       { rotulo: 'Câmera', valor: (l) => l.camera_rotulo || l.camera_id },

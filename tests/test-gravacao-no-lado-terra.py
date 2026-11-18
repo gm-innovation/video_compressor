@@ -135,6 +135,39 @@ def main():
             gravacao.parar("t-gravacao-orfa")
         checar("a limpeza de orfas nao apaga a gravacao que ja' existe",
                gravacao.limpar_orfas() >= 0 and Path(p["arquivo"]).exists(), "")
+
+        # 5) O ARQUIVO SAI QUANDO O CLIENTE SAI (dono, 18/11/2026). O nucleo e' aqui; o lado da API (o
+        #    aviso ao cliente, o apagamento na saida e a trilha que fica) e' provado em
+        #    tests/test-transmissao-a-pedido.py. O que se prova aqui: download em andamento NAO e' cortado.
+        gravacao.abrir_para_baixar("t-gravacao-1")
+        adiado = gravacao.apagar("t-gravacao-1")
+        checar("com download em andamento o apagamento ESPERA (nao corta o cliente no meio)",
+               bool(adiado.get("adiado")) and Path(p["arquivo"]).exists(),
+               json.dumps(adiado, ensure_ascii=False))
+        gravacao.fechar_para_baixar("t-gravacao-1")
+        apagado = gravacao.apagar("t-gravacao-1")
+        checar("terminado o download, o arquivo e' apagado de verdade",
+               bool(apagado.get("ok")) and not Path(p["arquivo"]).exists() and apagado["bytes"] > 0,
+               json.dumps(apagado, ensure_ascii=False))
+        checar("e nao sobra arquivo nenhum dessa gravacao na pasta",
+               not any(g["transmissao_id"] == "t-gravacao-1" for g in gravacao.listar()), "")
+
+        # 6) sobra de gravacao (a maquina caiu gravando): o fragmento bom vira mp4 final e a sobra sai
+        #    (a VPS fica so' com o que foi gravado — e so' ate' o cliente baixar e sair)
+        sobra = gravacao.parcial("t-sobra")
+        subprocess.run([str(FFMPEG), "-nostdin", "-loglevel", "error", "-f", "lavfi", "-i",
+                        "testsrc2=size=160x120:rate=10", "-t", "1", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                        "-movflags", "+frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", "-y",
+                        str(sobra)], capture_output=True, timeout=90)
+        gravacao._gravar_ficha("t-sobra", {"pid": 999999, "iniciado_em": time.time() - 60,
+                                           "fluxo_id": FLUXO})
+        gravacao.limpar_orfas()
+        checar("a sobra (a maquina caiu gravando) e' remontada no mp4 final e o fragmento sai",
+               gravacao.arquivo("t-sobra").exists() and not sobra.exists(),
+               json.dumps(gravacao.estado("t-sobra"), ensure_ascii=False))
+        checar("e o mp4 remontado tem video de verdade (quem le' e' o ffprobe)",
+               len([s for s in (ffprobe_json(str(gravacao.arquivo("t-sobra"))).get("streams") or [])
+                    if s.get("codec_type") == "video"]) >= 1, "")
     finally:
         for proc in (pub, mt):
             if proc and proc.poll() is None:

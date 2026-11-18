@@ -9,7 +9,9 @@
 --    esta' vendo, a transmissao continua para ele;
 --  * ao estourar o tempo maximo a transmissao PARA e o cliente inicia de novo — a menos que esteja
 --    GRAVANDO (a gravacao mora no lado terra, do video que ja' chegou pela rede);
---  * NADA e' apagado: `transmissoes` e' o historico de tudo que foi feito.
+--  * o HISTORICO nunca e' apagado (dono, 18/11/2026): sempre se sabe quais acoes foram tomadas e por
+--    quem. O que e' apagado e' o ARQUIVO de video, e so' quando o cliente saiu da tela (tabela
+--    `gravacoes`: a LINHA fica, com a hora em que o arquivo saiu).
 
 CREATE TABLE IF NOT EXISTS transmissoes (
   id            TEXT PRIMARY KEY,
@@ -65,3 +67,23 @@ CREATE TABLE IF NOT EXISTS configs_do_produto (
   valor         TEXT NOT NULL,
   atualizado_em TEXT NOT NULL
 );
+
+-- Ficha da GRAVACAO no lado terra (dono, 18/11/2026): a VPS mantem so' o arquivo que foi gravado, e so'
+-- ate' o cliente baixar. O cliente e' AVISADO quando o arquivo fica pronto; quando ele sai da tela (ou
+-- desliga o sistema), o arquivo e' apagado. A LINHA daqui NAO e' apagada: `apagada_em` diz quando o
+-- arquivo saiu, e a auditoria guarda quem pediu, quem gravou, quem baixou e quem apagou (nada de
+-- historico se perde — so' o video, que sai junto com o cliente).
+CREATE TABLE IF NOT EXISTS gravacoes (
+  transmissao_id TEXT PRIMARY KEY,
+  embarcacao_id  TEXT NOT NULL,
+  usuario_email  TEXT NOT NULL,
+  camera_id      TEXT NOT NULL,
+  comecou_em     TEXT NOT NULL,
+  bytes          INTEGER NOT NULL DEFAULT 0,
+  segundos       INTEGER NOT NULL DEFAULT 0,
+  pronta_em      TEXT DEFAULT '',              -- quando o arquivo ficou pronto para o cliente baixar
+  avisada_em     TEXT DEFAULT '',              -- quando o cliente foi avisado na tela
+  baixada_em     TEXT DEFAULT '',              -- quando o cliente baixou
+  apagada_em     TEXT DEFAULT ''               -- quando o ARQUIVO foi apagado (a linha fica)
+);
+CREATE INDEX IF NOT EXISTS ix_gravacoes_do_cliente ON gravacoes(usuario_email, apagada_em);
