@@ -21,7 +21,7 @@ TOKEN = (os.environ.get("GITHUB_TOKEN_FOR_RELEASES") or os.environ.get("GH_TOKEN
 DIST = pathlib.Path.home() / "lecsor-pipeline-video" / "desktop" / "dist"
 PAPEIS = ("Captura", "Terra", "Admin", "Cliente")
 # Ordem de publicacao: o PRIMEIRO e' o `latest` do GitHub. Nova versao entra na frente.
-VERSOES_PUBLICADAS = ("0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
+VERSOES_PUBLICADAS = ("0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
 
 
 def instaladores(versao: str) -> list:
@@ -36,6 +36,26 @@ def instaladores(versao: str) -> list:
     return [DIST / papel.lower() / f"LECSOR-{papel}-{versao}-x64.exe" for papel in PAPEIS]
 
 NOTAS = {
+    "0.6.7": (
+        "**A tela do app passa a ser servida pela própria máquina: é isso que faz o Admin listar as câmeras "
+        "no PC de captura.**\n\n"
+        "A queixa era \"continua não listando as câmeras no app admin no computador de captura\". Medido "
+        "(18/11/2026): a câmera aparecia no `curl` do servidor local, a ponte do app entregava o endereço "
+        "certo, o CORS estava certo — e a página, vinda do lado terra (IP público), **não conseguia falar com "
+        "`http://127.0.0.1:8765`**: o Chromium do app bloqueia pedido de página pública para endereço de "
+        "loopback (`Failed to fetch`). Numa página servida pelo **próprio servidor local** o mesmo pedido "
+        "responde 200 com a câmera.\n\n"
+        "* **O servidor local passa a servir a TELA do app** (mesma origem das rotas de captura) e **encaminha "
+        "ao lado terra** tudo o que não é captura: páginas, css, login, cadastro, usuários, gravações. "
+        "Caminho, método, cookies, corpo e status voltam como vieram; download de vídeo não passa pela "
+        "memória.\n"
+        "* **`/api/eu` volta do lado terra com `local: true`** — o pedido veio pela ponte desta máquina, e é "
+        "isso que mantém os botões de câmera liberados para quem está no PC de captura.\n"
+        "* **Se o servidor local não responder, as telas abrem no lado terra** (nunca em endereço que não "
+        "atende).\n"
+        "* **`tests/test-ponte-do-lado-terra.py`** (novo): sobe um lado terra falso e o servidor local de "
+        "verdade e prova as 8 checagens — **8/8 verde**."
+    ),
     "0.6.6": (
         "**O redesenho da tela não apaga mais o que o operador escolheu ou digitou, e o teste de ponta a "
         "ponta do envio passou a rodar sozinho (verde).**\n\n"

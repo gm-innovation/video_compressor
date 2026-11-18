@@ -167,6 +167,12 @@ const janelas = new Map();
 // instalacao ainda nao tem usuario nenhum"). `enderecoEntrada` guarda a decisao; sem medicao ainda,
 // cai no comportamento antigo. Ver `enderecoDaEntrada()` em `configuracao.js` (testado sem Electron).
 let enderecoEntrada = null;
+// Origem de onde TODAS as telas sao abertas quando a captura e' desta maquina: o servidor LOCAL.
+// E' a mesma origem das rotas de captura (dispositivos, ingestao, compressao) e e' isso que faz o
+// navegador aceitar esses pedidos — uma pagina vinda do lado terra (IP publico) nao pode falar com
+// 127.0.0.1 (medido no Chromium do app: "Failed to fetch"; dono, 18/11/2026). Vazio = sem captura
+// local: as telas abrem direto no lado terra, como sempre foi.
+let baseLocalDaCaptura = '';
 async function definirEnderecoDaEntrada() {
   const porta = (config.servidorLocal || {}).portaApi || 8765;
   const local = 'http://127.0.0.1:' + porta;
@@ -190,13 +196,16 @@ async function definirEnderecoDaEntrada() {
 // estouram com "Failed to fetch" (era o "nao esta' reconhecendo cameras", dono, 18/11/2026). Espera o
 // servidor local responder; se nao responder, as telas abrem e a propria tela diz o motivo.
 async function esperarServidorLocal(tentativas = 12, intervaloMs = 1000) {
-  if (!(config.capturaLocal && config.servidorLocal && config.servidorLocal.ligado)) return null;
+  if (!(config.capturaLocal && config.servidorLocal && config.servidorLocal.ligado)) { baseLocalDaCaptura = ''; return null; }
   const local = 'http://127.0.0.1:' + ((config.servidorLocal || {}).portaApi || 8765);
   for (let i = 0; i < tentativas; i++) {
     const s = await buscarJson(local + '/api/saude', 2000);
-    if (s.status === 200) return local;
+    if (s.status === 200) { baseLocalDaCaptura = local; return local; }
     await new Promise((r) => setTimeout(r, intervaloMs));
   }
+  // Nao respondeu: as telas abrem do lado terra (nunca abrir em endereco que nao atende — era a
+  // pagina em branco / "Failed to fetch").
+  baseLocalDaCaptura = '';
   return null;
 }
 
@@ -210,7 +219,10 @@ function baseDaEntrada() {
 }
 
 function urlDe(nome) {
-  const raiz = nome === 'entrada' ? baseDaEntrada() : config.base;
+  // Com a captura ligada nesta maquina, TODAS as telas vem do servidor LOCAL — a mesma origem das
+  // rotas de captura (dono, 18/11/2026). O servidor local encaminha ao lado terra tudo o que nao e'
+  // captura: a pagina do Admin, o css, o login e o cadastro continuam sendo os do lado terra.
+  const raiz = baseLocalDaCaptura || (nome === 'entrada' ? baseDaEntrada() : config.base);
   return raiz.replace(/\/$/, '') + SUPERFICIES[nome].rota;
 }
 

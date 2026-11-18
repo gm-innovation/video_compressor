@@ -1215,6 +1215,76 @@ class Handler(SimpleHTTPRequestHandler):
         except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
             self.close_connection = True
 
+    # ---- encaminhador para o lado terra (dono, 18/11/2026 — opcao A)
+    # A tela do app passa a ser servida por ESTA maquina: mesma origem das rotas de captura, porque o
+    # navegador nao deixa uma pagina vinda do lado terra (IP publico) falar com 127.0.0.1 (medido:
+    # "Failed to fetch" no Chromium do app, com o servidor local respondendo 200 no curl). Tudo o que
+    # NAO e' rota de captura (e nem a saude local) segue para o lado terra e volta como veio.
+    def _base_do_lado_terra(self) -> str:
+        """Endereco do lado terra: o app passa `LECSOR_LADO_TERRA_API` ao subir o servidor local."""
+        return (os.environ.get("LECSOR_LADO_TERRA_API") or "").strip().rstrip("/")
+
+    def _encaminhar(self, metodo: str) -> None:
+        import http.client
+        base = self._base_do_lado_terra()
+        alvo = urlparse(base)
+        if not alvo.hostname:
+            return self._json(502, {"erro": "esta instalacao nao tem lado terra configurado"})
+        corpo = None
+        if metodo in ("POST", "PUT", "PATCH"):
+            n = int(self.headers.get("Content-Length") or 0)
+            corpo = self.rfile.read(n) if n else None
+        # `X-LECSOR-Ponte` diz ao lado terra que quem fala e' o servidor local DESTA maquina de captura.
+        # Sem compressao no pedido: o corpo da resposta e' repassado byte a byte.
+        cab = {"Host": alvo.netloc, "X-LECSOR-Ponte": socket.gethostname(), "Accept-Encoding": "identity"}
+        for k in ("Cookie", "Authorization", "Content-Type", "Accept", "Range", "User-Agent",
+                  "If-None-Match", "If-Modified-Since"):
+            v = self.headers.get(k)
+            if v:
+                cab[k] = v
+        if corpo is not None:
+            cab["Content-Length"] = str(len(corpo))
+        cn = None
+        try:
+            cn = http.client.HTTPConnection(alvo.hostname, alvo.port or 80, timeout=120)
+            cn.request(metodo, self.path, body=corpo, headers=cab)
+            r = cn.getresponse()
+            devolver = [(k, v) for k, v in r.getheaders()
+                        if k.lower() not in ("transfer-encoding", "connection", "keep-alive")]
+            juntos, corpo_json = None, b""
+            if urlparse(self.path).path == "/api/eu" and r.status == 200:
+                # `/api/eu` diz quem sou eu e se a captura e' DESTA maquina: o lado terra ve o IP do
+                # PC de captura, nao o loopback — e e' isso que libera os botoes de camera. Aqui o
+                # pedido veio pela ponte local, entao a captura e' daqui, por definicao.
+                juntos = json.loads(r.read() or b"{}")
+                juntos["local"] = True
+                corpo_json = json.dumps(juntos, ensure_ascii=False).encode()
+                devolver = [(k, v) for k, v in devolver if k.lower() != "content-length"]
+                devolver.append(("Content-Length", str(len(corpo_json))))
+            self.send_response_only(r.status)
+            for k, v in devolver:
+                self.send_header(k, v)
+            self.end_headers()
+            if juntos is not None:
+                self.wfile.write(corpo_json)
+            else:
+                while True:                      # download de video/relatorio nao passa pela memoria
+                    pedaco = r.read(65536)
+                    if not pedaco:
+                        break
+                    self.wfile.write(pedaco)
+        except Exception as e:
+            try:
+                self._json(502, {"erro": f"o lado terra nao respondeu ({type(e).__name__}: {e})"})
+            except Exception:
+                pass
+        finally:
+            if cn is not None:
+                try:
+                    cn.close()
+                except Exception:
+                    pass
+
     def do_OPTIONS(self) -> None:  # noqa: N802
         """Pre-voo do navegador nas rotas de captura (e' assim que o Admin fala com esta maquina)."""
         rota = urlparse(self.path).path
@@ -1229,6 +1299,10 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         rota = urlparse(self.path).path
+        # A tela do app e' servida AQUI (mesma origem da captura). O que nao e' rota de captura nem a
+        # saude local vai para o lado terra — inclusive as paginas, o css e as rotas de cadastro.
+        if self._base_do_lado_terra() and rota != "/api/saude" and not eh_rota_de_captura(rota):
+            return self._encaminhar("GET")
         u = self._sessao()
         if rota == "/favicon.ico":
             return self._json(204, {}, {"Cache-Control": "max-age=86400"})
@@ -1816,6 +1890,10 @@ class Handler(SimpleHTTPRequestHandler):
     # ---- POST
     def do_POST(self) -> None:  # noqa: N802
         rota = urlparse(self.path).path
+        # POST de captura (ingestao, compressao, medicao, trecho) e' desta maquina; o resto
+        # (entrar, cadastro, usuarios, gravacoes, transmissao pedida) e' do lado terra.
+        if self._base_do_lado_terra() and not eh_rota_de_captura(rota):
+            return self._encaminhar("POST")
         u = self._sessao()
         if rota == "/api/entrar":
             d = self._corpo()

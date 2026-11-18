@@ -65,6 +65,12 @@ function amb(env, config, python) {
   const destino = String(((config || {}).destinoSrt) || '').trim();
   if (destino) saida.LECSOR_DESTINO_SRT = destino;
   else delete saida.LECSOR_DESTINO_SRT;
+  // Onde fica o lado terra: o servidor local serve a TELA do app (mesma origem das rotas de captura,
+  // senao o navegador bloqueia o Admin de falar com 127.0.0.1) e encaminha para ca' tudo o que nao e'
+  // captura. Ver `_encaminhar()` em `ground/api.py` (dono, 18/11/2026).
+  const base = String(((config || {}).base) || '').trim();
+  if (base) saida.LECSOR_LADO_TERRA_API = base;
+  else delete saida.LECSOR_LADO_TERRA_API;
   const sep = process.platform === 'win32' ? ';' : ':';
   const ff = ffmpegDe();
   if (ff) {

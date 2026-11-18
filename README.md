@@ -19,6 +19,18 @@ sistema comprime na máquina e o vídeo comprimido sobe para o lado terra (`dest
 ## Instaladores prontos (Windows x64) — PLUG & PLAY desde a 0.2.0
 Na página de releases: https://github.com/gm-innovation/video_compressor/releases
 
+### 0.6.7 — **a tela do app passa a ser servida pela própria máquina (é o que faz o Admin listar as câmeras)**
+- **`LECSOR-0.6.7-x64.exe`** — queixa: "continua não listando as câmeras no app admin no computador de
+  captura". Medido (18/11/2026): a câmera aparecia no `curl` do servidor local, a ponte do app entregava o
+  endereço certo e o CORS estava certo — mas a página, vinda do lado terra (IP público), **não conseguia
+  falar com `http://127.0.0.1:8765`**: o Chromium bloqueia pedido de página pública para loopback
+  (`Failed to fetch`). Numa página servida pelo **próprio servidor local**, o mesmo pedido responde 200.
+- **O servidor local serve a TELA e encaminha ao lado terra tudo o que não é captura** (páginas, css, login,
+  cadastro, usuários, gravações) — caminho, método, cookies, corpo e status como vieram; download de vídeo
+  não passa pela memória. `/api/eu` volta com `local: true` (botões de câmera liberados aqui). Se o servidor
+  local não responder, as telas abrem no lado terra.
+- **`tests/test-ponte-do-lado-terra.py`** (novo): lado terra falso + servidor local de verdade — **8/8 verde**.
+
 ### 0.6.6 — **o redesenho da tela não apaga mais o que o operador escolheu, e o teste do envio está verde**
 - **`LECSOR-0.6.6-x64.exe`** — a tela do admin se repinta sozinha quando os dados mudam; ao repintar ela
   **recriava os campos do formulário de envio** e o arquivo já escolhido / o texto digitado se perdiam.
