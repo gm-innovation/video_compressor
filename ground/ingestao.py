@@ -942,13 +942,20 @@ def ao_vivo(*, tipo: str = "camera", dispositivo: str | None = None, resolucao: 
     # a webcam do Windows (dshow) so abre UMA vez: dois envios da mesma camera brigam pelo dispositivo
     # e o segundo fica com quadro preto. Melhor recusar com recado claro do que pintar tela preta.
     if tipo == "camera":
-        # a webcam sempre volta sozinha: se algum processo anterior ficou preso segurando o
-        # dispositivo (a rede caiu e o ffmpeg nao soltou a camera), libera ANTES de abrir de novo.
-        livre = liberar_camera(dispositivo)
-        if livre.get("liberados"):
-            print(f"[envios] liberei a webcam \"{livre['dispositivo']}\": {livre['liberados']} processo(s) parado(s)",
-                  flush=True)
+        # a webcam do Windows (dshow) so abre UMA vez.
+        # ORDEM IMPORTA (medido 18/11/2026): primeiro pergunta se ha' ENVIO VIVO segurando a camera;
+        # so' depois de descartar isso e' que se limpa processo PRESO (ffmpeg que morreu sem soltar o
+        # dispositivo). Fazendo a limpeza antes, o proprio envio que esta' no ar era morto em silencio
+        # e o segundo envio era aceito — a tela preta que esta' recusa existe para evitar.
         ocupado = _camera_em_uso(dispositivo)
+        if not ocupado:
+            # a webcam sempre volta sozinha: se algum processo anterior ficou preso segurando o
+            # dispositivo (a rede caiu e o ffmpeg nao soltou a camera), libera ANTES de abrir de novo.
+            livre = liberar_camera(dispositivo)
+            if livre.get("liberados"):
+                print(f"[envios] liberei a webcam \"{livre['dispositivo']}\": {livre['liberados']} processo(s) parado(s)",
+                      flush=True)
+            ocupado = _camera_em_uso(dispositivo)
         if ocupado:
             return {"erro": (f'a webcam "{dispositivo}" ja esta em uso pelo fluxo "{ocupado["rotulo"]}" '
                              f'(id {ocupado["id"]}). Pare esse envio antes de transmitir de novo.'),

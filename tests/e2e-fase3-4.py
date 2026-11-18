@@ -21,7 +21,25 @@ from playwright.sync_api import sync_playwright
 
 RAIZ = Path(__file__).resolve().parents[1]
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8765"
-SENHA = os.environ.get("LECSOR_SENHA_DEMO", "")
+
+
+def senha_de_bancada() -> str:
+    """A senha dos usuarios de demonstracao tem UMA fonte: `ground/.env.local` (ou o ambiente).
+
+    Sem ela o login da' 401 e o teste morre num timeout que nao diz nada. Aqui ela e' lida da fonte.
+    """
+    do_ambiente = os.environ.get("LECSOR_SENHA_DEMO", "")
+    if do_ambiente:
+        return do_ambiente
+    arq = RAIZ / "ground" / ".env.local"
+    if arq.exists():
+        for linha in arq.read_text(encoding="utf-8").splitlines():
+            if linha.strip().startswith("LECSOR_SENHA_DEMO="):
+                return linha.split("=", 1)[1].strip().strip('"').strip("'")
+    return ""
+
+
+SENHA = senha_de_bancada()
 SAIDA = RAIZ / "bench" / "saida"
 SAIDA.mkdir(parents=True, exist_ok=True)
 falhas: list[str] = []

@@ -21,7 +21,7 @@ TOKEN = (os.environ.get("GITHUB_TOKEN_FOR_RELEASES") or os.environ.get("GH_TOKEN
 DIST = pathlib.Path.home() / "lecsor-pipeline-video" / "desktop" / "dist"
 PAPEIS = ("Captura", "Terra", "Admin", "Cliente")
 # Ordem de publicacao: o PRIMEIRO e' o `latest` do GitHub. Nova versao entra na frente.
-VERSOES_PUBLICADAS = ("0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
+VERSOES_PUBLICADAS = ("0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
 
 
 def instaladores(versao: str) -> list:
@@ -36,6 +36,21 @@ def instaladores(versao: str) -> list:
     return [DIST / papel.lower() / f"LECSOR-{papel}-{versao}-x64.exe" for papel in PAPEIS]
 
 NOTAS = {
+    "0.6.5": (
+        "**A webcam não é mais arrancada do envio que já estava no ar, e o campo não interrompe mais quem "
+        "está digitando.**\n\n"
+        "Dois defeitos encontrados ao destravar o teste de ponta a ponta (18/11/2026):\n\n"
+        "* **segundo envio da MESMA webcam**: a limpeza de \"câmera presa\" rodava **antes** de perguntar se "
+        "a câmera estava com um envio VIVO — matava o ffmpeg do envio que estava no ar e aceitava o "
+        "segundo (o quadro preto silencioso que a recusa existe para evitar). Agora a ordem é: se há "
+        "envio vivo, **recusa com o recado** (*a webcam já está em uso pelo fluxo …*); só limpa processo "
+        "preso de execução anterior quando não há envio vivo;\n"
+        "* **formulário de envio**: o redesenho periódico da tela recriava o campo e o foco se perdia no "
+        "meio da digitação (o rótulo digitado sumia). O foco e o cursor voltam para o mesmo campo depois "
+        "do redesenho.\n\n"
+        "Provas: `tests/e2e-envios.py` de ponta a ponta (traz a própria bancada: banco novo + contas de "
+        "demonstração + servidor de mídia) — o passo do cliente, a ocupação da webcam e as medições da "
+        "fonte crua passam.\n"),
     "0.6.4": (
         "**A tela do admin fica limpa e a qualidade do vídeo ao vivo passa a ser a banda (1500 a 300 kbps).**\n\n"
         "Pedido do dono (18/11/2026, verbatim): *\"1. não vejo motivo pra 'Transmissões pedidas pelos clientes' "

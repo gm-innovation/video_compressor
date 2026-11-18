@@ -8,14 +8,89 @@
 5. o que o navegador recebe nao tem endereco interno nem credencial.
 """
 from __future__ import annotations
-import json, os, re, subprocess, sys, time, urllib.parse, urllib.request
+import json, os, pathlib, re, socket, subprocess, sys, tempfile, time, urllib.parse, urllib.request
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
 BASE = os.environ.get("LECSOR_BASE", "http://127.0.0.1:8765")
-SENHA = os.environ.get("LECSOR_SENHA_DEMO", "")
 CLIPE = RAIZ / "analytics" / "midia" / "people-detection.mp4"
+
+
+def senha_de_bancada() -> str:
+    """A senha dos usuarios de demonstracao tem UMA fonte: `ground/.env.local` (ou o ambiente).
+
+    Sem ela o login do cliente vira 401 e o teste morre num timeout de 30 s que nao diz nada
+    ("o fluxo nao aparece"), culpando a tela. Aqui ela e' lida da fonte e, se faltar, o teste
+    grita o motivo em vez de esperar.
+    """
+    do_ambiente = os.environ.get("LECSOR_SENHA_DEMO", "")
+    if do_ambiente:
+        return do_ambiente
+    arq = RAIZ / "ground" / ".env.local"
+    if arq.exists():
+        for linha in arq.read_text(encoding="utf-8").splitlines():
+            if linha.strip().startswith("LECSOR_SENHA_DEMO="):
+                return linha.split("=", 1)[1].strip().strip('"').strip("'")
+    return ""
+
+
+SENHA = senha_de_bancada()
 falhas: list[str] = []
+
+
+def subir_servidor_de_midia(porta: int = 8123):
+    """Serve `analytics/midia` em http://127.0.0.1:8123 — e' o endereco usado pelo envio por LINK.
+
+    Sem ninguem atendendo nessa porta o ffmpeg do envio por link morre na abertura do arquivo
+    (`Error opening input files: -138`): a camera do link nunca fica no ar e o passo do cliente
+    desiste esperando uma janela que nao vai acender. Se a porta ja' estiver ocupada, usa quem esta'.
+    """
+    with socket.socket() as s:
+        try:
+            s.bind(("127.0.0.1", porta))
+        except OSError:
+            print(f"    aviso: a porta {porta} ja' esta' ocupada — usando o servidor que ja' existe")
+            return None
+    return subprocess.Popen([sys.executable, "-m", "http.server", str(porta), "--bind", "127.0.0.1",
+                             "--directory", str(RAIZ / "analytics" / "midia")],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def porta_livre() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def subir_api_semeada() -> tuple:
+    """Sobe a API de verdade, com banco proprio e as contas de demonstracao (`--semear-demo`).
+
+    O passo da grade do cliente precisa de usuario e de camera; o servidor local desta maquina pode
+    estar sem usuario nenhum (instalacao zerada) — era por isso que o teste morria num timeout de
+    30 s sem dizer nada. Aqui o teste traz a propria bancada (banco novo + contas seed) e nao
+    depende do estado da maquina. `LECSOR_BASE` no ambiente continua mandando: aponte para um
+    servidor que ja' existe e o teste usa o de fora.
+    """
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="lecsor-envios-"))
+    env = dict(os.environ)
+    env.update({"LECSOR_BANCO": str(tmp / "pipeline.db"), "LECSOR_SENHA_DEMO": SENHA,
+                "LECSOR_TOKEN_INGESTAO": "token-de-teste-dos-envios", "LECSOR_EMBARCACAO": "bancada",
+                "LECSOR_GRAVACOES_DIR": str(tmp / "gravacoes"), "PYTHONIOENCODING": "utf-8"})
+    for poluido in ("PYTHONPATH", "PYTHONHOME", "LECSOR_SUPABASE_URL", "LECSOR_SUPABASE_ANON_KEY",
+                    "LECSOR_SUPABASE_SERVICE_KEY", "LECSOR_LADO_TERRA_API", "LECSOR_DESTINO_SRT"):
+        env.pop(poluido, None)
+    porta = porta_livre()
+    log = (tmp / "api.log").open("wb")
+    api = subprocess.Popen([sys.executable, str(RAIZ / "ground" / "api.py"), str(porta), "--semear-demo"],
+                           cwd=str(RAIZ), env=env, stdout=log, stderr=subprocess.STDOUT)
+    base = f"http://127.0.0.1:{porta}"
+    for _ in range(60):
+        try:
+            urllib.request.urlopen(base + "/api/saude", timeout=3)
+            return api, base, tmp
+        except Exception:
+            time.sleep(0.5)
+    return api, "", tmp
 
 
 def checar(cond, texto):
@@ -42,8 +117,29 @@ def limpar_testes():
 
 
 def main() -> int:
+    global BASE
     from playwright.sync_api import sync_playwright
+
+    if not SENHA:
+        print("  FALHA sem a senha dos usuarios de demonstracao: ponha LECSOR_SENHA_DEMO no ambiente ou "
+              "em ground/.env.local — sem ela o login do cliente da' 401 e o teste morre num timeout "
+              "que culpa a tela do cliente")
+        return 2
+    if not CLIPE.exists():
+        print(f"  FALHA falta o clipe de bancada: {CLIPE} (midia nao versionada no repositorio) — "
+              "sem ele nao ha' envio por arquivo")
+        return 2
+    api_de_teste = None
+    if not os.environ.get("LECSOR_BASE"):
+        api_de_teste, base, tmp = subir_api_semeada()
+        if not base:
+            print("  FALHA a API de teste nao subiu:", (tmp / "api.log").read_text(errors="replace")[-400:])
+            api_de_teste.terminate()
+            return 2
+        BASE = base
+        print(f"    api de teste: {BASE} (banco {tmp / 'pipeline.db'})")
     limpar_testes()
+    servidor_de_midia = subir_servidor_de_midia()
     with sync_playwright() as pw:
         try:
             nav = pw.chromium.launch(channel="chrome", args=["--autoplay-policy=no-user-gesture-required"])
@@ -113,9 +209,13 @@ def main() -> int:
         pc.wait_for_selector(".grade-vms .janela", timeout=30000)
         # descobre o fluxo enviado pela tela (o mais novo com 'teste' no rotulo)
         d = http("/api/ingestoes")
-        alvos = [i["fluxo_id"] for i in d["ingestoes"] if "teste" in (i["rotulo"] or "").lower()]
+        teste = [i for i in d["ingestoes"] if "teste" in (i["rotulo"] or "").lower()]
+        alvos = [i["fluxo_id"] for i in teste]
         checar(len(alvos) >= 2, "a API registrou os dois envios feitos pela tela")
-        enviado = alvos[0]
+        print("    envios: " + " · ".join(f"{i['fluxo_id']}={i.get('estado')}" for i in teste))
+        # a camera que o cliente TEM de enxergar e' a do envio que ficou no ar (o outro pode ter
+        # morrido por motivo de bancada — ex.: o link sem ninguem atendendo na porta)
+        enviado = next((i["fluxo_id"] for i in teste if i.get("estado") == "no_ar"), alvos[0])
         print("    fluxo enviado:", enviado)
         # o cliente precisa enxergar a camera enviada (mesma embarcacao demo)
         visivel = pc.wait_for_function(
@@ -167,12 +267,13 @@ def main() -> int:
             checar(velha["novo"] == 1, "deteccao fresca desenha a caixa")
             checar("sem detec" in velha["selo"], "o selo explica que a leitura envelheceu: " + velha["selo"][:70])
 
-        # --- 5b) app do admin: o formulario de envio nao se apaga enquanto o usuario digita
+        # --- 5b) tela de envio da OPERACAO (a bancada saiu do admin na 0.6.4): o formulario de envio
+        # nao se apaga enquanto o usuario digita
         # (o redesenho periodico da tela apagava link e rotulo e parecia que "o app voltava ao estado anterior")
         ctx3 = nav.new_context(viewport={"width": 1400, "height": 900})
         pa = ctx3.new_page()
         pa.goto(BASE + "/admin", wait_until="domcontentloaded")
-        pa.fill("#email", "admin@lecsor.test"); pa.fill("#senha", SENHA)
+        pa.fill("#email", "operacao@lecsor.test"); pa.fill("#senha", SENHA)
         pa.click("#form-entrar button")
         pa.wait_for_selector("#sistema:not(.oculto)", timeout=15000)
         item = pa.query_selector("li.item[data-tela='envios'], [data-tela='envios']")
@@ -199,7 +300,7 @@ def main() -> int:
         ctx4 = nav.new_context(viewport={"width": 1600, "height": 1000})
         pb = ctx4.new_page()
         pb.goto(BASE + "/admin", wait_until="domcontentloaded")
-        pb.fill("#email", "admin@lecsor.test"); pb.fill("#senha", SENHA)
+        pb.fill("#email", "operacao@lecsor.test"); pb.fill("#senha", SENHA)
         pb.click("#form-entrar button")
         pb.wait_for_selector("#sistema:not(.oculto)", timeout=15000)
         pb.evaluate("(() => { const b=[...document.querySelectorAll('button,a,li')].find(x=>/Enviar v[ií]deo/i.test(x.textContent)); if(b) b.click(); })()")
@@ -457,6 +558,10 @@ def main() -> int:
         checar(False, f"tempo real / endereço da câmera: falhou ({type(e).__name__}: {e})")
 
     limpar_testes()   # nao deixa os envios do teste poluindo a grade do cliente
+    if servidor_de_midia is not None:
+        servidor_de_midia.terminate()
+    if api_de_teste is not None:
+        api_de_teste.terminate()
     print(("\nTUDO OK" if not falhas else f"\n{len(falhas)} FALHA(S): " + "; ".join(falhas)))
     return 1 if falhas else 0
 

@@ -1018,6 +1018,15 @@ function telaEnvios(t) {
   }
   const guardado = A.envioForm || {};
 
+  // O REDESENHO PERIODICO RECRIA OS CAMPOS. Se o operador esta' digitando quando a tela se redesenha,
+  // o campo nasce de novo, perde o foco e o resto do texto vai para lugar nenhum — era o "o app volta
+  // ao estado anterior". Aqui o foco e o cursor VOLTAM para o mesmo campo depois do redesenho.
+  const focoAntes = (() => {
+    const a = document.activeElement;
+    if (!a || !a.id || (a.tagName !== 'INPUT' && a.tagName !== 'TEXTAREA')) return null;
+    try { return { id: a.id, ini: a.selectionStart, fim: a.selectionEnd }; } catch (e) { return { id: a.id }; }
+  })();
+
   const ehOperador = A.usuario.papel === 'operador';
 
   /* PEDIDOS DOS CLIENTES: SO' A OPERACAO ve' e cancela (dono, 18/11/2026: "nao vejo motivo pra
@@ -1381,6 +1390,13 @@ function telaEnvios(t) {
     qualidade.value = guardado.qualidade || 'auto'; fps.value = guardado.fps || '30';
     audio.value = guardado.audio || '0'; repetir.value = guardado.repetir || '1';
     if (guardado.segundos) segundos.value = guardado.segundos;
+  }
+  if (focoAntes) {   // devolve o foco/cursor: o redesenho nao pode interromper quem esta' digitando
+    const alvo = document.getElementById(focoAntes.id);
+    if (alvo && typeof alvo.focus === 'function') {
+      alvo.focus();
+      if (focoAntes.ini !== undefined) { try { alvo.setSelectionRange(focoAntes.ini, focoAntes.fim); } catch (e) { /* select */ } }
+    }
   }
   let semCamera = false;                 // nenhuma camera nesta maquina (nunca finge uma)
   const preencherDispositivos = async (tentativa = 0) => {

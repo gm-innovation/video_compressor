@@ -19,6 +19,15 @@ sistema comprime na máquina e o vídeo comprimido sobe para o lado terra (`dest
 ## Instaladores prontos (Windows x64) — PLUG & PLAY desde a 0.2.0
 Na página de releases: https://github.com/gm-innovation/video_compressor/releases
 
+### 0.6.5 — **a webcam não é arrancada do envio que já está no ar**
+- **`LECSOR-0.6.5-x64.exe`** — dois defeitos achados ao destravar o teste de ponta a ponta (18/11/2026):
+- **Segundo envio da MESMA webcam**: a limpeza de "câmera presa" rodava antes de perguntar se havia um
+  envio **vivo** segurando a câmera — matava o ffmpeg do envio que estava no ar e aceitava o segundo, que
+  ficava em quadro preto **sem avisar**. Agora a ordem é: envio vivo → **recusa com o recado** (*a webcam
+  já está em uso pelo fluxo …*); só limpa processo preso de execução anterior quando não há envio vivo.
+- **Formulário de envio**: o redesenho periódico da tela recriava o campo e o foco se perdia no meio da
+  digitação (o rótulo digitado sumia). O foco e o cursor voltam para o mesmo campo depois do redesenho.
+
 ### 0.6.4 — **tela do admin limpa + a banda do vídeo ao vivo (1500 a 300 kbps)**
 - **`LECSOR-0.6.4-x64.exe`** — pedido do dono (18/11/2026): o admin não tem "Transmissões pedidas pelos
   clientes" (é do canal do cliente; a **operação** mantém a dela, que cancela) nem os **testes de vídeo**
