@@ -28,7 +28,14 @@ construir() {
     cp ./ambiente.json ../ground/ambiente.json
   else
     rm -f ../ground/ambiente.json
-    [ "$leva_ambiente" = "1" ] && echo "AVISO: desktop/ambiente.json ausente — o pacote vai SEM Supabase/token de ingestao"
+    # Nao e' aviso: pacote de PC de captura SEM ambiente nasce mudo — o anuncio do cadastro ao lado
+    # terra falha em silencio e a camera nao aparece na tela do cliente (medido 18/11/2026). Falha
+    # o build, que e' barato, em vez de descobrir em campo.
+    if [ "$leva_ambiente" = "1" ]; then
+      echo "ERRO: desktop/ambiente.json ausente — o pacote $nome nasceria SEM Supabase/token de ingestao/embarcacao."
+      echo "      Coloque o ambiente.json (fora do git) em desktop/ e rode de novo."
+      return 1
+    fi
   fi
   npx electron-builder --win nsis \
     --config.productName="$nome" \

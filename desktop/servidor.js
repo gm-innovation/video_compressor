@@ -46,15 +46,24 @@ function ffmpegDe() {
 // Ambiente gravado no pacote (perfil do papel): Supabase, token de ingestao e embarcacao. Fica
 // FORA do git e DENTRO do instalador — e' o que faz o PC nascer configurado (plug & play), sem
 // ninguem digitar chave nem endereco. Nenhum valor de segredo entra em log.
+// O instalador grava em `ground/ambiente.json`; a leitura aceita as DUAS posicoes (raiz e ground/),
+// porque ler so' a raiz deixava o PC de captura SEM token nem embarcacao — e o anuncio do cadastro
+// ao lado terra falhava em silencio ("sem lado terra/token de ingestao"), com a camera fora da tela
+// do cliente, do "Tempo real" e da "Producao" (medido 18/11/2026).
 function ambienteDoPacote(repo) {
-  try {
-    const p = path.join(repo || '', 'ambiente.json');
-    if (!repo || !fs.existsSync(p)) return {};
-    const d = JSON.parse(fs.readFileSync(p, 'utf8'));
-    return (d && typeof d === 'object' && !Array.isArray(d)) ? d : {};
-  } catch (e) {
-    return {};
-  }
+  if (!repo) return {};
+  const juntar = (p) => {
+    try {
+      if (!fs.existsSync(p)) return {};
+      const d = JSON.parse(fs.readFileSync(p, 'utf8'));
+      return (d && typeof d === 'object' && !Array.isArray(d)) ? d : {};
+    } catch (e) {
+      return {};
+    }
+  };
+  const deGround = juntar(path.join(repo, 'ground', 'ambiente.json'));
+  const daRaiz = juntar(path.join(repo, 'ambiente.json'));
+  return Object.assign({}, deGround, daRaiz);
 }
 
 // Ambiente dos processos filhos: destino do repasse, ffmpeg e python embutidos (o mediamtx chama

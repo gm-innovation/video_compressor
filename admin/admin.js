@@ -15,7 +15,7 @@ const BASE_CAPTURA = (() => {
   try { return (window.lecsorApp && window.lecsorApp.enderecoDaCaptura && window.lecsorApp.enderecoDaCaptura()) || ''; }
   catch (e) { return ''; }
 })();
-const ROTAS_CAPTURA = /^\/api\/(dispositivos|envios|ingestao|ingestoes|compressao|compressoes|medicoes|trecho|captura|embarcacoes)(\/|$)/;
+const ROTAS_CAPTURA = /^\/api\/(dispositivos|envios|ingestao|ingestoes|compressao|compressoes|medicoes|trecho|captura|embarcacoes|publicacao)(\/|$)/;
 const ehRotaDeCaptura = (rota) => ROTAS_CAPTURA.test(String(rota));
 const urlDeCaptura = (rota) => (BASE_CAPTURA && ehRotaDeCaptura(rota) ? BASE_CAPTURA + rota : rota);
 
@@ -430,12 +430,43 @@ function telaCameras(t) {
     /* O cadastro desta máquina sobe sozinho no lado terra (ao cadastrar e ao subir o servidor local).
        Este botão existe para o caso da câmera que já estava cadastrada antes disso: sem ele a linha
        fica só no banco local e o app do cliente não mostra nada ("cadastrei cam-01 e não aparece"). */
-    caixa.appendChild(botao('Publicar câmeras no lado terra', 'mini', async () => {
-      const r = await api('/api/cameras/publicar', { method: 'POST', body: JSON.stringify({}) });
-      const p = r.corpo || {};
-      mostrarRecado(r.ok ? 'publicado no lado terra: ' + ((p.publicadas || []).join(', ') || 'nenhuma câmera')
-        : 'não publiquei: ' + JSON.stringify(p.falharam || p), !r.ok);
-    }));
+    const caixaPub = document.createElement('div'); caixaPub.className = 'caixa-form'; caixaPub.id = 'cam-publicacao';
+    caixa.appendChild(caixaPub);
+    /* Este quadro é o que faltava quando o dono perguntou "por que minha câmera não aparece?":
+       o anúncio do cadastro ao lado terra falhava SÓ no arquivo de log repasse-<fluxo>.log. Aqui a
+       tela mostra, por câmera, se o cadastro está publicado no lado terra e, quando não está, o motivo. */
+    const puxarPublicacao = async () => {
+      const r = await api('/api/publicacao');
+      const p = (r.ok && r.corpo) || {}; const an = p.anuncio || {};
+      caixaPub.innerHTML = '';
+      caixaPub.appendChild(Object.assign(document.createElement('h2'),
+        { textContent: 'No lado terra — é isso que o cliente e o "Tempo real" mostram' }));
+      const nota = document.createElement('div'); nota.className = 'nota';
+      /* No proprio lado terra nao existe "publicar": o cadastro local JA' e' o que as telas leem.
+         Sem esta linha a tela acusava TODA camera como nao publicada, com motivo falso (medido na VPS). */
+      nota.textContent = an.sou_o_lado_terra
+        ? 'esta máquina é o lado terra: o cadastro daqui é o que a tela do cliente e o "Tempo real" já leem'
+        : (an.de_pe
+          ? 'anúncio de pé: lado terra ' + (an.lado_terra || '?') + ' · embarcação ' + (an.embarcacao || '—')
+          : 'anúncio NÃO está de pé — falta ' + ((an.faltando || []).join(', ') || 'o ambiente do pacote')
+            + '. Sem ele o cadastro da câmera não sai desta máquina e ela não aparece na tela do cliente.');
+      caixaPub.appendChild(nota);
+      const linhasPub = (p.cameras || []).map((c) => ({
+        rotulo: c.rotulo || c.fluxo_id, publicado: c.publicado ? 'publicado' : 'não',
+        motivo: c.motivo || '—', quando: c.em ? String(c.em).replace('T', ' ') : '—',
+      }));
+      caixaPub.appendChild(tabela([{ rotulo: 'Câmera', campo: 'rotulo' },
+        { rotulo: 'No lado terra', campo: 'publicado' }, { rotulo: 'Motivo', campo: 'motivo' },
+        { rotulo: 'Última tentativa', campo: 'quando' }], linhasPub, 'nenhuma câmera cadastrada'));
+      caixaPub.appendChild(botao('Publicar agora (todas as câmeras)', 'mini', async () => {
+        const rr = await api('/api/publicacao', { method: 'POST', body: JSON.stringify({}) });
+        const pp = (rr.corpo || {});
+        mostrarRecado(rr.ok ? 'publicado no lado terra: ' + (pp.publicadas ?? 0) + '/' + (pp.total ?? 0)
+          : 'não publiquei: ' + JSON.stringify((pp.anuncio && pp.anuncio.faltando) || pp), !rr.ok);
+        await puxarPublicacao();
+      }));
+    };
+    puxarPublicacao();
     t.appendChild(caixa);
   }
   const interno = (A.camerasInterno && A.camerasInterno.cameras) || [];
@@ -633,7 +664,9 @@ function telaTempoReal(t) {
           (tot.qualidade_min_ok ? '' : ' ⚠ abaixo do piso')));
     limpar(tabelaBox);
     const linhas = (m.fluxos || []).map((f) => ({
-      fluxo: f.fluxo_id,
+      fluxo: ((f.camera_rotulo && f.camera_rotulo !== f.fluxo_id)
+        ? f.camera_rotulo + ' (' + f.fluxo_id + ')' : f.fluxo_id) +
+        (f.sem_cadastro ? ' ⚠ fluxo no ar SEM CADASTRO — cadastre no PC de captura e publique no lado terra' : ''),
       vivo: !!f.vivo,
       comprimindo: f.vivo ? 'sim' : (f.erro ? 'ERRO: ' + f.erro : 'sem sinal'),
       entrada: (f.entrada_mbps === null ? '—' : fmt(f.entrada_mbps, 3) + ' Mbps' +

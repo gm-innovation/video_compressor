@@ -19,6 +19,27 @@ sistema comprime na máquina e o vídeo comprimido sobe para o lado terra (`dest
 ## Instaladores prontos (Windows x64) — PLUG & PLAY desde a 0.2.0
 Na página de releases: https://github.com/gm-innovation/video_compressor/releases
 
+### 0.6.8 — **o cadastro das câmeras chega ao lado terra e as telas mostram o que está no ar (com ou sem cadastro)**
+- **`LECSOR-0.6.8-x64.exe`** — queixa: "cadastrei as câmeras com seleção de qualidade e tudo mais, está no
+  ar, mas elas não aparecem na tela Tempo real, Produção e na transmissão ao vivo do cliente". Medido
+  (18/11/2026): o lado terra recebia **três fluxos no ar sem cadastro** (`comp-1`, `vivo-cam1-11-18`,
+  `vivo-cam2-11-18`), a Produção vinha **vazia** e o log do repasse dizia *"sem lado terra/token de ingestão"*.
+- **Causa:** o servidor do PC de captura subia **sem** `LECSOR_TOKEN_INGESTAO`/`LECSOR_EMBARCACAO` — o Python
+  lia o `ambiente.json` na raiz e o instalador grava em `ground/ambiente.json`. Sem token o anúncio do
+  cadastro não saía, e em silêncio. Agora o **Python lê o ambiente nas duas posições**, sem sobrepor o que
+  veio por variável de ambiente.
+- **O build FALHA** se o pacote do PC de captura nascer sem ambiente (antes só avisava): pacote sem ambiente
+  é pacote que não anuncia.
+- **Anúncio visível:** `/api/saude` responde `anuncio` (tem token? tem lado terra? qual embarcação? último
+  erro) e há `/api/publicacao` (ver e republicar) com o resultado **por câmera** — publicado/não e o motivo
+  escrito; caixa "Lado terra" no Admin > Câmeras. **República no boot e continua tentando.**
+- **"Tempo real" e "Produção" mostram o fluxo no ar mesmo sem cadastro**, marcado ⚠ **sem cadastro** em vez
+  de sumir da tela; fluxo sem medida não derruba mais a tela (conta 0, não vazio).
+- **O lado terra não encaminha mais para si mesmo** — "é esta máquina?" passa a olhar **IP e porta** (o
+  `/admin/` do lado terra respondia 502 depois de ligar a leitura do ambiente no boot).
+- **Provas:** `tests/test-anuncio-do-cadastro.py` **12/12**; `tests/test-fluxo-sem-cadastro-na-tela.py`
+  **11/11**; `tests/test-ponte-do-lado-terra.py` **8/8**; `tests/e2e-envios.py` **72 ok / 0 falhas**.
+
 ### 0.6.7 — **a tela do app passa a ser servida pela própria máquina (é o que faz o Admin listar as câmeras)**
 - **`LECSOR-0.6.7-x64.exe`** — queixa: "continua não listando as câmeras no app admin no computador de
   captura". Medido (18/11/2026): a câmera aparecia no `curl` do servidor local, a ponte do app entregava o

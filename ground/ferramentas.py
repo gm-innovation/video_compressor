@@ -73,6 +73,109 @@ def resumo() -> dict:
     return {"ffmpeg": onde_vem("ffmpeg"), "ffprobe": onde_vem("ffprobe")}
 
 
+# ------------------------------------------------------------------ ambiente do pacote (plug & play)
+# O instalador grava `ambiente.json` DENTRO do pacote (Supabase, token de ingestao, embarcacao). Ele
+# nasce em `ground/ambiente.json`; o app lia so' `ambiente.json` na raiz do repositorio e por isso o
+# servidor subia SEM token nem embarcacao — e o anuncio do cadastro ao lado terra falhava em silencio
+# ("sem lado terra/token de ingestao"), deixando a camera fora de "Tempo real", "Producao" e da tela
+# do cliente (medido 18/11/2026). Aqui o proprio python carrega o arquivo, em qualquer uma das duas
+# posicoes, sem sobrepor o que ja' veio do ambiente (bancada e systemd mandam).
+AMBIENTE_ARQUIVOS = (("ambiente.json",), ("ground", "ambiente.json"))
+
+
+def caminhos_do_ambiente() -> list[Path]:
+    raiz = Path(__file__).resolve().parent.parent
+    return [raiz.joinpath(*partes) for partes in AMBIENTE_ARQUIVOS]
+
+
+def carregar_ambiente() -> dict:
+    """Le o `ambiente.json` do pacote para o ambiente do processo. Devolve o que FALTOU, para a tela."""
+    import json
+
+    faltando: dict = {}
+    for arquivo in caminhos_do_ambiente():
+        try:
+            dados = json.loads(arquivo.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        if not isinstance(dados, dict):
+            continue
+        for chave, valor in dados.items():
+            if isinstance(valor, str) and valor.strip() and not os.environ.get(chave, "").strip():
+                os.environ[chave] = valor.strip()
+    for chave in ("LECSOR_TOKEN_INGESTAO", "LECSOR_EMBARCACAO", "LECSOR_LADO_TERRA_API"):
+        if not os.environ.get(chave, "").strip():
+            faltando[chave] = "ausente"
+    return faltando
+
+
+def meus_enderecos() -> set:
+    """Os IPs desta maquina: loopback, os do nome do host e o que a rota de saida usa."""
+    import socket
+
+    meus = {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
+    try:
+        meus.add(socket.gethostbyname(socket.gethostname()))
+        meus.update(socket.gethostbyname_ex(socket.gethostname())[2])
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)   # nao envia nada: so' descobre a rota
+        s.connect(("8.8.8.8", 80))
+        meus.add(s.getsockname()[0])
+        s.close()
+    except Exception:  # noqa: BLE001
+        pass
+    return meus
+
+
+def minha_porta() -> int:
+    """A porta em que ESTE servidor atende: `LECSOR_PORTA_API`, o argumento (`api.py 8085`), 8765.
+
+    O lado terra sobe por systemd como `python3 ground/api.py 8085` e o pacote do PC de captura pelo
+    `LECSOR_PORTA_API` — sao as duas formas em uso, e sem saber a porta nao da' para distinguir "esta
+    maquina" de "outra maquina com o mesmo IP" (a prova levanta um lado terra falso em 127.0.0.1).
+    """
+    try:
+        v = os.environ.get("LECSOR_PORTA_API")
+        if v:
+            return int(v)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import sys
+
+        for a in list(getattr(sys, "argv", []))[1:]:
+            if str(a).strip().isdigit():
+                return int(str(a).strip())
+    except Exception:  # noqa: BLE001
+        pass
+    return 8765
+
+
+def eh_esta_maquina(url: str) -> bool:
+    """O endereco aponta para ESTE servidor? (evita o servidor encaminhar para si mesmo).
+
+    O `ambiente.json` do pacote traz `LECSOR_LADO_TERRA_API`. Numa instalacao cujo papel E' o lado terra
+    esse endereco e' o dela propria — e o servidor passou a encaminhar as proprias telas para si, dando
+    502 em `/admin/` (medido 18/11/2026, logo depois de ligar a leitura do ambiente no boot).
+
+    Precisa ser IP **e porta** deste servidor: so' o IP nao basta. Numa prova com um lado terra falso em
+    `127.0.0.1:<outra porta>` o anuncio seria engolido como "esta maquina" e o cadastro nunca chegaria.
+    """
+    from urllib.parse import urlparse
+
+    try:
+        u = urlparse(url)
+        host = (u.hostname or "").strip().lower()
+    except Exception:  # noqa: BLE001
+        return False
+    if not host or host not in {h.lower() for h in meus_enderecos()}:
+        return False
+    porta = u.port or (443 if (u.scheme or "").lower() == "https" else 80)
+    return porta == minha_porta()
+
+
 if __name__ == "__main__":  # prova rapida na linha de comando
     import json
 

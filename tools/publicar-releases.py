@@ -21,7 +21,7 @@ TOKEN = (os.environ.get("GITHUB_TOKEN_FOR_RELEASES") or os.environ.get("GH_TOKEN
 DIST = pathlib.Path.home() / "lecsor-pipeline-video" / "desktop" / "dist"
 PAPEIS = ("Captura", "Terra", "Admin", "Cliente")
 # Ordem de publicacao: o PRIMEIRO e' o `latest` do GitHub. Nova versao entra na frente.
-VERSOES_PUBLICADAS = ("0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
+VERSOES_PUBLICADAS = ("0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
 
 
 def instaladores(versao: str) -> list:
@@ -36,6 +36,33 @@ def instaladores(versao: str) -> list:
     return [DIST / papel.lower() / f"LECSOR-{papel}-{versao}-x64.exe" for papel in PAPEIS]
 
 NOTAS = {
+    "0.6.8": (
+        "**O cadastro das câmeras chega ao lado terra — e as telas passam a mostrar o que está no ar, "
+        "com ou sem cadastro.**\n\n"
+        "Queixa: \"cadastrei as câmeras com seleção de qualidade e tudo mais, está no ar, mas elas não "
+        "aparecem na tela Tempo real, Produção e na transmissão ao vivo do cliente\". Medido (18/11/2026): "
+        "o lado terra recebia **três fluxos no ar sem cadastro** (`comp-1`, `vivo-cam1-11-18`, "
+        "`vivo-cam2-11-18`) e a Produção vinha **vazia**; o log do repasse dizia *\"sem lado terra/token de "
+        "ingestão\"*.\n\n"
+        "* **Causa:** o servidor do PC de captura subia **sem** `LECSOR_TOKEN_INGESTAO`/`LECSOR_EMBARCACAO` "
+        "porque o Python lia o `ambiente.json` na raiz e o instalador grava em `ground/ambiente.json` — sem "
+        "token, o anúncio do cadastro nem saía, e em silêncio. Agora o **próprio Python lê o ambiente nas "
+        "duas posições**, sem sobrepor o que já veio por variável de ambiente.\n"
+        "* **O build passa a FALHAR** se o pacote do PC de captura nascer sem ambiente (antes só avisava no "
+        "log): pacote sem ambiente é pacote que não anuncia, e ninguém percebia.\n"
+        "* **O anúncio ficou visível:** `/api/saude` responde `anuncio` (tem token? tem lado terra? qual "
+        "embarcação? qual o último erro) e há `/api/publicacao` (ver e republicar), com o resultado **por "
+        "câmera** — publicado/não e o motivo escrito. No Admin > Câmeras há a caixa \"Lado terra\".\n"
+        "* **República no boot e continua tentando** (antes fazia 5 tentativas e silenciava para sempre).\n"
+        "* **\"Tempo real\" e \"Produção\" mostram o fluxo que está no ar mesmo sem cadastro**, marcado com "
+        "⚠ **sem cadastro** em vez de sumir da tela — era isso que dava a tela vazia com o vídeo chegando. "
+        "Fluxo sem medida não derruba mais a tela (a conta usa 0, não vazio).\n"
+        "* **O lado terra não encaminha mais para si mesmo:** o teste de \"é esta máquina?\" passa a olhar "
+        "**IP e porta** (o `/admin/` do lado terra respondia 502 depois de ligar a leitura do ambiente).\n"
+        "* **Provas novas:** `tests/test-anuncio-do-cadastro.py` — **12/12 verde**; "
+        "`tests/test-fluxo-sem-cadastro-na-tela.py` — **11/11 verde**; `tests/test-ponte-do-lado-terra.py` "
+        "continua **8/8**; `tests/e2e-envios.py` **72 ok / 0 falhas**.\n"
+    ),
     "0.6.7": (
         "**A tela do app passa a ser servida pela própria máquina: é isso que faz o Admin listar as câmeras "
         "no PC de captura.**\n\n"

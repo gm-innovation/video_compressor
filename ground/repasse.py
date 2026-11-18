@@ -44,6 +44,116 @@ def _log(fluxo: str, linha: str) -> None:
         pass
 
 
+def _estado_arquivo() -> Path:
+    # `LECSOR_REPASSE_ESTADO` deixa o teste apontar o estado para uma pasta propria (sem sujar o
+    # repositorio nem herdar tentativa de rodada anterior — foi o que fez um teste mentir em 18/11).
+    return Path(os.environ.get("LECSOR_REPASSE_ESTADO") or (TRAVA_DIR / "estado.json"))
+
+
+def _estado(fluxo: str, ok: bool, motivo: str = "") -> None:
+    """Guarda o resultado da ULTIMA tentativa de publicar, por fluxo.
+
+    Existe porque o anuncio falhava so' no arquivo de log: a tela nao dizia nada e o dono ficava
+    olhando a camera sem aparecer ("o que mais precisa corrigir?"). Aqui o resultado vira dado que a
+    tela le' (`/api/publicacao`), com o motivo junto. Nunca guarda valor de segredo.
+    """
+    if not fluxo:
+        return
+    try:
+        caminho = _estado_arquivo()
+        caminho.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            dados = json.loads(caminho.read_text(encoding="utf-8"))
+        except Exception:
+            dados = {}
+        if not isinstance(dados, dict):
+            dados = {}
+        dados[fluxo] = {"ok": bool(ok), "motivo": (motivo or "").strip()[:300],
+                        "em": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+        caminho.write_text(json.dumps(dados, ensure_ascii=False, indent=1), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def sou_o_lado_terra() -> bool:
+    """Esta maquina E' o lado terra? (o `ambiente.json` do pacote traz o endereco dele proprio).
+
+    Numa instalacao que E' o lado terra o anuncio nao tem destino: as cameras desta maquina ja' estao
+    no banco que as telas leem. Sem esta checagem a tela mostrava TODA camera como "nao publicada" com
+    o motivo "sem lado terra ou sem token" — falso e assustador (medido na VPS, 18/11/2026).
+    """
+    base = (os.environ.get("LECSOR_LADO_TERRA_API") or "").strip()
+    if not base:
+        return False
+    try:
+        from ferramentas import eh_esta_maquina
+
+        return bool(eh_esta_maquina(base))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def estado_do_anuncio() -> dict:
+    """O que a tela precisa saber para explicar "por que minha camera nao apareceu".
+
+    Devolve se o anuncio esta' de pe' (lado terra + token + embarcacao presentes) e o resultado da
+    ultima tentativa por fluxo. Sem isto, o unico lugar onde o erro existia era o log de arquivo.
+    """
+    base = (os.environ.get("LECSOR_LADO_TERRA_API") or os.environ.get("LECSOR_DESTINO_SRT") or "").strip()
+    token = (os.environ.get("LECSOR_TOKEN_INGESTAO") or "").strip()
+    emb = (os.environ.get("LECSOR_EMBARCACAO") or "").strip()
+    dono_do_cadastro = sou_o_lado_terra()
+    faltando = []
+    if not base and not dono_do_cadastro:
+        faltando.append("endereço do lado terra")
+    if not token and not dono_do_cadastro:
+        faltando.append("token de ingestão")
+    if not emb and not dono_do_cadastro:
+        faltando.append("embarcação")
+    try:
+        tentativas = json.loads(_estado_arquivo().read_text(encoding="utf-8"))
+    except Exception:
+        tentativas = {}
+    if not isinstance(tentativas, dict):
+        tentativas = {}
+    por_fluxo = {k: v for k, v in tentativas.items() if isinstance(v, dict)}
+    ultimo = ""
+    for v in por_fluxo.values():
+        ultimo = max(ultimo, str(v.get("em") or ""))
+    return {"de_pe": (not faltando), "faltando": faltando, "token": bool(token),
+            "lado_terra": base, "embarcacao": emb, "ultimo": ultimo, "tentativas": por_fluxo,
+            "sou_o_lado_terra": dono_do_cadastro,
+            "papel": ("esta máquina é o lado terra: o cadastro daqui já é o que as telas leem"
+                      if dono_do_cadastro else "esta máquina envia o cadastro para o lado terra"),
+            "onde": str(_estado_arquivo())}
+
+
+def _instrumentar(fn):
+    """Registra o resultado de toda publicacao, sem repetir o registro em cada funcao."""
+
+    def embruxado(*a, **kw):
+        fluxo = ""
+        if a and isinstance(a[0], dict):
+            fluxo = str(a[0].get("fluxo_id") or a[0].get("id") or "")
+        elif a and isinstance(a[0], str):
+            fluxo = a[0]
+        if sou_o_lado_terra():
+            # publicar para si mesmo nao existe: aqui o cadastro local JA' e' o do lado terra
+            r = {"ok": True, "local_lado_terra": True,
+                 "motivo": "esta máquina é o lado terra: o cadastro daqui já é o que as telas leem"}
+            _estado(fluxo, True, r["motivo"])
+            return r
+        r = fn(*a, **kw)
+        if not isinstance(r, dict):
+            return r
+        _estado(fluxo, bool(r.get("ok")), r.get("motivo") or r.get("erro") or "")
+        return r
+
+    embruxado.__name__ = fn.__name__
+    embruxado.__doc__ = fn.__doc__
+    return embruxado
+
+
 def _ja_rodando(fluxo: str) -> bool:
     """Um repasse por fluxo: se ja' existe processo vivo, este sai sem enviar."""
     from ingestao import _processo_vivo  # mesma checagem usada pelo envio para a VPS
@@ -74,9 +184,20 @@ def _comando(fluxo: str, destino: str, origem: str) -> list[str]:
 
 
 def _api_lado_terra(destino: str) -> str:
-    """Base HTTP do lado terra: `LECSOR_LADO_TERRA_API` ou o host do SRT na porta 8085."""
+    """Base HTTP do lado terra: `LECSOR_LADO_TERRA_API` ou o host do SRT na porta 8085.
+
+    Endereco que aponta para ESTA maquina vale vazio: e' o caso do proprio lado terra (o
+    `ambiente.json` do pacote traz o endereco dele) tentando publicar para si mesmo.
+    """
     base = (os.environ.get("LECSOR_LADO_TERRA_API") or "").strip().rstrip("/")
     if base:
+        try:
+            from ferramentas import eh_esta_maquina
+
+            if eh_esta_maquina(base):
+                return ""
+        except Exception:  # noqa: BLE001
+            pass
         return base
     host = (destino or "").split(":")[0].strip()
     return f"http://{host}:{os.environ.get('LECSOR_PORTA_API', '8085')}" if host else ""
@@ -222,6 +343,20 @@ def publicar_envio(envio: dict, destino: str | None = None) -> dict:
         _log(fluxo, f"nao consegui declarar o envio ao lado terra ({type(e).__name__}: {e}) — o atestado"
                     f" vai mostrar 'o PC de captura nao informou'")
         return {"ok": False, "erro": str(e)}
+
+
+# O ambiente do pacote (token de ingestao, embarcacao, lado terra) e' carregado AQUI tambem: este
+# arquivo roda sozinho pelo mediamtx (`python ground/repasse.py ...`), sem passar pelo app.
+try:
+    from ferramentas import carregar_ambiente
+
+    carregar_ambiente()
+except Exception:  # noqa: BLE001
+    pass
+
+# Toda publicacao passa a registrar o proprio resultado (a tela le' de `/api/publicacao`).
+for _nome in ("anunciar", "publicar_cadastro", "publicar_qualidade", "publicar_envio"):
+    globals()[_nome] = _instrumentar(globals()[_nome])
 
 
 def repassar(fluxo: str, destino: str, origem: str) -> int:

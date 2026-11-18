@@ -40,7 +40,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # cliente nas rotas de captura. Fechado por padrao: so' as origens declaradas abaixo (ou a lista de
 # LECSOR_CORS_ORIGENS) recebem o cabecalho; qualquer outra origem fica sem CORS e o navegador bloqueia.
 ROTAS_CAPTURA = ("/api/dispositivos", "/api/envios", "/api/ingestao", "/api/ingestoes",
-                 "/api/compressao", "/api/compressoes", "/api/medicoes", "/api/trecho", "/api/captura")
+                 "/api/compressao", "/api/compressoes", "/api/medicoes", "/api/trecho", "/api/captura",
+                 "/api/publicacao", "/api/cameras/publicar")
 ORIGENS_CAPTURA_PADRAO = ("http://187.127.60.250:8085", "http://127.0.0.1:8085",
                           "http://127.0.0.1:8765", "http://localhost:8765")
 
@@ -59,6 +60,7 @@ from ingestao import desligar_camera as ing_desligar_camera, ligar_camera as ing
 from ingestao import capturar as ing_capturar, listar_dispositivos as ing_dispositivos, ao_vivo as ing_ao_vivo
 from ingestao import limpar_vivos_mortos as ing_limpar_vivos
 from ferramentas import caminho_banco, resumo as resumo_ferramentas  # noqa: E402
+from ferramentas import carregar_ambiente  # noqa: E402
 import etapas as etapas_pipeline  # noqa: E402
 import gravacao as gravacao_modulo  # noqa: E402
 import trecho as trecho_modulo  # noqa: E402
@@ -1221,8 +1223,23 @@ class Handler(SimpleHTTPRequestHandler):
     # "Failed to fetch" no Chromium do app, com o servidor local respondendo 200 no curl). Tudo o que
     # NAO e' rota de captura (e nem a saude local) segue para o lado terra e volta como veio.
     def _base_do_lado_terra(self) -> str:
-        """Endereco do lado terra: o app passa `LECSOR_LADO_TERRA_API` ao subir o servidor local."""
-        return (os.environ.get("LECSOR_LADO_TERRA_API") or "").strip().rstrip("/")
+        """Endereco do lado terra: o app passa `LECSOR_LADO_TERRA_API` ao subir o servidor local.
+
+        Se o endereco for DESTA maquina (o `ambiente.json` do pacote aponta para o proprio lado terra
+        quando o papel e' lado terra), vale vazio: sem isso o servidor encaminhava as proprias telas
+        para si mesmo e o `/admin/` respondia 502 (medido 18/11/2026). O `/api/saude` e o `/admin/`
+        saem deste mesmo servidor em qualquer caso.
+        """
+        base = (os.environ.get("LECSOR_LADO_TERRA_API") or "").strip().rstrip("/")
+        if not base:
+            return ""
+        try:
+            from ferramentas import eh_esta_maquina
+            if eh_esta_maquina(base):
+                return ""
+        except Exception:  # noqa: BLE001
+            pass
+        return base
 
     def _encaminhar(self, metodo: str) -> None:
         import http.client
@@ -1307,7 +1324,33 @@ class Handler(SimpleHTTPRequestHandler):
         if rota == "/favicon.ico":
             return self._json(204, {}, {"Cache-Control": "max-age=86400"})
         if rota == "/api/saude":
-            return self._json(200, {"ok": True, "banco": str(BANCO), "python": sys.version.split()[0]})
+            # `anuncio` mostra, sem segredo, se o cadastro desta maquina consegue sair para o lado
+            # terra (endereco + token + embarcacao) e o resultado da ultima tentativa por fluxo.
+            try:
+                import repasse as repasse_modulo
+                anuncio = repasse_modulo.estado_do_anuncio()
+            except Exception as e:  # noqa: BLE001
+                anuncio = {"de_pe": False, "faltando": [f"modulo de repasse indisponivel ({type(e).__name__})"],
+                           "tentativas": {}}
+            return self._json(200, {"ok": True, "banco": str(BANCO), "python": sys.version.split()[0],
+                                    "anuncio": anuncio}, {"Cache-Control": "no-store"})
+        if rota == "/api/publicacao":
+            # "por que minha camera nao apareceu no lado terra?": estado do anuncio + o resultado por
+            # camera desta maquina, e o botao da tela republica tudo com esta rota (POST).
+            import repasse as repasse_modulo
+            with conexao() as c:
+                cams = [dict(x) for x in c.execute("SELECT * FROM cameras ORDER BY id")]
+            estado = repasse_modulo.estado_do_anuncio()
+            tentativas = estado.get("tentativas") or {}
+            itens = []
+            for cam in cams:
+                t = tentativas.get(cam["fluxo_id"]) or {}
+                itens.append({"id": cam["id"], "fluxo_id": cam["fluxo_id"], "rotulo": cam["rotulo"],
+                              "ativo": cam["ativo"], "publicado": bool(t.get("ok")),
+                              "motivo": t.get("motivo") or "", "em": t.get("em") or ""})
+            if self.command == "POST":
+                return self._json(405, {"erro": "use POST em /api/publicacao para republicar"})
+            return self._json(200, {"anuncio": estado, "cameras": itens}, {"Cache-Control": "no-store"})
         if rota == "/api/primeiro-acesso":
             # Instalacao nova nasce SEM nenhum usuario: sem esta rota ninguem consegue entrar no PC
             # de captura (foi o "abriu direto, sem login e senha" do cliente).
@@ -1895,6 +1938,26 @@ class Handler(SimpleHTTPRequestHandler):
         if self._base_do_lado_terra() and not eh_rota_de_captura(rota):
             return self._encaminhar("POST")
         u = self._sessao()
+        if rota == "/api/publicacao":
+            # "publicar agora": manda o cadastro de TODAS as cameras desta maquina ao lado terra e
+            # devolve o resultado por camera. E' o botao que faltava quando o anuncio falhava em
+            # silencio (a tela so' podia dizer "nao apareceu").
+            if not (u and u["papel"] in PAPEL_ADMIN) and not self._local():
+                return self._json(401, {"erro": "entre no sistema"})
+            import repasse as repasse_modulo
+            with conexao() as c:
+                cams = [dict(x) for x in c.execute("SELECT * FROM cameras ORDER BY id")]
+            enviadas = sum(1 for cam in cams if repasse_modulo.publicar_cadastro(cam).get("ok"))
+            estado = repasse_modulo.estado_do_anuncio()
+            tentativas = estado.get("tentativas") or {}
+            itens = [{"id": cam["id"], "fluxo_id": cam["fluxo_id"], "rotulo": cam["rotulo"],
+                      "ativo": cam["ativo"],
+                      "publicado": bool((tentativas.get(cam["fluxo_id"]) or {}).get("ok")),
+                      "motivo": (tentativas.get(cam["fluxo_id"]) or {}).get("motivo") or "",
+                      "em": (tentativas.get(cam["fluxo_id"]) or {}).get("em") or ""} for cam in cams]
+            return self._json(200, {"ok": enviadas == len(cams), "publicadas": enviadas,
+                                    "total": len(cams), "anuncio": estado, "cameras": itens},
+                              {"Cache-Control": "no-store"})
         if rota == "/api/entrar":
             d = self._corpo()
             email = str(d.get("email", "")).strip().lower()
@@ -3280,16 +3343,23 @@ def _fechar_minutos_em_loop() -> None:
 
 
 def _publicar_cadastro_no_boot() -> None:
-    """Publica no lado terra o cadastro das cameras desta maquina quando o servidor sobe.
+    """Publica no lado terra o cadastro das cameras desta maquina, e NAO DESISTE em silencio.
 
     Uma camera registrada nesta maquina so' era vista pelo cliente depois que o fluxo subia; camera
     cadastrada e parada ficava invisivel. Aqui o cadastro vai na subida (recupera tambem o caso das
-    cameras registradas antes desta correcao). Best-effort: sem lado terra configurado, nao faz nada.
+    cameras registradas antes desta correcao) e continua sendo tentado de tempo em tempo enquanto
+    alguma camera nao estiver publicada — antes ele tentava 5 vezes e ficava quieto, e o dono so'
+    descobria pelo log de arquivo (18/11/2026: as cameras dele estavam no ar e fora da tela).
     """
     if not (os.environ.get("LECSOR_TOKEN_INGESTAO") or "").strip():
+        print("[api] aviso: sem token de ingestao no ambiente: o cadastro das cameras NAO vai ser "
+              "publicado no lado terra (a camera nao aparece na tela do cliente). Confira o "
+              "ambiente.json do pacote.", flush=True)
         return
     import repasse
-    for tentativa in range(1, 6):
+    tentativa, pausa = 0, 30
+    while True:
+        tentativa += 1
         try:
             with conexao() as c:
                 cams = [dict(x) for x in c.execute("SELECT * FROM cameras ORDER BY id")]
@@ -3302,15 +3372,26 @@ def _publicar_cadastro_no_boot() -> None:
         if ok == len(cams):
             print(f"[api] cadastro de {ok} camera(s) publicado no lado terra", flush=True)
             return
-        print(f"[api] cadastro: {ok}/{len(cams)} publicado(s) no lado terra; tentativa {tentativa}/5",
+        print(f"[api] cadastro: {ok}/{len(cams)} publicado(s) no lado terra; tentativa {tentativa}",
               flush=True)
-        time.sleep(30)
+        # 5 tentativas rapidas (o servidor do lado terra pode estar subindo junto) e depois de 5 em
+        # 5 minutos, para o cadastro entrar sozinho quando o link voltar.
+        if tentativa >= 5:
+            pausa = 300
+        time.sleep(pausa)
 
 
 def principal() -> int:
     args = [a for a in sys.argv[1:]]
     semear = "--semear-demo" in args
     porta = next((int(a) for a in args if a.isdigit()), 8765)
+    # O ambiente do pacote (Supabase, token de ingestao, embarcacao, lado terra) entra aqui, do
+    # arquivo que o instalador deixou no repositorio. Sem isto o servidor do PC de captura subia mudo
+    # e o anuncio do cadastro ao lado terra falhava em silencio (medido 18/11/2026).
+    faltando = carregar_ambiente()
+    if faltando:
+        print(f"[api] aviso: ambiente incompleto no pacote ({', '.join(faltando)}): "
+              f"o anuncio do cadastro pode nao sair sem ele", flush=True)
     inicializar(semear)
     try:
         ing_limpar_vivos()      # envio que ficou 'no_ar' com processo morto

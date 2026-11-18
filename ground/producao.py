@@ -343,6 +343,58 @@ def _qualidade_por_fluxo() -> dict:
     return fora
 
 
+def _caminhos_vivos() -> dict:
+    """Todos os caminhos vivos do mediamtx (esta maquina + cada lado terra conhecido)."""
+    mt = {}
+    for h in _hosts_mediamtx():
+        corpo = _mediamtx("/v3/paths/list", None if h in ("127.0.0.1", "localhost") else h)
+        for p in (corpo or {}).get("items", []):
+            nome = str(p.get("name") or "").strip()
+            if nome:
+                mt[nome] = p
+    return mt
+
+
+def fluxos_sem_cadastro() -> list[dict]:
+    """Fluxo VIVO no mediamtx que não tem linha em `ingestoes` — some da tela sem isto.
+
+    E' o caso do PC de captura que esta' enviando: o video chega ao lado terra, mas sem linha de
+    ingestao (e, quando o cadastro nao foi anunciado, sem camera tambem) "Tempo real", "Producao" e a
+    tela do cliente ficam vazias e o dono so' ve' a tela em branco (medido 18/11/2026: `comp-1`,
+    `vivo-cam1-11-18` e `vivo-cam2-11-18` no ar, sem cadastro).
+
+    Cada linha diz se a camera EXISTE no cadastro desta maquina (`sem_cadastro`): com cadastro, a tela
+    mostra o nome da camera; sem, mostra que falta cadastrar e publicar.
+    """
+    try:
+        with conexao_banco() as c:
+            com_ingesto = {str(r["fluxo_id"]) for r in c.execute("SELECT DISTINCT fluxo_id FROM ingestoes")}
+            cadastradas = {str(r["fluxo_id"]): dict(r) for r in c.execute("SELECT * FROM cameras")}
+    except Exception:
+        return []
+    saida = []
+    for nome, p in _caminhos_vivos().items():
+        if nome in com_ingesto or not (p.get("ready") and p.get("tracks")):
+            continue
+        cam = cadastradas.get(nome)
+        rotulo = (cam or {}).get("rotulo") or f"{nome} (no ar, sem cadastro)"
+        saida.append({"fluxo_id": nome, "rotulo": rotulo, "camera_id": (cam or {}).get("id") or nome,
+                      "camera_rotulo": rotulo, "embarcacao_id": (cam or {}).get("embarcacao_id") or "",
+                      "tipo": "bordo", "estado": "enviando", "sem_cadastro": cam is None,
+                      "entrada_mbps": None, "saida_mbps": None,
+                      # todas as chaves que os totais e os cards leem: fluxo sem medida nao pode
+                      # derrubar a tela (KeyError matava a Producao inteira, medido 18/11/2026)
+                      "banda_economizada_mbps": None, "mb_enviados": None, "segundos_no_ar": None,
+                      "entrada_fonte": ("medida na fonte" if cam else
+                                        "sem cadastro (o bordo esta enviando e o cadastro nao chegou)"),
+                      "qualidade": None, "alvo": (cam or {}).get("alvo") or "",
+                      "leitores": len(p.get("readers", []) or []), "tracks": p.get("tracks", []) or [],
+                      "motivo": "" if cam else
+                                "fluxo recebido do bordo sem camera cadastrada: cadastre no PC de captura "
+                                "e publique o cadastro no lado terra"})
+    return saida
+
+
 def tempo_real(validade_s: float = 2.0) -> dict:
     """Estado agora, por fluxo, com o que o dono pediu: enviando/parado, compressao, banda do link."""
     # cache curto: a tela se atualiza a cada 2 s e o calculo leva ~2 s (mediamtx + rollup)
@@ -400,6 +452,11 @@ def tempo_real(validade_s: float = 2.0) -> dict:
             "mb_enviados": d.get("tamanho_mb"), "fps": d.get("fps"),
             "segundos_no_ar": d.get("duracao_s"),
         })
+    # Fluxo no ar SEM cadastro: sem isto o operador e o cliente ficam com a tela vazia enquanto o
+    # video esta' chegando (medido 18/11/2026). Entra marcado, para o dono ver que falta o cadastro.
+    for _o in fluxos_sem_cadastro():
+        if not any(f["fluxo_id"] == _o["fluxo_id"] for f in fluxos):
+            fluxos.append(_o)
     link = link_srt()
     total = {"fluxos": 0, "enviando": 0, "entrada_mbps": 0.0, "saida_mbps": 0.0,
              "banda_economizada_mbps": 0.0, "mb_enviados": 0.0}
@@ -410,10 +467,10 @@ def tempo_real(validade_s: float = 2.0) -> dict:
         total["enviando"] += 1
         # or 0.0: fluxo sem entrada medida (fonte crua) devolve None e derrubava a tela inteira
         # com TypeError — a Producao do admin ficava vazia e demorada.
-        total["entrada_mbps"] += f["entrada_mbps"] or 0.0
-        total["saida_mbps"] += f["saida_mbps"] or 0.0
-        total["banda_economizada_mbps"] += f["banda_economizada_mbps"] or 0.0
-        total["mb_enviados"] += f["mb_enviados"] or 0
+        total["entrada_mbps"] += f.get("entrada_mbps") or 0.0
+        total["saida_mbps"] += f.get("saida_mbps") or 0.0
+        total["banda_economizada_mbps"] += f.get("banda_economizada_mbps") or 0.0
+        total["mb_enviados"] += f.get("mb_enviados") or 0
     _medidos = [f["qualidade"]["ssim"] for f in fluxos
                 if f.get("qualidade") and f["qualidade"].get("ssim") is not None and f["estado"] == "enviando"]
     total["qualidade_min_ssim"] = round(min(_medidos), 4) if _medidos else None
@@ -550,6 +607,9 @@ def resumo_producao(*, dias: int = 30, embarcacao_id: str | None = None, camera_
             "mb_enviados": round(f.get("mb_enviados") or 0, 2), "minutos_no_ar": 0,
             "disponibilidade_pct": None, "de": None, "ate": None, "estado": "enviando",
             "sem_historico": True, "qualidade": qual.get(f["fluxo_id"]),
+            # o dono precisa VER que este fluxo chegou sem cadastro (medido 18/11/2026): sem a marca,
+            # o card parece uma camera normal e o cadastro que faltou fica invisivel.
+            "sem_cadastro": bool(f.get("sem_cadastro")), "motivo": f.get("motivo") or "",
         })
     if camera_id:
         alvo = camera_id.lower()

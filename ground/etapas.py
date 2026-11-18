@@ -418,6 +418,15 @@ def metricas_ao_vivo(validade_s: float = 2.0) -> dict:
             total["entrada_mbps"] += entrada; total["saida_mbps"] += saida
             total["economia_mbps"] += d["economia_mbps"]; total["mb_enviados"] += d.get("tamanho_mb") or 0
             total["fluxos"] += 1
+    # Fluxo no ar SEM cadastro (o video chegou e o cadastro nao): aparece marcado em vez de sumir.
+    try:
+        from producao import fluxos_sem_cadastro as _sem_cadastro
+        for _o in _sem_cadastro():
+            if not any(f.get("fluxo_id") == _o["fluxo_id"] for f in fluxos):
+                _o.update({"vivo": True})
+                fluxos.append(_o)
+    except Exception:  # noqa: BLE001
+        pass
     for k, v in list(total.items()):
         if isinstance(v, float):
             total[k] = round(v, 3)
