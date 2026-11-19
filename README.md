@@ -19,6 +19,16 @@ sistema comprime na máquina e o vídeo comprimido sobe para o lado terra (`dest
 ## Instaladores prontos (Windows x64) — PLUG & PLAY desde a 0.2.0
 Na página de releases: https://github.com/gm-innovation/video_compressor/releases
 
+### 0.9.1 — **o aplicativo instalado abre** (correção que veio do campo)
+- **Sintoma:** instalado em dois computadores, **nenhum** abria. **Causa medida no pacote:** em
+  `desktop/servidor.js` a função que sobe o servidor local devolvia `hd` (a gravação contínua do radar) mas
+  nascia **dentro** do `try` → `ReferenceError: hd is not defined` em toda chamada; como o único chamador é
+  o arranque do aplicativo, nada depois dele rodava e a janela nunca abria. `node --check` não pega (escopo,
+  não sintaxe) e a prova de tela de bancada não pegava porque nela o servidor local fica desligado.
+- **Conserto:** `hd` nasce fora do `try`. **Prova nova:**
+  `tests/test-app-sobe-o-servidor-local.py` chama `subir()` como o pacote chama e **reprova a versão com o
+  defeito** (`hd is not defined`), então o defeito não volta sem o teste acusar.
+
 ### 0.9.0 — **os 4 escopos de cliente, o app de captura que se cadastra sozinho e a visão da Petrobras**
 - **Os 4 tipos de cliente** (dono, 19/11/2026): (1) uma embarcação, (2) algumas, (3) a empresa inteira,
   (4) **Petrobras** — todas as embarcações de todas as empresas. Os tipos 1 e 2 são **vínculo explícito**

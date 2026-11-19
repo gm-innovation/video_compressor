@@ -159,6 +159,11 @@ function subir(config) {
   };
   let analise = '';
   let ordens = '';
+  // `hd` PRECISA nascer aqui, fora do try: ele e' devolvido no fim da funcao (linha do return), e
+  // declarado dentro do try virava `ReferenceError: hd is not defined` em TODA chamada de subir() —
+  // e como o unico chamador e' o `app.whenReady()` do main.js, o app NAO abria (nenhum PC abria o
+  // app instalado, 19/11/2026). `node --check` nao pega (erro de escopo, nao de sintaxe).
+  let hd = '';
   try {
     item('mediamtx', path.join(repo, 'tools', 'mediamtx', process.platform === 'win32' ? 'mediamtx.exe' : 'mediamtx'),
          [path.join(repo, 'ground', 'mediamtx.yml')], repo);
@@ -194,7 +199,6 @@ function subir(config) {
     if (ordens) fs.appendFileSync(path.join(logs, 'agente-ordens.log'), `[app] ${ordens}\n`);
     // GRAVACAO CONTINUA do radar de oleo (dono, 19/11/2026): memoria LOCAL do radar no PC de captura,
     // independente do streaming. Nasce DESLIGADA — quem liga e' o admin (env do pacote/servidor).
-    let hd = '';
     const gravador = path.join(repo, 'ground', 'gravacao_continua.py');
     if (!(configAtual.capturaLocal && configAtual.servidorLocal && configAtual.servidorLocal.ligado)) {
       hd = 'gravacao continua do radar: nao (esta maquina nao e a de captura)';

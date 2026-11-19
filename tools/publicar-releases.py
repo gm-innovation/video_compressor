@@ -23,7 +23,7 @@ PAPEIS = ("Captura", "Terra", "Admin", "Cliente")
 # Ordem de publicacao: o PRIMEIRO e' o `latest` do GitHub. Nova versao entra na frente.
 # A 0.8.0 nunca chegou a virar release: o que ela trazia (config do bordo vinda de terra e saude do
 # bordo no admin) entrou inteiro na 0.9.0, que e' quem publica. A nota dela fica em NOTAS abaixo.
-VERSOES_PUBLICADAS = ("0.9.0", "0.7.0", "0.6.10", "0.6.9", "0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
+VERSOES_PUBLICADAS = ("0.9.1", "0.9.0", "0.7.0", "0.6.10", "0.6.9", "0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
 
 
 def instaladores(versao: str) -> list:
@@ -38,6 +38,22 @@ def instaladores(versao: str) -> list:
     return [DIST / papel.lower() / f"LECSOR-{papel}-{versao}-x64.exe" for papel in PAPEIS]
 
 NOTAS = {
+    "0.9.1": (
+        "**Correcao que faz o aplicativo ABRIR.**\n\n"
+        "* **O que estava acontecendo:** o aplicativo instalado nao abria janela nenhuma. Causa medida no "
+        "proprio pacote: em `desktop/servidor.js`, a funcao que sobe o servidor local devolvia o campo `hd` "
+        "(gravacao continua do radar) mas declarava essa variavel **dentro** do `try` — "
+        "`ReferenceError: hd is not defined` em **toda** chamada. Como o unico chamador e' o arranque do "
+        "aplicativo (`app.whenReady()`), a promessa quebrava e nada depois dela rodava: sem servidor local, "
+        "sem janela. `node --check` nao pega (erro de escopo, nao de sintaxe) e a prova de tela em modo de "
+        "bancada tambem nao pegava, porque nela o servidor local nao e' ligado.\n"
+        "* **Conserto:** `hd` passou a nascer fora do `try`, junto de `analise` e `ordens`.\n"
+        "* **Prova nova (que pega o defeito e nao volta):** `tests/test-app-sobe-o-servidor-local.py` monta um "
+        "repositorio minimo, chama `subir()` como o pacote chama (servidor local LIGADO) e exige `ok` + o "
+        "campo `hd`; a mesma prova roda contra a versao anterior (do git) e tem de falhar com "
+        "`hd is not defined` — e' o que ela mostra.\n"
+        "* **Como conferir no campo:** o app instalado abre a tela de entrada; o log do servidor local fica em "
+        "`<pasta do servidor>\\desktop-logs\\` ao lado dos processos que o app sobe.\n"),
     "0.9.0": (
         "**Os 4 escopos de cliente, o app de captura que se cadastra sozinho e a visão da Petrobras.**\n\n"
         "**1. Os 4 tipos de cliente** (dono, 19/11/2026): (1) uma embarcação da empresa, (2) algumas, "
