@@ -87,7 +87,7 @@
         "from": "../db",
         "to": "servidor/db",
         "filter": [
-          "schema*.sql",
+          "*.sql",
           "fases-seed.json"
         ]
       },
