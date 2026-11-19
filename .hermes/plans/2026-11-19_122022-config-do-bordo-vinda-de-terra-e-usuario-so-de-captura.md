@@ -38,7 +38,20 @@ registra a **virada do semáforo** em `auditoria_acesso` e corta a série em **3
 registrado em `saude_bordo_corte`; a tela **Saúde do bordo** mostra verde/amarelo/vermelho com o **o que
 fazer**, e bordo que nunca reportou aparece como **PROBLEMA** — silêncio não é saúde. Provado por
 `tests/e2e-saude-do-bordo-no-admin.py` **rc=0 (20/20)**, com o agente de verdade enviando e o painel aberto
-em Chromium. Fase 6 pendente.
+em Chromium. **Publicado**: commit `d679ade` (VPS com `pipeline-api` ativa, `/api/saude` 200, tabelas
+`saude_bordo`/`saude_bordo_corte` criadas, `/api/saude-do-bordo` 401 sem login e 401 no POST sem o token do
+bordo).
+
+**Regressão da suíte (19/11/2026, 69 arquivos de `tests/`):** 62 verdes já na primeira passada. Fechados
+nesta rodada: `test-producao-fluxo-sem-entrada.py` (o `fluxos_sem_cadastro()` acusava fluxo do mediamtx do
+LADO TERRA como "no ar, sem cadastro" — agora só o mediamtx desta máquina entra nessa conferência),
+`test-fluxo-sem-cadastro-na-tela.py` (stub do mediamtx) e `test-transmissao-a-pedido.py` (a recusa do cliente
+virou 403 "definido pelo administrador" na 0.7.0 e o teste guardava só o 422) — commit `509e700`.
+Dois são **pulo por falta de ambiente** (`rc=2`: `e2e-fronts.py`, `e2e-marcas.py` pedem `LECSOR_SENHA_DEMO`) e
+três pedem **bancada viva com quatro fluxos** (`e2e-fase3-4.py` exige 4 câmeras com imagem e o mediamtx
+publicando quatro fluxos; `e2e-hd-do-radar-cliente-pede-trecho.py` exige blocos no HD do radar;
+`e2e-envios.py` espera um fluxo no ar na tela) — são as provas de ciclo real que dependem do computador de
+captura/bancada, não do código desta fase. Fase 6 pendente.
 **Data:** 19/11/2026 · **Base:** 0.7.0 (`9ca021d` + plano `2d94e25`)
 **Alvo:** 0.8.0 — o cadastro de câmera passa a ser salvo no banco (hoje só existe no SQLite local), o bordo
 deixa de ter tela de configuração, passa a **buscar** o que terra publica e passa a **reportar a própria saúde**
