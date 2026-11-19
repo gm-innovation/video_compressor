@@ -64,7 +64,8 @@ Conclusão medida: não é o vídeo que é cortado (o `<video>` usa `object-fit:
 | `tests/test-app-unico-por-papel.py` | OK (não regrediu) |
 | `tests/e2e-tela-limpa-do-admin.py` | E2E-TELA-LIMPA_OK (não regrediu) |
 | Lado terra (`/opt/pipeline/app/fronts/vms.css`) | scp feito + md5 conferido = repo |
-| `LECSOR-0.6.9-x64.exe` | publicado como `v0.6.9` (`latest`), sha256 conferido |
+| Lado terra no ar (Playwright em `187.127.60.250:8085/app/`, 1920×1080, grades 2/3/4) | `padding=12px 18px 8px`, folga **12 px**, contorno **+9 px dentro** do palco em todas as grades (print `no-ar-topo.png`: moldura azul completa) |
+| `LECSOR-0.6.9-x64.exe` | publicado como `v0.6.9` (`latest`), 171.555.122 B, sha256 `c3c5d201…6004a1` conferido na API do GitHub; CSS **dentro do pacote** = md5 do repo |
 
 Varredura da Fase 2 (feita): `admin/` usa `fronts/vms.css` mas **não** usa `.palco/.grade-vms/.janela` (só texto);
 `portal/index.html` tem grade própria (`auto-fill 340px`) em fluxo normal dentro do cartão, sem `overflow:hidden`

@@ -392,6 +392,13 @@ def _motivo_da_falha(codigo: int, log: Path, r: dict) -> str | None:
             or "unspecified error" in baixo or "i/o error" in baixo:
         return ("a camera nao abriu: pode estar em uso por outro envio ou desconectada — "
                 "mande parar o outro envio e ligue de novo")
+    if "unknown input format" in baixo or "malformed dshow input" in baixo \
+            or ("dshow" in baixo and "invalid argument" in baixo):
+        # medido em 19/11/2026: o lado terra (Linux, sem dshow) recebeu `-f dshow` e respondeu
+        # "Unknown input format: 'dshow'" + "Error opening input files: Invalid argument" (codigo 234
+        # = -22). A tela mostrava a linha crua do ffmpeg; o recado certo e' de ONDE a captura roda.
+        return ("esta maquina nao e' a de captura: esta camera abre no PC de bordo — "
+                "ligue por ordem para o bordo (a tela do lado terra so' envia a ordem)")
     if "nothing was encoded" in baixo or "no filtered frames" in baixo:
         # o radar nao e' camera: sem quadro do sinal, o recado certo fala do RADAR (fonte/rede), nao
         # de "camera ocupada" — o dono tem de saber onde procurar.
@@ -1048,6 +1055,101 @@ def _camera_em_uso(dispositivo: str | None, validade_s: int = 12) -> dict | None
                 idade = 0
             if idade <= validade_s:
                 return d
+    return None
+
+
+def maquina_de_captura() -> bool:
+    """Esta maquina E' a de captura? (onde a entrada das cameras esta' plugada).
+
+    Prova, nessa ordem:
+      1) o BORDO se declara pelo ambiente (`LECSOR_EMBARCACAO`, que vem no `ambiente.json` do pacote de
+         captura e o lado terra nao tem) -> esta maquina captura;
+      2) esta maquina E' o lado terra (`LECSOR_LADO_TERRA_API` aponta para ela mesma) -> NAO captura;
+      3) existe entrada de video que o ffmpeg enxerga nesta maquina -> captura (maquina de bancada).
+
+    Sem nenhuma das provas a captura NAO roda aqui: quem manda ligar manda ORDEM para o bordo (medido
+    19/11/2026 — o lado terra tentou `-f dshow` no Linux e respondeu "Unknown input format: 'dshow'",
+    enchendo a tela de erro sem ninguem entender de onde vinha).
+    """
+    if (os.environ.get("LECSOR_EMBARCACAO") or "").strip():
+        return True
+    base_terra = (os.environ.get("LECSOR_LADO_TERRA_API") or "").strip()
+    if base_terra:
+        try:
+            from ferramentas import eh_esta_maquina
+
+            if eh_esta_maquina(base_terra):
+                return False
+        except Exception:  # noqa: BLE001 — erro aqui nao pode derrubar a checagem
+            pass
+    try:
+        return bool(listar_dispositivos().get("video"))
+    except Exception:  # noqa: BLE001 — ambiente sem ffmpeg nao pode derrubar a checagem
+        return False
+
+
+def prontidao_das_cameras() -> dict:
+    """Estado de STAND-BY por camera DESTA maquina, para a tela dizer a verdade ANTES do cliente ativar.
+
+    Regra do produto (dono, 19/11/2026): o sinal chega dividido (split) o tempo todo e o nosso sistema
+    transmite so' quando o cliente ativa o canal. Entao, em repouso:
+
+      - nenhum ffmpeg roda e o dispositivo NAO fica aberto (stand-by de verdade);
+      - `pronta`   = dispositivo existe nesta maquina e nenhum envio o ocupa;
+      - `no_ar`    = ha' envio vivo deste fluxo (pid vivo);
+      - `em_uso`   = outro envio vivo esta' segurando o mesmo dispositivo (dshow abre uma vez);
+      - `ausente`  = o dispositivo do ultimo envio nao aparece mais na maquina (cabo/USB fora).
+
+    Nao abre camera nenhuma para responder: usa a lista que o ffmpeg ja' entrega (`-list_devices`).
+    """
+    disp = listar_dispositivos()
+    # `dispositivos` vem em LINHAS (dict com video/audio/seletor/rotulo): o nome e' x["video"].
+    # Antes eu tratava a lista como se fosse de textos e a rota devolvia
+    # "AttributeError: 'dict' object has no attribute 'strip'" (medido no teste).
+    locais = {_normalizar_dispositivo(str((x or {}).get("video") or x)) for x in (disp.get("dispositivos") or [])} \
+        if disp.get("dispositivos") else set(_normalizar_dispositivo(x) for x in disp.get("video") or [])
+    with conexao() as c:
+        ultimos = {}
+        for r in c.execute("SELECT id, fluxo_id, fonte, pid, estado FROM ingestoes ORDER BY id DESC"):
+            ultimos.setdefault(dict(r)["fluxo_id"], dict(r))
+        cameras = [dict(x) for x in c.execute("SELECT id, rotulo, fluxo_id, ip, ativo FROM cameras "
+                                              "ORDER BY rotulo")]
+    saida = {"maquina_de_captura": maquina_de_captura(), "dispositivos": sorted(locais),
+             "cameras": []}
+    for cam in cameras:
+        ult = ultimos.get(cam["fluxo_id"]) or {}
+        dispositivo = (ult.get("fonte") or "").replace("dshow:", "")
+        estado, motivo = "pronta", ""
+        if cam.get("ip"):
+            estado, motivo = "por_endereco", "camera por endereco (RTSP): precisa de credencial e nao e' stand-by local"
+        elif not locais:
+            estado, motivo = "sem_dispositivo", disp.get("motivo") or "o ffmpeg nao encontrou entrada de video nesta maquina"
+        else:
+            vivo = _envio_vivo_do_fluxo(cam["fluxo_id"])
+            if vivo:
+                estado, motivo = "no_ar", f"no ar desde {vivo.get('atualizado_em') or ''}"
+            elif dispositivo and _normalizar_dispositivo(dispositivo) not in locais:
+                estado, motivo = "ausente", ("o dispositivo do ultimo envio nao esta' nesta maquina: "
+                                             "confira o cabo/USB do split")
+            else:
+                dono = _camera_em_uso(dispositivo or None)
+                if dono:
+                    estado, motivo = "em_uso", f"em uso pelo envio {dono.get('fluxo_id')}"
+        saida["cameras"].append({"id": cam["id"], "rotulo": cam["rotulo"], "fluxo_id": cam["fluxo_id"],
+                                 "estado": estado, "motivo": motivo,
+                                 "dispositivo": _normalizar_dispositivo(dispositivo or "")})
+    return saida
+
+
+def _envio_vivo_do_fluxo(fluxo_id: str) -> dict | None:
+    """O envio deste fluxo esta' DE PÉ agora? (pid vivo — registro 'no_ar' de ffmpeg morto nao conta)"""
+    with conexao() as c:
+        linhas = [dict(x) for x in c.execute("SELECT id, fluxo_id, estado, pid, atualizado_em "
+                                             "FROM ingestoes WHERE fluxo_id=? ORDER BY id DESC LIMIT 5",
+                                             (fluxo_id,))]
+    for d in linhas:
+        if d.get("estado") in ("no_ar", "no ar", "iniciando") and _processo_vivo(d.get("pid")):
+            return d
     return None
 
 

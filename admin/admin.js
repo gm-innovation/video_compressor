@@ -1,6 +1,6 @@
 /* Admin do projeto e do sistema: acompanhamento (§6) + administracao (clientes, embarcacoes,
    cameras, usuarios, analises, auditoria, saude). Le e escreve tudo pela API do produto. */
-const A = { usuario: null, resumo: null, clientes: [], usuarios: [], verificarCredencial: false, sistema: null, cameras: [], embarcacoes: [], tela: 'painel', timer: null, marca: null, radarForm: null, radarAviso: null };
+const A = { usuario: null, resumo: null, clientes: [], usuarios: [], verificarCredencial: false, sistema: null, cameras: [], embarcacoes: [], tela: 'painel', timer: null, marca: null, radarForm: null, radarAviso: null, prontidao: null };
 const $ = (id) => document.getElementById(id);
 const limpar = (el) => { while (el.firstChild) el.removeChild(el.firstChild); };
 const esc = (s) => String(s === null || s === undefined ? '' : s);
@@ -128,6 +128,16 @@ async function atualizar() {
   const rs = await api('/api/resumo'); if (rs.ok) A.resumo = rs.corpo;
   const em = await api('/api/embarcacoes'); A.embarcacoes = (em.corpo && em.corpo.embarcacoes) || [];
   const cm = await api('/api/cameras'); A.cameras = (cm.corpo && cm.corpo.cameras) || [];
+  /* STAND-BY do PC de captura (dono, 19/11/2026): o sinal chega pelo split o tempo todo e nos so'
+     transmitimos quando o cliente ativa. Esta leitura diz, por camera, se ela esta' PRONTA (dispositivo
+     existe e nada o ocupa), NO AR, AUSENTE (cabo/USB fora) ou EM USO — sem abrir camera nenhuma. */
+  try {
+    const rp = await fetch('/api/cameras/prontidao');
+    const jp = rp.ok ? await rp.json() : {};
+    const mapa = {};
+    for (const c of (jp.cameras || [])) mapa[c.id] = c;
+    A.prontidao = { maquina_de_captura: !!jp.maquina_de_captura, cameras: mapa, dispositivos: jp.dispositivos || [] };
+  } catch (e) { A.prontidao = A.prontidao || null; }
   if (A.usuario && A.usuario.papel === 'admin') {
     const cl = await api('/api/clientes'); A.clientes = (cl.corpo && cl.corpo.clientes) || [];
     const us = await api('/api/usuarios' + (A.verificarCredencial ? '?credencial=1' : ''));
@@ -156,7 +166,8 @@ function agora() { const d = new Date(); const p = (n) => String(n).padStart(2, 
 const RUIDO_TELA = { gerado_em: 1, uptime_s: 1, idade_s: 1, atualizado_em: 1, lido_em: 1, agora: 1 };
 function assinaturaTelas() {
   try {
-    return JSON.stringify([A.resumo, A.embarcacoes, A.cameras, A.clientes, A.usuarios, A.sistema, A.camerasInterno],
+    return JSON.stringify([A.resumo, A.embarcacoes, A.cameras, A.clientes, A.usuarios, A.sistema, A.camerasInterno,
+      A.prontidao],
       (k, v) => (RUIDO_TELA[k] ? undefined : v));
   } catch (e) { return 'erro:' + Math.random(); }
 }
@@ -513,8 +524,23 @@ function telaCameras(t) {
       + ' · ajuste ' + (q.ajuste || '—') + idade
       + (q.passa === false && q.alvo_sugerido ? ' · sugerido: ' + q.alvo_sugerido : '');
   };
+  /* STAND-BY (dono, 19/11/2026): o sinal chega dividido (split) o tempo todo; nosso sistema transmite
+     so' quando o cliente ativa. Onde a captura NAO e' desta maquina, a coluna diz isso com todas as
+     letras — mostrar "pronta" aqui seria mentira, porque quem ve' o dispositivo e' o PC de bordo. */
+  const NOME_STANDBY = { pronta: 'pronta (stand-by)', no_ar: 'no ar', em_uso: 'em uso por outro envio',
+    ausente: 'AUSENTE (cabo/USB fora)', sem_dispositivo: 'sem entrada de captura desta maquina',
+    por_endereco: 'por endereco (RTSP)' };
+  const textoStandBy = (l) => {
+    const p = A.prontidao;
+    if (!p || !p.maquina_de_captura) return 'a bordo (quem informa e o PC de captura)';
+    const c = (p.cameras || {})[l.id];
+    if (!c) return '— (a camera nao esta nesta maquina)';
+    const nome = NOME_STANDBY[c.estado] || c.estado || '—';
+    return nome + (c.dispositivo ? ' · ' + c.dispositivo : '') + (c.motivo ? ' · ' + c.motivo : '');
+  };
   t.appendChild(tabela([{ rotulo: 'Câmera', campo: 'rotulo' }, { rotulo: 'Fluxo', campo: 'fluxo_id' },
     { rotulo: 'Situação', valor: situacao },
+    { rotulo: 'Stand-by (PC de captura)', valor: textoStandBy },
     { rotulo: 'Endereço (operação)', valor: (l) => { const c = porId[l.id] || {}; return c.ip ? c.ip + ':' + (c.porta || '554') + (c.canal ? ' · canal ' + c.canal : '') : '—'; } },
     { rotulo: 'Como o agente pega', valor: (l) => { const c = porId[l.id] || {}; return c.captura || '—'; } },
     { rotulo: 'Encoder', valor: (l) => { const e = (l.viva && l.viva.encoder) || {}; return [e.codec, e.resolucao, e.fps ? e.fps + ' fps' : '', e.bitrate].filter(Boolean).join(' · '); } },
@@ -707,10 +733,15 @@ function telaTempoReal(t) {
       { rotulo: 'No ar há', campo: 'no_ar' },
       { rotulo: 'Câmera', valor: (l) => botao(l.vivo ? 'desligar' : 'ligar', 'mini', async () => {
           // desligar solta o dispositivo de captura (a camera "desliga" sem mexer em cabo);
-          // ligar reabre com o ultimo ajuste dela.
+          // ligar reabre com o ultimo ajuste dela. ONDE A CAPTURA NAO E' DESTA MAQUINA (lado terra) o
+          // clique vira ORDEM para o bordo (dono, 19/11/2026): antes o lado terra tentava abrir dshow no
+          // Linux e a tela respondia "Unknown input format: 'dshow'" / codigo 234.
           const r = await api('/api/cameras/' + (l.vivo ? 'desligar' : 'ligar'),
                               { method: 'POST', body: JSON.stringify({ camera_id: l.fluxo }) });
-          dizer(r.ok ? (l.vivo ? 'câmera desligada: ' : 'câmera ligada: ') + l.fluxo
+          const recado = (r.corpo && r.corpo.recado) || '';
+          dizer(r.ok ? (r.corpo && r.corpo.enviado_ao_bordo ? 'ordem enviada ao bordo: '
+                        : (l.vivo ? 'câmera desligada: ' : 'câmera ligada: ')) + l.fluxo
+                        + (recado ? ' — ' + recado : '')
                      : 'não deu para ' + (l.vivo ? 'desligar' : 'ligar') + ': ' +
                        ((r.corpo && r.corpo.erro) || 'sem resposta'));
           carregar();

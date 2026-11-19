@@ -21,7 +21,7 @@ TOKEN = (os.environ.get("GITHUB_TOKEN_FOR_RELEASES") or os.environ.get("GH_TOKEN
 DIST = pathlib.Path.home() / "lecsor-pipeline-video" / "desktop" / "dist"
 PAPEIS = ("Captura", "Terra", "Admin", "Cliente")
 # Ordem de publicacao: o PRIMEIRO e' o `latest` do GitHub. Nova versao entra na frente.
-VERSOES_PUBLICADAS = ("0.6.9", "0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
+VERSOES_PUBLICADAS = ("0.6.10", "0.6.9", "0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
 
 
 def instaladores(versao: str) -> list:
@@ -36,6 +36,29 @@ def instaladores(versao: str) -> list:
     return [DIST / papel.lower() / f"LECSOR-{papel}-{versao}-x64.exe" for papel in PAPEIS]
 
 NOTAS = {
+    "0.6.10": (
+        "**As câmeras ficam em stand-by no PC de captura e só transmitem quando o cliente ativa.**\n\n"
+        "Arquitetura (dono, 19/11/2026): o sinal de cada câmera é **dividido por um split** e chega à nossa "
+        "máquina de captura; o DVR grava por conta dele. O nosso sistema **não abre câmera em repouso** — "
+        "abre quando o cliente ativa o canal no painel e fecha quando ele sai.\n\n"
+        "* **A captura nunca mais é pedida na máquina errada.** O clique de ligar/desligar é da **máquina de "
+        "captura**: no lado terra ele virou **ordem** (`iniciar`/`parar`) que o bordo obedece (o agente de "
+        "ordens agora sobe junto com o servidor local, com reinício automático). Antes o clique era "
+        "encaminhado ao lado terra, que tentava abrir a câmera com `-f dshow` no Linux e devolvia "
+        "`ffmpeg saiu com codigo 234: Error opening input files: Invalid argument` / "
+        "`Unknown input format: 'dshow'` (medido na base do lado terra: `ingestoes` 186-191).\n"
+        "* **Stand-by de verdade:** em repouso **nenhum ffmpeg roda** e o dispositivo de captura não fica "
+        "aberto. A tela do admin mostra, por câmera, **pronta (stand-by)**, **no ar**, **em uso por outro "
+        "envio** ou **AUSENTE (cabo/USB fora do split)** — sempre dita pela máquina de captura; onde a "
+        "captura não é dela, a tela diz \"a bordo (quem informa é o PC de captura)\" em vez de mentir.\n"
+        "* **Motivo que aponta a máquina certa:** quando o log traz `Unknown input format: 'dshow'`, a tela "
+        "diz que aquela máquina não é a de captura e que a captura abre no PC de bordo.\n\n"
+        "* **Provas novas:** `tests/test-lado-terra-nao-captura.py` (lado terra manda ordem, **nenhum "
+        "ffmpeg** e **nenhum envio** nascem nele; o bordo continua capturando) · "
+        "`tests/test-stand-by-do-captura.py` (por **processo**: zero ffmpeg em stand-by, um depois de "
+        "ativar, zero depois de sair — com a câmera de verdade desta máquina e mediamtx de teste) · "
+        "`tests/test-motivo-maquina-errada.py` (tradução do erro medido, sem mexer no que já funcionava).\n"
+    ),
     "0.6.9": (
         "**A linha de cima da grade do cliente não é mais cortada.**\n\n"
         "Queixa: \"na tela do cliente está cortando as câmeras de cima\" (print de 18/11/2026, grade de 3 "

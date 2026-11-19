@@ -41,7 +41,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # LECSOR_CORS_ORIGENS) recebem o cabecalho; qualquer outra origem fica sem CORS e o navegador bloqueia.
 ROTAS_CAPTURA = ("/api/dispositivos", "/api/envios", "/api/ingestao", "/api/ingestoes",
                  "/api/compressao", "/api/compressoes", "/api/medicoes", "/api/trecho", "/api/captura",
-                 "/api/publicacao", "/api/cameras/publicar")
+                 "/api/publicacao", "/api/cameras/publicar",
+                 # LIGAR/DESLIGAR e PRONTIDAO sao da MAQUINA DE CAPTURA (dono, 19/11/2026): sem estas
+                 # entradas o servidor do bordo encaminhava o clique para o lado terra, que tentava
+                 # `-f dshow` no Linux e respondia "Unknown input format: 'dshow'" / codigo 234 —
+                 # era ISSO que aparecia na tela do dono ("as cameras nao religam").
+                 "/api/cameras/ligar", "/api/cameras/desligar", "/api/cameras/prontidao")
 ORIGENS_CAPTURA_PADRAO = ("http://187.127.60.250:8085", "http://127.0.0.1:8085",
                           "http://127.0.0.1:8765", "http://localhost:8765")
 
@@ -58,6 +63,8 @@ def eh_rota_de_captura(rota: str) -> bool:
 from ingestao import iniciar as ing_iniciar, parar as ing_parar, listar as ing_listar  # noqa: E402
 from ingestao import desligar_camera as ing_desligar_camera, ligar_camera as ing_ligar_camera  # noqa: E402
 from ingestao import capturar as ing_capturar, listar_dispositivos as ing_dispositivos, ao_vivo as ing_ao_vivo
+from ingestao import maquina_de_captura as ing_maquina_de_captura  # noqa: E402
+from ingestao import prontidao_das_cameras as ing_prontidao  # noqa: E402
 from ingestao import limpar_vivos_mortos as ing_limpar_vivos
 from ferramentas import caminho_banco, resumo as resumo_ferramentas  # noqa: E402
 from ferramentas import carregar_ambiente  # noqa: E402
@@ -924,6 +931,8 @@ class Handler(SimpleHTTPRequestHandler):
         if str(cam["ip"] or "").strip():
             return {"aplicado": False,
                     "motivo": "camera por endereco (RTSP): o alvo vale quando o Enviar video subir de novo"}
+        if not ing_maquina_de_captura():
+            return {"aplicado": False, "motivo": "esta maquina nao e' a de captura: o alvo vale no PC de bordo"}
         try:
             with conexao() as c:
                 viva = c.execute("""SELECT id FROM ingestoes WHERE fluxo_id=? AND
@@ -1802,6 +1811,17 @@ class Handler(SimpleHTTPRequestHandler):
                 else:
                     l["captura"] = ""
             return self._json(200, {"cameras": linhas}, {"Cache-Control": "no-store"})
+        if rota == "/api/cameras/prontidao":
+            # Estado de STAND-BY por camera NESTA maquina (pronta / no ar / ausente / em uso). Nao abre
+            # camera nenhuma: le' a lista de dispositivos que o ffmpeg ja' entrega. E' o que a tela mostra
+            # ANTES de o cliente ativar (o sinal chega pelo split o tempo todo; transmitimos sob ordem).
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so operacao e administrador veem a prontidao das cameras"})
+            try:
+                d = ing_prontidao()
+            except Exception as e:  # noqa: BLE001
+                return self._json(500, {"erro": f"nao consegui medir a prontidao ({type(e).__name__}: {e})"})
+            return self._json(200, d, {"Cache-Control": "no-store"})
         if rota == "/api/cameras":
             if not u:
                 return self._json(401, {"erro": "entre no sistema"})
@@ -2306,6 +2326,17 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(422, r)
             auditar(u, "envio_video", f"link {endereco[:120]} -> {r['fluxo_id']}", self.client_address[0])
             return self._json(201, {"ok": True, **r}, {"Cache-Control": "no-store"})
+        if rota == "/api/cameras/prontidao":
+            # Estado de STAND-BY por camera NESTA maquina (pronta / no ar / ausente / em uso). Nao abre
+            # camera nenhuma: le' a lista de dispositivos que o ffmpeg ja' entrega. E' o que a tela mostra
+            # ANTES de o cliente ativar (regra do split: o sinal chega o tempo todo, nos transmitimos sob ordem).
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so operacao e administrador veem a prontidao das cameras"})
+            try:
+                d = ing_prontidao()
+            except Exception as e:  # noqa: BLE001
+                return self._json(500, {"erro": f"nao consegui medir a prontidao ({type(e).__name__}: {e})"})
+            return self._json(200, d, {"Cache-Control": "no-store"})
         if rota in ("/api/cameras/desligar", "/api/cameras/ligar"):
             # ligar/desligar a camera pela tela: quem manda e' a operacao (o cliente so olha).
             # desligar = para o envio e SOLTA o dispositivo; ligar = reabre com o ultimo ajuste.
@@ -2316,6 +2347,30 @@ class Handler(SimpleHTTPRequestHandler):
             if not cam_id:
                 return self._json(422, {"erro": "informe a camera"})
             desligar = rota.endswith("desligar")
+            # QUEM CAPTURA E' A MAQUINA DE CAPTURA (dono, 19/11/2026): o sinal chega pelo split direto no
+            # nosso dispositivo, entao aqui no LADO TERRA o clique NAO abre camera — vira ORDEM para o bordo.
+            # Medido em 19/11/2026: sem isso o lado terra tentava `-f dshow` no Linux e a tela respondia
+            # "Unknown input format: 'dshow'" / codigo 234, sem ninguem entender de onde vinha.
+            if not ing_maquina_de_captura():
+                try:
+                    with conexao() as c:
+                        cam = c.execute("SELECT id, embarcacao_id, fluxo_id, rotulo FROM cameras WHERE id=?",
+                                        (cam_id,)).fetchone()
+                except Exception as e:  # noqa: BLE001
+                    return self._json(500, {"erro": f"nao consegui ler a camera ({type(e).__name__})"})
+                if not cam:
+                    return self._json(422, {"erro": "camera nao encontrada"})
+                if not str(cam["embarcacao_id"] or "").strip():
+                    return self._json(422, {"erro": "a camera ainda nao pertence a uma embarcacao: cadastre antes"})
+                quem = f"{u['papel']}:{u['email']}" if u else "tela local"
+                o = enfileirar_ordem(cam["embarcacao_id"], cam_id, cam["fluxo_id"],
+                                     "parar" if desligar else "iniciar", motivo=f"pedido de {quem}")
+                auditar(u, "ordem_camera_desligada" if desligar else "ordem_camera_ligada",
+                        f"{cam_id} ({cam['embarcacao_id']}) ordem #{o['seq']}", self.client_address[0])
+                return self._json(200, {"ok": True, "ordem": o["seq"], "enviado_ao_bordo": True,
+                                        "recado": ("esta maquina nao e' a de captura: a ordem foi enviada ao "
+                                                   "bordo e o PC de captura liga a camera")},
+                                  {"Cache-Control": "no-store"})
             r = ing_desligar_camera(cam_id) if desligar else ing_ligar_camera(cam_id)
             if "erro" in r:
                 return self._json(422, r)

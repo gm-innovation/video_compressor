@@ -19,6 +19,18 @@ sistema comprime na máquina e o vídeo comprimido sobe para o lado terra (`dest
 ## Instaladores prontos (Windows x64) — PLUG & PLAY desde a 0.2.0
 Na página de releases: https://github.com/gm-innovation/video_compressor/releases
 
+### 0.6.10 — **as câmeras ficam em stand-by no PC de captura e só transmitem quando o cliente ativa**
+- Arquitetura (dono, 19/11/2026): o sinal de cada câmera é **dividido por um split** e chega à nossa
+  máquina de captura; o DVR grava por conta dele. O nosso sistema **não abre câmera em repouso**.
+- **A captura nunca mais é pedida na máquina errada:** ligar/desligar é da máquina de captura; no lado
+  terra o clique virou **ordem** (`iniciar`/`parar`) e o agente de ordens agora sobe junto com o servidor
+  local (com reinício automático). Antes o clique era encaminhado ao lado terra, que tentava `-f dshow` no
+  Linux e devolvia `codigo 234 / Unknown input format: 'dshow'` (`ingestoes` 186-191).
+- **Stand-by de verdade:** em repouso nenhum ffmpeg roda e o dispositivo fica fechado. A tela do admin
+  mostra por câmera **pronta (stand-by)** / **no ar** / **em uso** / **AUSENTE (cabo/USB fora do split)**.
+- Provas: `tests/test-lado-terra-nao-captura.py`, `tests/test-stand-by-do-captura.py`,
+  `tests/test-motivo-maquina-errada.py`.
+
 ### 0.6.9 — **a linha de cima da grade do cliente não é mais cortada**
 - **`LECSOR-0.6.9-x64.exe`** — queixa: "na tela do cliente está cortando as câmeras de cima" (print de
   18/11/2026: na grade de 3 a moldura azul da primeira fileira aparecia sem o traço de cima).

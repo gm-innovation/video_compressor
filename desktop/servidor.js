@@ -129,8 +129,8 @@ function subir(config) {
   fs.mkdirSync(logs, { recursive: true });
   const env = amb(process.env, configAtual, python);
   analiseAtual = '';
-  const item = (nome, comando, args, cwd) => {
-    const p = spawn(comando, args, { cwd, env, shell: false });
+  const item = (nome, comando, args, cwd, envDoItem) => {
+    const p = spawn(comando, args, { cwd, env: envDoItem || env, shell: false });
     p.stdout.pipe(fs.createWriteStream(path.join(logs, nome + '.log'), { flags: 'a' }));
     p.stderr.pipe(fs.createWriteStream(path.join(logs, nome + '-erro.log'), { flags: 'a' }));
     const registro = { nome, comando, args, cwd, p, tentativas: 0 };
@@ -150,7 +150,7 @@ function subir(config) {
         `[app] ${nome} saiu (codigo ${codigo}) — subindo de novo (${registro.tentativas}/3)\n`);
       setTimeout(() => {
         if (!querendo || !filhos.includes(registro)) return;
-        const novo = spawn(comando, args, { cwd, env, shell: false });
+        const novo = spawn(comando, args, { cwd, env: envDoItem || env, shell: false });
         novo.stdout.pipe(fs.createWriteStream(path.join(logs, nome + '.log'), { flags: 'a' }));
         novo.stderr.pipe(fs.createWriteStream(path.join(logs, nome + '-erro.log'), { flags: 'a' }));
         registro.p = novo;
@@ -158,6 +158,7 @@ function subir(config) {
     });
   };
   let analise = '';
+  let ordens = '';
   try {
     item('mediamtx', path.join(repo, 'tools', 'mediamtx', process.platform === 'win32' ? 'mediamtx.exe' : 'mediamtx'),
          [path.join(repo, 'ground', 'mediamtx.yml')], repo);
@@ -174,10 +175,27 @@ function subir(config) {
       analise = 'analise local: desligada (o Python em uso não tem numpy/onnxruntime) — captura e repasse seguem normais';
     }
     if (analise) fs.appendFileSync(path.join(logs, 'agente-analise.log'), `[app] ${analise}\n`);
+    // Agente de ORDENS do bordo: e' ele que liga e desliga a camera quando o CLIENTE ativa no painel web.
+    // Sem ele o lado terra manda a ordem e ninguem obedece (medido 19/11/2026: nada no app o subia — o
+    // plano do stand-by so' funcionava na mao de quem sabia rodar o script no servidor de captura).
+    const agenteOrdens = path.join(repo, 'ground', 'agente_de_ordens.py');
+    if (!(configAtual.capturaLocal && configAtual.servidorLocal && configAtual.servidorLocal.ligado)) {
+      ordens = 'agente de ordens: nao (esta maquina nao e a de captura)';
+    } else if (!fs.existsSync(agenteOrdens)) {
+      ordens = 'agente de ordens: nao vem neste pacote';
+    } else if (!String(env.LECSOR_EMBARCACAO || '').trim() || !String(env.LECSOR_TOKEN_INGESTAO || '').trim()) {
+      ordens = ('agente de ordens: DESLIGADO — falta LECSOR_EMBARCACAO/LECSOR_TOKEN_INGESTAO desta '
+        + 'embarcacao (o cliente liga na web e nao acontece nada)');
+    } else {
+      item('agente-ordens', python, ['-u', agenteOrdens], repo,
+        Object.assign({}, env, { LECSOR_PORTA_LOCAL: String((configAtual.servidorLocal || {}).portaApi || 8765) }));
+      ordens = 'agente de ordens: no ar (obedece o cliente: liga e desliga a camera)';
+    }
+    if (ordens) fs.appendFileSync(path.join(logs, 'agente-ordens.log'), `[app] ${ordens}\n`);
   } catch (e) { querendo = false; return { erro: e.message }; }
   querendo = true;
   analiseAtual = analise ? 'servidor: ' + analise : '';
-  return { ok: true, subiu: filhos.length, repo, python, analise };
+  return { ok: true, subiu: filhos.length, repo, python, analise, ordens };
 }
 
 function ffmpegInfo() {
