@@ -21,7 +21,7 @@ TOKEN = (os.environ.get("GITHUB_TOKEN_FOR_RELEASES") or os.environ.get("GH_TOKEN
 DIST = pathlib.Path.home() / "lecsor-pipeline-video" / "desktop" / "dist"
 PAPEIS = ("Captura", "Terra", "Admin", "Cliente")
 # Ordem de publicacao: o PRIMEIRO e' o `latest` do GitHub. Nova versao entra na frente.
-VERSOES_PUBLICADAS = ("0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
+VERSOES_PUBLICADAS = ("0.6.9", "0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
 
 
 def instaladores(versao: str) -> list:
@@ -36,6 +36,24 @@ def instaladores(versao: str) -> list:
     return [DIST / papel.lower() / f"LECSOR-{papel}-{versao}-x64.exe" for papel in PAPEIS]
 
 NOTAS = {
+    "0.6.9": (
+        "**A linha de cima da grade do cliente não é mais cortada.**\n\n"
+        "Queixa: \"na tela do cliente está cortando as câmeras de cima\" (print de 18/11/2026, grade de 3 "
+        "com a moldura azul da primeira fileira sem o traço de cima). Medido em navegador de verdade "
+        "(1920x1080, 6 câmeras, grade 3): o `padding` do palco era `0px 18px 8px` — **zero em cima**, 8 px "
+        "embaixo — então a primeira fileira de janelas ficava com **0,4 px** de folga sob o cabeçalho e o "
+        "`overflow:hidden` do palco comia **2,6 px** do contorno da janela selecionada (`outline:2px` + "
+        "`outline-offset:1px`, que ficam 3 px acima do topo da janela). Não era o vídeo cortado: o "
+        "`<video>` usa `object-fit:contain`.\n\n"
+        "* **Correção:** o palco passa a ter a mesma folga em cima e embaixo (`padding:12px 18px 8px`) — e "
+        "o mesmo na tela do telefone (12px no topo). A folga fica comentada no CSS para não ser removida "
+        "depois: sem ela o contorno da seleção volta a ser decapitado.\n"
+        "* **Prova nova:** `tests/test-grade-do-cliente-nao-corta-o-topo.py` mede o `padding-top` do palco, "
+        "a folga da primeira fileira e o contorno da janela **inteiro** dentro do palco, em 3 tamanhos de "
+        "janela (1920x1080, 1536x780, 1366x768) x grades 2x2, 3x3 e 4x4 — **9/9 verde**. Com o CSS antigo o "
+        "mesmo teste acusa **36 falhas** (\"contorno da janela cortado em 3.0 px\", \"padding-top do palco "
+        "= 0\"), ou seja: a prova pega o defeito, não só acompanha.\n"
+    ),
     "0.6.8": (
         "**O cadastro das câmeras chega ao lado terra — e as telas passam a mostrar o que está no ar, "
         "com ou sem cadastro.**\n\n"

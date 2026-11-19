@@ -44,7 +44,10 @@ select.pil{padding:7px 9px}
 .avatar-ia{width:22px;height:22px;border-radius:50%;background:var(--azul);display:grid;place-items:center;font-size:10.5px;font-weight:700}
 
 /* ---------- grade ---------- */
-.palco{flex:1;padding:0 18px 8px;overflow:hidden;min-height:0;display:flex;flex-direction:column}
+/* A folga de CIMA e' obrigatoria: sem ela a primeira fileira encosta no cabecalho e o
+   overflow:hidden do palco corta o contorno da janela selecionada (outline 2px + offset 1px
+   ficam acima do topo do palco). Medido em 18/11/2026: padding-top 0 -> 2,6 px cortados. */
+.palco{flex:1;padding:12px 18px 8px;overflow:hidden;min-height:0;display:flex;flex-direction:column}
 .grade-vms{display:grid;gap:5px;grid-auto-rows:minmax(0,1fr);align-content:center}
 .g3{grid-template-columns:repeat(3,1fr)}
 .g4{grid-template-columns:repeat(4,1fr)}
@@ -176,7 +179,7 @@ table.historico tr:last-child td{border-bottom:0}
   .cabecalho{flex-direction:column;align-items:stretch;gap:8px;padding:12px 12px 8px}
   .cabecalho h1{font-size:18px}
   .controles{margin-left:0}
-  .palco{padding:0 10px 8px}
+  .palco{padding:12px 10px 8px}
   .rodape{flex-wrap:wrap;padding:10px 12px 12px}
   .rodape .dir{margin-left:0}
   .aviso-gravacao{padding:10px 12px}

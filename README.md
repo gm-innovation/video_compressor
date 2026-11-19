@@ -19,6 +19,20 @@ sistema comprime na máquina e o vídeo comprimido sobe para o lado terra (`dest
 ## Instaladores prontos (Windows x64) — PLUG & PLAY desde a 0.2.0
 Na página de releases: https://github.com/gm-innovation/video_compressor/releases
 
+### 0.6.9 — **a linha de cima da grade do cliente não é mais cortada**
+- **`LECSOR-0.6.9-x64.exe`** — queixa: "na tela do cliente está cortando as câmeras de cima" (print de
+  18/11/2026: na grade de 3 a moldura azul da primeira fileira aparecia sem o traço de cima).
+- **Causa medida** (navegador real, 1920x1080, 6 câmeras, grade 3): o `padding` do palco era
+  `0px 18px 8px` — **zero em cima** e 8 px embaixo — então a primeira fileira ficava com **0,4 px** de folga
+  sob o cabeçalho e o `overflow:hidden` do palco comia **2,6 px** do contorno da janela selecionada
+  (`outline:2px` + `outline-offset:1px` ocupam 3 px acima do topo da janela). Não era o vídeo: o `<video>`
+  usa `object-fit:contain`.
+- **Correção:** `.palco` com folga igual em cima e embaixo (`padding:12px 18px 8px`), o mesmo no telefone, e
+  o motivo comentado no CSS para a folga não ser removida depois.
+- **Prova nova:** `tests/test-grade-do-cliente-nao-corta-o-topo.py` mede `padding-top` do palco, folga da
+  primeira fileira e contorno inteiro dentro do palco em 3 tamanhos de janela x grades 2x2/3x3/4x4 —
+  **9/9 verde**; com o CSS antigo o mesmo teste acusa **36 falhas**.
+
 ### 0.6.8 — **o cadastro das câmeras chega ao lado terra e as telas mostram o que está no ar (com ou sem cadastro)**
 - **`LECSOR-0.6.8-x64.exe`** — queixa: "cadastrei as câmeras com seleção de qualidade e tudo mais, está no
   ar, mas elas não aparecem na tela Tempo real, Produção e na transmissão ao vivo do cliente". Medido
