@@ -6,7 +6,15 @@
 `tests/e2e-cadastro-de-camera-salva-no-banco.py` **rc=0 (23/23)**; VPS com `api.py`/`supabase_escrita.py`/
 `schema-transmissao.sql` de md5 idêntico ao local, `pipeline-api` ativa e `/api/saude` com
 `supabase: {configurado: true, alcance: ok}`; Supabase `gscfcobpejxhtyzwfrjp`: `cameras` saiu de **1** para
-**16** linhas (12 em "Bancada de testes (propria)" e 4 em "PSV Exemplo (demo)"). Fases 2–6 pendentes.
+**16** linhas (12 em "Bancada de testes (propria)" e 4 em "PSV Exemplo (demo)"). **Fase 2 implementada e
+provada** — `config_bordo` + `config_aplicada_bordo` + `config_local` no SQLite, rotas
+`GET /api/config-desejada` (bordo, 404 com `LECSOR_SEM_CONFIG=1`), `POST /api/config-aplicada` (bordo),
+`GET/POST /api/config` (admin publica e vê desejada × aplicada) e `POST /api/config/aplicar` (rota **local**
+do bordo, já em `ROTAS_CAPTURA`); no agente, `ler_config()`/`aplicar_config()`/`intervalo_da_config()`
+(`LECSOR_ESPERA_DA_CONFIG`, padrão 15 s) aplicam **só a diferença** e confirmam — e `teto_do_bordo()` passa a
+obedecer o que o admin publicou. Provado por `tests/e2e-config-do-bordo-vinda-de-terra.py` **rc=0 (21/21)**,
+incluindo a recusa com motivo (`gravacao_continua` ainda não aplicável) sem derrubar o que já estava aplicado.
+Fases 3–6 pendentes.
 **Data:** 19/11/2026 · **Base:** 0.7.0 (`9ca021d` + plano `2d94e25`)
 **Alvo:** 0.8.0 — o cadastro de câmera passa a ser salvo no banco (hoje só existe no SQLite local), o bordo
 deixa de ter tela de configuração, passa a **buscar** o que terra publica e passa a **reportar a própria saúde**

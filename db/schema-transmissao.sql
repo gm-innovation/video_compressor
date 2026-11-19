@@ -153,6 +153,47 @@ CREATE INDEX IF NOT EXISTS ix_gravacoes_do_cliente ON gravacoes(usuario_email, a
 -- vivo nao depende da nuvem) e o Supabase a base de verdade do cadastro.
 -- Esta tabela e' a PONTE: no Supabase a embarcacao e' uuid, aqui e' texto (`'bancada'`). Sem a ponte o
 -- upsert da camera falharia por chave estrangeira (a camera aponta para a embarcacao).
+-- ---------------------------------------------------------------------------------------------
+-- CONFIGURACAO PUBLICADA POR TERRA (dono, 19/11/2026 — aprovado 0.8.0). O computador de captura nao
+-- recebe conexao: ele OLHA. A `desejo_camera` ja' dizia liga/para (estado transitorio); a configuracao
+-- e' DECLARACAO (muda raramente) e vive aqui: chave->valor, com `versao` que sobe a cada publicacao —
+-- o bordo age SO' na diferenca e CONFIRMA o que aplicou (config_aplicada_bordo).
+--   camera_id = '' e' configuracao da EMBARCACAO inteira (ex.: teto_s).
+CREATE TABLE IF NOT EXISTS config_bordo (
+  embarcacao_id  TEXT NOT NULL,
+  camera_id      TEXT NOT NULL DEFAULT '',
+  chave          TEXT NOT NULL,               -- alvo_kbps | teto_s | gravacao_continua | transmitir
+  valor          TEXT NOT NULL DEFAULT '',
+  versao         INTEGER NOT NULL DEFAULT 0,
+  origem         TEXT NOT NULL DEFAULT '',    -- e-mail do admin que publicou
+  atualizado_em  TEXT NOT NULL,
+  PRIMARY KEY (embarcacao_id, camera_id, chave)
+);
+
+-- O que o BORDO conta que aplicou (por chave): fecha o ciclo desejada -> aplicada. `motivo` explica a
+-- recusa (chave desconhecida, valor fora da faixa) — nada de "achei que apliquei".
+CREATE TABLE IF NOT EXISTS config_aplicada_bordo (
+  embarcacao_id  TEXT NOT NULL,
+  camera_id      TEXT NOT NULL DEFAULT '',
+  chave          TEXT NOT NULL,
+  valor          TEXT NOT NULL DEFAULT '',
+  versao         INTEGER NOT NULL DEFAULT 0,
+  motivo         TEXT DEFAULT '',
+  atualizado_em  TEXT NOT NULL,
+  PRIMARY KEY (embarcacao_id, camera_id, chave)
+);
+
+-- A copia LOCAL (no bordo) do que ja' foi aplicado: e' o que permite aplicar SO' a diferenca e manter
+-- a ultima config boa quando a nova chega torta.
+CREATE TABLE IF NOT EXISTS config_local (
+  camera_id      TEXT NOT NULL DEFAULT '',
+  chave          TEXT NOT NULL,
+  valor          TEXT NOT NULL DEFAULT '',
+  versao         INTEGER NOT NULL DEFAULT 0,
+  atualizado_em  TEXT NOT NULL,
+  PRIMARY KEY (camera_id, chave)
+);
+
 CREATE TABLE IF NOT EXISTS embarcacoes_supabase (
   slug           TEXT PRIMARY KEY,      -- a embarcacao como esta' aqui (ex.: 'bancada')
   uuid           TEXT NOT NULL,         -- o id dela no Supabase

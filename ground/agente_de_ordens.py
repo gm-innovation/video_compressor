@@ -10,8 +10,13 @@ O que ele faz com cada ordem:
   - `iniciar` -> chama a API LOCAL (`/api/cameras/ligar`) e a camera entra no ar (mesma cadeia do
     "Enviar video": comprime nesta maquina e o fluxo comprimido vai para o lado terra);
   - `parar`   -> chama `/api/cameras/desligar` e a camera sai do ar.
-Alem disso, o agente guarda o que ELE ligou e corta sozinho depois do TETO (`LECSOR_TETO_DO_BORDO`,
-padrao 2 h): e' a rede de seguranca do envio ORFAO — a ordem foi entregue, o `parar` nunca chegou e a
+Alem disso, o agente OLHA a CONFIGURACAO publicada por terra (0.8.0): `GET /api/config-desejada` traz as
+chaves que o admin publicou (alvo por camera, teto, ...); ele aplica SO' a diferenca pela API local
+(`POST /api/config/aplicar`), guarda o que ja' aplicou em disco e confirma em `POST /api/config-aplicada`
+— inclusive o que RECUSOU, com o motivo. Sem lado terra novo (404), ele segue so' com a flag.
+
+O agente guarda o que ELE ligou e corta sozinho depois do TETO (`LECSOR_TETO_DO_BORDO` ou o que o admin
+publicou em `teto_s`, padrao 2 h): e' a rede de seguranca do envio ORFAO — a ordem foi entregue, o `parar` nunca chegou e a
 camera ficaria no ar para sempre. So' mexe no que ele mesmo ligou.
 O resultado (abriu? falhou? por que?) volta ao lado terra, e e' isso que aparece no historico do
 cliente.
@@ -75,7 +80,30 @@ def _salvar_ligados() -> None:
 
 
 def teto_do_bordo() -> float:
-    """Teto LOCAL do bordo (segundos). Zero/valor torto volta ao padrao — nunca fica sem teto."""
+    """Teto LOCAL do bordo (segundos).
+
+    A configuracao PUBLICADA por terra manda (0.8.0): o admin define o teto no painel e o bordo aplica
+    aqui (`config_local`). Sem config publicada, vale o env `LECSOR_TETO_DO_BORDO`; valor torto volta ao
+    padrao — o bordo nunca fica sem teto.
+    """
+    try:
+        import sqlite3
+        if str(RAIZ / "ground") not in sys.path:
+            sys.path.insert(0, str(RAIZ / "ground"))
+        from ferramentas import caminho_banco
+        c = sqlite3.connect(caminho_banco(), timeout=10)
+        c.row_factory = sqlite3.Row
+        try:
+            linha = c.execute("""SELECT valor FROM config_local WHERE camera_id='' AND chave='teto_s'"""
+                              ).fetchone()
+        finally:
+            c.close()
+        if linha and str(linha["valor"]).strip():
+            v = float(linha["valor"])
+            if v > 0:
+                return v
+    except Exception:  # noqa: BLE001  (banco ausente/torto: cai no env)
+        pass
     try:
         v = float(os.environ.get("LECSOR_TETO_DO_BORDO") or TETO_DO_BORDO_PADRAO)
     except Exception:
@@ -356,6 +384,103 @@ def atender_pedidos(base: str, token: str, emb: str, pedidos: list) -> int:
     return enviados
 
 
+# ---------------------------------------------------------------------------------------------
+# CONFIGURACAO PUBLICADA POR TERRA (0.8.0). O bordo OLHA o que terra publicou, aplica SO' a diferenca
+# (guarda o que ja' aplicou em disco) e CONFIRMA — inclusive o que RECUSOU, com o motivo.
+# ---------------------------------------------------------------------------------------------
+JA_APLICADAS: dict[str, int] = {}
+ULTIMA_CONFIG = 0.0
+
+
+def caminho_da_config() -> Path:
+    trocado = (os.environ.get("LECSOR_CONFIG_ESTADO") or "").strip()
+    return Path(trocado) if trocado else (LOG_DIR.parent / "config_aplicada.json")
+
+
+def _carregar_aplicadas() -> dict:
+    try:
+        dados = json.loads(caminho_da_config().read_text(encoding="utf-8"))
+        return {str(k): int(v) for k, v in (dados or {}).items()}
+    except Exception:  # noqa: BLE001  (arquivo torto/ausente nao derruba o agente)
+        return {}
+
+
+def _salvar_aplicadas() -> None:
+    try:
+        caminho_da_config().parent.mkdir(parents=True, exist_ok=True)
+        caminho_da_config().write_text(json.dumps(JA_APLICADAS), encoding="utf-8")
+    except Exception as e:  # noqa: BLE001
+        _log(f"aviso: nao guardei o que ja' apliquei ({type(e).__name__}: {e})")
+
+
+def intervalo_da_config() -> float:
+    """De quanto em quanto tempo o bordo OLHA a configuracao (env `LECSOR_ESPERA_DA_CONFIG`, padrao 15 s).
+
+    Configuracao muda raramente: olhar no ritmo da flag (2 s) seria gasto a toa.
+    """
+    try:
+        v = float(os.environ.get("LECSOR_ESPERA_DA_CONFIG") or 15.0)
+    except Exception:
+        v = 15.0
+    return min(600.0, max(2.0, v))
+
+
+def ler_config(base: str, token: str, emb: str):
+    """Le o que terra publicou. `None` quando o lado terra ainda nao tem a rota (compatibilidade)."""
+    s, j = _http("GET", f"{base}/api/config-desejada?embarcacao_id={emb}", token=token, timeout=30)
+    if s == 404 or (s == 422 and "rota" in str(j.get("erro") or "").lower()):
+        return None
+    if s != 200:
+        _log(f"aviso: o lado terra recusou a leitura da configuracao ({s} {j.get('erro')})")
+        return None
+    return j
+
+
+def aplicar_config(cfg, local: str, base: str, token: str, emb: str) -> dict:
+    """Aplica SO' a diferenca, valida antes (a API local decide) e conta o resultado ao lado terra."""
+    global ULTIMA_CONFIG
+    ULTIMA_CONFIG = time.time()
+    if not cfg:
+        return {"aplicadas": [], "recusadas": []}
+    aplicadas, recusadas = [], []
+    for item in cfg.get("chaves") or []:
+        cam = str((item or {}).get("camera_id") or "")
+        chave = str((item or {}).get("chave") or "")
+        valor = str((item or {}).get("valor") or "")
+        if not chave:
+            continue
+        try:
+            versao = int((item or {}).get("versao") or 0)
+        except (TypeError, ValueError):
+            versao = 0
+        marca = f"{cam}|{chave}"
+        if versao and versao <= int(JA_APLICADAS.get(marca, 0)):
+            continue                                    # ja' apliquei esta versao: nao repito
+        s, r = _http("POST", local + "/api/config/aplicar",
+                     {"camera_id": cam, "chave": chave, "valor": valor})
+        if s == 200 and r.get("ok"):
+            JA_APLICADAS[marca] = versao
+            aplicadas.append({"camera_id": cam, "chave": chave, "valor": valor, "versao": versao,
+                              "motivo": str(r.get("motivo") or "")})
+            _log(f"config: apliquei {chave}={valor} ({cam or 'embarcacao'}) v{versao}")
+        else:
+            motivo = str(r.get("motivo") or r.get("erro") or f"a API local respondeu {s}")
+            if s == 422:                                # recusa DEFINITIVA desta versao (a tela mostra)
+                JA_APLICADAS[marca] = versao
+            recusadas.append({"camera_id": cam, "chave": chave, "valor": valor, "versao": versao,
+                              "motivo": motivo})
+            _log(f"config: RECUSEI {chave}={valor} ({cam or 'embarcacao'}): {motivo}")
+    if aplicadas or recusadas:
+        _salvar_aplicadas()
+        try:
+            _http("POST", f"{base}/api/config-aplicada",
+                  {"embarcacao_id": emb, "versao": cfg.get("versao"),
+                   "aplicadas": aplicadas, "recusadas": recusadas}, token=token)
+        except Exception as e:  # noqa: BLE001
+            _log(f"aviso: nao consegui contar ao lado terra o que apliquei ({type(e).__name__}: {e})")
+    return {"aplicadas": aplicadas, "recusadas": recusadas}
+
+
 def intervalo_da_flag() -> float:
     """De quanto em quanto tempo o bordo OLHA a flag (env `LECSOR_ESPERA_DA_FLAG`, padrao 2 s)."""
     try:
@@ -373,6 +498,8 @@ def uma_rodada(base: str, local: str, token: str, emb: str, espera: float) -> in
         aplicar_flag(flag.get("cameras") or [], local, base, token, emb)
         atender_pedidos(base, token, emb, flag.get("pedidos") or [])
         publicar_catalogo(base, token, emb)
+        if time.time() - ULTIMA_CONFIG >= intervalo_da_config():
+            aplicar_config(ler_config(base, token, emb), local, base, token, emb)
         vigiar_teto(local)
         time.sleep(intervalo_da_flag())   # olhar de novo em instantes, sem martelar o lado terra
         return 0
@@ -412,6 +539,8 @@ def principal() -> int:
         return 2
     LIGADOS.clear()
     LIGADOS.update(_carregar_ligados())
+    JA_APLICADAS.clear()
+    JA_APLICADAS.update(_carregar_aplicadas())
     _log(f"agente de ordens no ar: embarcacao {emb} · lado terra {base} · API local {local}"
          + (f" · {len(LIGADOS)} envio(s) meu(s) no ar antes de eu comecar" if LIGADOS else ""))
     while True:

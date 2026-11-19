@@ -46,7 +46,11 @@ ROTAS_CAPTURA = ("/api/dispositivos", "/api/envios", "/api/ingestao", "/api/inge
                  # entradas o servidor do bordo encaminhava o clique para o lado terra, que tentava
                  # `-f dshow` no Linux e respondia "Unknown input format: 'dshow'" / codigo 234 —
                  # era ISSO que aparecia na tela do dono ("as cameras nao religam").
-                 "/api/cameras/ligar", "/api/cameras/desligar", "/api/cameras/prontidao")
+                 "/api/cameras/ligar", "/api/cameras/desligar", "/api/cameras/prontidao",
+                 # A configuracao que o bordo APLICA e' desta maquina (quem publica e' terra, e a
+                 # publicacao chega pelo agente). Sem esta entrada, o servidor do bordo encaminharia o
+                 # "aplicar" para o lado terra — que nao tem a camera nem o alvo.
+                 "/api/config/aplicar")
 ORIGENS_CAPTURA_PADRAO = ("http://187.127.60.250:8085", "http://127.0.0.1:8085",
                           "http://127.0.0.1:8765", "http://localhost:8765")
 
@@ -441,6 +445,141 @@ def pedir_trecho_do_hd(usuario, camera_id: str, arquivo: str) -> dict:
                   (pid, cam["embarcacao_id"], camera_id, nome, usuario["email"], em_iso()))
     auditar(usuario, "trecho_do_hd_pedido", f"{camera_id} {nome}", "")
     return {"ok": True, "id": pid, "recado": "pedido enviado ao PC de captura: o trecho chega em instantes"}
+
+
+# --------------------------------------------------------------------------------------------
+# CONFIGURACAO PUBLICADA POR TERRA (0.8.0, aprovado em 19/11/2026)
+# O dono: "eu configuraria tudo pelo meu usuario admin, pela premissa de nao enviar nada para bordo, o
+# app a bordo precisa buscar o tempo todo as atualizacoes". Mesmo desenho da flag: terra PUBLICA (com
+# `versao`), o bordo OLHA, aplica SO' a diferenca e CONFIRMA o que aplicou.
+# --------------------------------------------------------------------------------------------
+CHAVES_DE_CONFIG = ("alvo_kbps", "teto_s", "gravacao_continua", "transmitir")
+VALORES_DE_ALVO = ("1500", "1200", "1000", "800", "500", "300")   # a banda do produto, fechada
+
+
+def config_publicada(embarcacao_id: str) -> dict:
+    """O que TERRA quer (com a versao maxima) + o que o BORDO ja' contou que aplicou."""
+    with conexao() as c:
+        chaves = [dict(x) for x in c.execute(
+            """SELECT camera_id,chave,valor,versao,origem,atualizado_em FROM config_bordo
+               WHERE embarcacao_id=? ORDER BY camera_id,chave""", (embarcacao_id,)).fetchall()]
+        aplicadas = [dict(x) for x in c.execute(
+            """SELECT camera_id,chave,valor,versao,motivo,atualizado_em FROM config_aplicada_bordo
+               WHERE embarcacao_id=? ORDER BY camera_id,chave""", (embarcacao_id,)).fetchall()]
+    return {"embarcacao_id": embarcacao_id, "versao": max([int(x["versao"]) for x in chaves], default=0),
+            "chaves": chaves, "aplicadas": aplicadas}
+
+
+def publicar_config(embarcacao_id: str, camera_id: str, chave: str, valor: str, origem: str = "") -> dict:
+    """Publica (ou muda) UMA chave para o bordo. A `versao` sobe a cada publicacao — e' o que faz o
+    bordo distinguir "nova" de "ja' tenho". Valida na borda: chave conhecida e valor dentro do produto."""
+    emb = (embarcacao_id or "").strip()
+    cam = (camera_id or "").strip()
+    chave = (chave or "").strip()
+    valor = str(valor if valor is not None else "").strip()
+    if not emb:
+        return {"erro": "informe a embarcacao"}
+    if chave not in CHAVES_DE_CONFIG:
+        return {"erro": f"chave desconhecida: {chave!r} (conhecidas: {', '.join(CHAVES_DE_CONFIG)})"}
+    if chave == "alvo_kbps":
+        if not cam:
+            return {"erro": "alvo_kbps e' por camera: informe camera_id"}
+        if valor not in VALORES_DE_ALVO:
+            return {"erro": f"alvo fora da lista do produto: {valor!r} (use {', '.join(VALORES_DE_ALVO)})"}
+    if chave == "teto_s":
+        try:
+            n = int(float(valor))
+        except (TypeError, ValueError):
+            return {"erro": "teto_s precisa ser um numero de segundos"}
+        if not 60 <= n <= 7200:
+            return {"erro": "teto_s fora da faixa do produto (60 a 7200 s)"}
+        valor = str(n)
+    with conexao() as c:
+        if not c.execute("SELECT 1 FROM embarcacoes WHERE id=?", (emb,)).fetchone():
+            return {"erro": f"embarcacao inexistente: {emb}"}
+        if cam and not c.execute("SELECT 1 FROM cameras WHERE id=?", (cam,)).fetchone():
+            return {"erro": f"camera inexistente nesta embarcacao: {cam}"}
+        linha = c.execute("""SELECT versao FROM config_bordo
+                             WHERE embarcacao_id=? AND camera_id=? AND chave=?""", (emb, cam, chave)).fetchone()
+        versao = int(linha["versao"]) + 1 if linha else 1
+        c.execute("""INSERT INTO config_bordo (embarcacao_id,camera_id,chave,valor,versao,origem,atualizado_em)
+                     VALUES (?,?,?,?,?,?,?)
+                     ON CONFLICT(embarcacao_id,camera_id,chave) DO UPDATE SET valor=excluded.valor,
+                       versao=excluded.versao, origem=excluded.origem, atualizado_em=excluded.atualizado_em""",
+                  (emb, cam, chave, valor, versao, origem or "", em_iso()))
+    return {"ok": True, "embarcacao_id": emb, "camera_id": cam, "chave": chave, "valor": valor,
+            "versao": versao}
+
+
+def aplicar_config_local(camera_id: str, chave: str, valor: str) -> dict:
+    """Aplica UMA chave no banco DESTA maquina (rota local, o agente do bordo chama).
+
+    Valida ANTES de mexer: valor fora do produto, camera inexistente ou chave que esta versao ainda nao
+    aplica voltam como recusa explicada — nunca "achei que apliquei", e nada do que esta' no ar cai.
+    """
+    cam = (camera_id or "").strip()
+    chave = (chave or "").strip()
+    valor = str(valor if valor is not None else "").strip()
+    if chave == "alvo_kbps":
+        if valor not in VALORES_DE_ALVO:
+            return {"ok": False, "motivo": f"alvo fora da lista do produto ({valor!r})"}
+        if not cam:
+            return {"ok": False, "motivo": "alvo_kbps e' por camera"}
+        with conexao() as c:
+            if not c.execute("SELECT 1 FROM cameras WHERE id=?", (cam,)).fetchone():
+                return {"ok": False, "motivo": f"a camera {cam} nao existe nesta maquina"}
+            c.execute("UPDATE cameras SET alvo=? WHERE id=?", (valor, cam))
+            c.execute("""INSERT INTO config_local (camera_id,chave,valor,versao,atualizado_em)
+                         VALUES (?,?,?,0,?)
+                         ON CONFLICT(camera_id,chave) DO UPDATE SET valor=excluded.valor,
+                           atualizado_em=excluded.atualizado_em""", (cam, chave, valor, em_iso()))
+        return {"ok": True, "motivo": "alvo aplicado (vale no proximo inicio do envio)",
+                "camera_id": cam, "chave": chave, "valor": valor}
+    if chave == "teto_s":
+        try:
+            n = int(float(valor))
+        except (TypeError, ValueError):
+            return {"ok": False, "motivo": "teto_s nao e' numero"}
+        if not 60 <= n <= 7200:
+            return {"ok": False, "motivo": "teto fora da faixa do produto (60 a 7200 s)"}
+        with conexao() as c:
+            c.execute("""INSERT INTO config_local (camera_id,chave,valor,versao,atualizado_em)
+                         VALUES ('',?,?,0,?)
+                         ON CONFLICT(camera_id,chave) DO UPDATE SET valor=excluded.valor,
+                           atualizado_em=excluded.atualizado_em""", (chave, str(n), em_iso()))
+        return {"ok": True, "motivo": f"teto local do bordo em {n} s", "chave": chave, "valor": str(n)}
+    if chave in ("gravacao_continua", "transmitir"):
+        return {"ok": False, "motivo": f"{chave}: esta versao do app de captura ainda nao aplica "
+                                        f"(a gravacao continua e' ligada pelo servico do bordo)"}
+    return {"ok": False, "motivo": f"chave desconhecida: {chave}"}
+
+
+def guardar_config_aplicada(embarcacao_id: str, versao, aplicadas: list, recusadas: list) -> dict:
+    """O que o BORDO conta que aplicou (ou recusou): fecha o ciclo desejo -> realidade."""
+    emb = (embarcacao_id or "").strip()
+    if not emb:
+        return {"erro": "informe a embarcacao"}
+    try:
+        v = int(versao or 0)
+    except (TypeError, ValueError):
+        v = 0
+    gravadas = 0
+    with conexao() as c:
+        for item in (aplicadas or []) + (recusadas or []):
+            cand = str(item.get("camera_id") or "").strip()
+            chk = str(item.get("chave") or "").strip()
+            if not chk:
+                continue
+            c.execute("""INSERT INTO config_aplicada_bordo
+                           (embarcacao_id,camera_id,chave,valor,versao,motivo,atualizado_em)
+                         VALUES (?,?,?,?,?,?,?)
+                         ON CONFLICT(embarcacao_id,camera_id,chave) DO UPDATE SET valor=excluded.valor,
+                           versao=excluded.versao, motivo=excluded.motivo,
+                           atualizado_em=excluded.atualizado_em""",
+                      (emb, cand, chk, str(item.get("valor") or ""), v,
+                       str(item.get("motivo") or ""), em_iso()))
+            gravadas += 1
+    return {"ok": True, "gravadas": gravadas, "versao": v}
 
 
 def guardar_trecho_do_hd(pid: str, caminho: Path, bytes_recebidos: int, motivo: str = "") -> dict:
@@ -1954,6 +2093,31 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(500, {"erro": f"nao consegui calcular o desejo ({type(e).__name__}: {e})"})
             return self._json(200, {"embarcacao_id": emb, "agora": em_iso(), "cameras": cams,
                                     "pedidos": pedidos}, {"Cache-Control": "no-store"})
+        if rota == "/api/config-desejada":
+            # A CONFIGURACAO que terra publicou (0.8.0): o bordo olha aqui, aplica SO' a diferenca e
+            # confirma em /api/config-aplicada. Mesmo desenho da flag — o bordo nao recebe conexao.
+            if os.environ.get("LECSOR_SEM_CONFIG") == "1":
+                return self._json(404, {"erro": "esta versao do lado terra nao publica configuracao"})
+            if not self._token_do_bordo():
+                return self._json(401, {"erro": "token de ingestao invalido"})
+            q = parse_qs(urlparse(self.path).query)
+            emb = (q.get("embarcacao_id", [""])[0] or os.environ.get("LECSOR_EMBARCACAO_BORDO") or "").strip()
+            if not emb:
+                return self._json(422, {"erro": "informe a embarcacao"})
+            try:
+                return self._json(200, dict(config_publicada(emb), agora=em_iso()),
+                                  {"Cache-Control": "no-store"})
+            except Exception as e:  # noqa: BLE001
+                return self._json(500, {"erro": f"nao consegui ler a configuracao ({type(e).__name__}: {e})"})
+        if rota == "/api/config":
+            # A tela do admin publica e ve a configuracao (desejada x aplicada) por embarcacao.
+            q = parse_qs(urlparse(self.path).query)
+            emb = (q.get("embarcacao_id", [""])[0] or "").strip()
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(403, {"erro": "so operacao e administrador veem a configuracao"})
+            if not emb:
+                return self._json(422, {"erro": "informe a embarcacao"})
+            return self._json(200, config_publicada(emb), {"Cache-Control": "no-store"})
         if rota == "/api/hd/catalogo":
             # O catalogo do HD do radar: o bordo publica o que existe; a tela pesquisa por data e hora.
             cam_id = (parse_qs(urlparse(self.path).query).get("camera_id", [""])[0] or "").strip()
@@ -3392,6 +3556,47 @@ class Handler(SimpleHTTPRequestHandler):
             auditar(None, f"ordem_{estado}", f"{o['camera_id']} ({resultado})", self.client_address[0])
             return self._json(200, {"ok": True, "ordem": oid, "estado": estado, "resultado": resultado},
                               {"Cache-Control": "no-store"})
+        if rota == "/api/config-aplicada":
+            # O BORDO conta o que aplicou (e o que recusou, com motivo): e' o que a tela do admin mostra
+            # como "desejada x aplicada". Autorizacao pela saida do bordo (token de ingestao).
+            if not self._token_do_bordo():
+                return self._json(401, {"erro": "token de ingestao invalido"})
+            d = self._corpo()
+            r = guardar_config_aplicada(str(d.get("embarcacao_id") or "").strip(), d.get("versao"),
+                                        d.get("aplicadas") or [], d.get("recusadas") or [])
+            if r.get("erro"):
+                return self._json(422, r)
+            auditar(None, "config_aplicada_pelo_bordo",
+                    f"{d.get('embarcacao_id')} v{d.get('versao')} "
+                    f"({len(d.get('aplicadas') or [])} ok / {len(d.get('recusadas') or [])} recusada)",
+                    self.client_address[0])
+            return self._json(200, r)
+        if rota == "/api/config":
+            # Publicar (o admin configura tudo de terra). Nasce aqui, nao no bordo.
+            if not (u and u["papel"] in PAPEL_ADMIN):
+                return self._json(403, {"erro": "so o administrador publica configuracao"})
+            d = self._corpo()
+            r = publicar_config(str(d.get("embarcacao_id") or "").strip(),
+                                str(d.get("camera_id") or "").strip(),
+                                str(d.get("chave") or "").strip(), d.get("valor"),
+                                origem=(u["email"] if u else ""))
+            if r.get("erro"):
+                return self._json(422, r)
+            auditar(u, "config_publicada", f"{r['embarcacao_id']} {r['camera_id'] or '-'} "
+                                          f"{r['chave']}={r['valor']} (v{r['versao']})",
+                    self.client_address[0])
+            return self._json(201, r)
+        if rota == "/api/config/aplicar":
+            # ROTA LOCAL: quem chama e' o agente do bordo, nesta maquina. Aplica UMA chave aqui e diz
+            # na cara quando nao aplica (nada de "achei que apliquei").
+            if not (self._local() or self._token_do_bordo()):
+                return self._json(401, {"erro": "rota local do computador de captura"})
+            d = self._corpo()
+            r = aplicar_config_local(str(d.get("camera_id") or ""), str(d.get("chave") or ""),
+                                     d.get("valor"))
+            if not r.get("ok"):
+                return self._json(422, r)
+            return self._json(200, r)
         if rota == "/api/estado-real":
             if not self._token_do_bordo():
                 return self._json(401, {"erro": "token de ingestao invalido"})
