@@ -436,6 +436,32 @@ def ler_config(base: str, token: str, emb: str):
     return j
 
 
+def _aplicar_transmitir(cam: str, valor: str, local: str) -> tuple[bool, str]:
+    """`transmitir` ligado/desligado pelo admin EM TERRA: quem age e' este agente, pela API local.
+
+    O admin publica; o bordo nao recebe conexao nenhuma — ele OLHA, age na diferenca e conta o que fez.
+    Se a camera nao abrir, o motivo volta para terra em vez de virar "apliquei".
+    """
+    quer_ligar = str(valor or "").strip().lower() in ("1", "sim", "true", "ligar", "on", "ativo")
+    if not cam:
+        return False, "transmitir e' por camera: informe camera_id"
+    ja_ligado = bool(_ligado(cam))
+    if quer_ligar == ja_ligado:
+        return True, ("ja' estava no ar" if ja_ligado else "ja' estava parada")
+    s, r = _chamar_local(local, "iniciar" if quer_ligar else "desligar", cam)
+    if s == 200 and not r.get("erro"):
+        if quer_ligar:
+            fluxo = str(r.get("fluxo_id") or cam)
+            LIGADOS[fluxo] = {"camera_id": cam, "desde": time.time(), "ordem": "admin(terra)"}
+        else:
+            LIGADOS.pop(_ligado(cam), None)
+        _salvar_ligados()
+        _log(f"config: transmitir={'ligar' if quer_ligar else 'parar'} — "
+             f"{'abri' if quer_ligar else 'desliguei'} a camera {cam} por publicacao do admin")
+        return True, ("no ar por publicacao do admin" if quer_ligar else "parada por publicacao do admin")
+    return False, str(r.get("erro") or f"a API local respondeu {s}")
+
+
 def aplicar_config(cfg, local: str, base: str, token: str, emb: str) -> dict:
     """Aplica SO' a diferenca, valida antes (a API local decide) e conta o resultado ao lado terra."""
     global ULTIMA_CONFIG
@@ -456,6 +482,20 @@ def aplicar_config(cfg, local: str, base: str, token: str, emb: str) -> dict:
         marca = f"{cam}|{chave}"
         if versao and versao <= int(JA_APLICADAS.get(marca, 0)):
             continue                                    # ja' apliquei esta versao: nao repito
+        if chave == "transmitir":
+            # Ligar/desligar a transmissao NAO passa pela rota de configuracao: quem age e' o agente,
+            # pelo mesmo caminho local que a flag usa (dono, 19/11/2026: a flag pode ser acionada
+            # "pelo usuario ou automatica"). Falhou -> nao congelo a versao, para tentar de novo.
+            ok_t, motivo_t = _aplicar_transmitir(cam, valor, local)
+            if ok_t:
+                JA_APLICADAS[marca] = versao
+                aplicadas.append({"camera_id": cam, "chave": chave, "valor": valor, "versao": versao,
+                                  "motivo": motivo_t})
+            else:
+                _log(f"config: NAO apliquei transmitir={valor} ({cam}): {motivo_t}")
+                recusadas.append({"camera_id": cam, "chave": chave, "valor": valor, "versao": versao,
+                                  "motivo": motivo_t})
+            continue
         s, r = _http("POST", local + "/api/config/aplicar",
                      {"camera_id": cam, "chave": chave, "valor": valor})
         if s == 200 and r.get("ok"):

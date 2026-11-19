@@ -1860,6 +1860,23 @@ async function telaConfigDoBordo(t) {
         : 'recusado: ' + JSON.stringify(rr.corpo), !rr.ok);
     }));
     linha.appendChild(estado);
+    /* "quais câmeras transmitem": ligar/desligar daqui — o bordo obedece sem ninguém encostar nele. */
+    const querLigar = !desejada || String(desejada.valor) === '1';
+    const aplicT = achar(c.id, 'transmitir');
+    const desT = (dados.chaves || []).find((x) => x.camera_id === c.id && x.chave === 'transmitir');
+    const estadoT = document.createElement('span'); estadoT.className = 'nota';
+    estadoT.textContent = !desT ? 'transmissão: nada publicado'
+      : (aplicT && aplicT.motivo ? 'transmissão: RECUSADO — ' + aplicT.motivo
+        : 'transmissão: ' + (String(desT.valor) === '1' ? 'publicada LIGADA' : 'publicada PARADA')
+          + (aplicT && aplicT.versao >= desT.versao ? ' · no bordo: ' + (String(aplicT.valor) === '1' ? 'no ar' : 'parada') : ' · aguardando o bordo'));
+    linha.appendChild(botao(querLigar ? 'Desligar transmissão' : 'Ligar transmissão', 'mini', async () => {
+      const rr = await api('/api/config', { method: 'POST', body: JSON.stringify({ embarcacao_id: escolhida, camera_id: c.id, chave: 'transmitir', valor: querLigar ? '0' : '1' }) });
+      await atualizar();
+      A.tela = 'config_bordo'; A.config = { embarcacao_id: escolhida }; desenhar(true);
+      mostrarRecado(rr.ok ? 'publicado para o bordo: transmissão ' + (querLigar ? 'DESLIGAR' : 'LIGAR') + ' ' + (c.rotulo || c.id)
+        : 'recusado: ' + JSON.stringify(rr.corpo), !rr.ok);
+    }));
+    linha.appendChild(estadoT);
     cx.appendChild(linha);
   });
   t.appendChild(cx);

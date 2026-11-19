@@ -161,7 +161,7 @@ if (cadBtn) cadBtn.onclick = async () => {
   if (!disp) { $('cad-msg').textContent = 'informe o dispositivo local desta máquina'; return; }
   const id = rotulo.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-|-$/g, '');
   const corpo = { id, rotulo, fluxo_id: id, local: $('cad-local').value.trim() || 'bordo', ip: '', porta: '',
-                  protocolo: 'dshow', canal: '', alvo: '' };
+                  protocolo: 'dshow', canal: '', alvo: '', dispositivo: disp };
   const r = await fetch('/api/cameras', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
   const j = await r.json().catch(() => ({}));
   $('cad-msg').textContent = r.ok ? 'cadastrada: ' + (j.id || id) + ' — o admin já a vê para configurar'

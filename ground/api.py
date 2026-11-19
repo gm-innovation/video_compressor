@@ -486,6 +486,12 @@ def publicar_config(embarcacao_id: str, camera_id: str, chave: str, valor: str, 
             return {"erro": "alvo_kbps e' por camera: informe camera_id"}
         if valor not in VALORES_DE_ALVO:
             return {"erro": f"alvo fora da lista do produto: {valor!r} (use {', '.join(VALORES_DE_ALVO)})"}
+    if chave == "transmitir":
+        # Ligar/desligar a transmissao de UMA camera: e' o que o dono chama de "quais cameras transmitem".
+        if not cam:
+            return {"erro": "transmitir e' por camera: informe camera_id"}
+        if valor not in ("0", "1"):
+            return {"erro": f"transmitir aceita 0 ou 1 (veio {valor!r})"}
     if chave == "teto_s":
         try:
             n = int(float(valor))
@@ -3072,6 +3078,14 @@ class Handler(SimpleHTTPRequestHandler):
                     d["embarcacao_id"] = linha["id"]
                 elif not c.execute("SELECT 1 FROM embarcacoes WHERE id=?", (d["embarcacao_id"],)).fetchone():
                     return self._json(422, {"erro": "embarcacao_id inexistente"})
+                dispositivo = str(d.get("dispositivo") or "").strip()
+                if dispositivo:
+                    # dispositivo local desta maquina: e' o que permite LIGAR a camera sem envio de teste
+                    c.execute("""INSERT INTO config_local (camera_id,chave,valor,versao,atualizado_em)
+                                 VALUES (?,?,?,0,?)
+                                 ON CONFLICT(camera_id,chave) DO UPDATE SET valor=excluded.valor,
+                                   atualizado_em=excluded.atualizado_em""",
+                              (d["id"], "dispositivo", dispositivo, em_iso()))
                 c.execute("""INSERT OR REPLACE INTO cameras
                              (id,embarcacao_id,rotulo,fluxo_id,local,ativo,ip,porta,protocolo,canal,alvo)
                              VALUES (?,?,?,?,?,1,?,?,?,?,?)""",

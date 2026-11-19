@@ -574,6 +574,17 @@ def desligar_camera(camera_id: str) -> dict:
             "liberados": livre.get("liberados", 0), "dispositivo": livre.get("dispositivo")}
 
 
+def _dispositivo_cadastrado(camera_id: str) -> str:
+    """O dispositivo local (`dshow:<nome>`) que o cadastro desta maquina guardou para a camera."""
+    try:
+        with conexao() as c:
+            r = c.execute("SELECT valor FROM config_local WHERE camera_id=? AND chave='dispositivo'",
+                          (camera_id,)).fetchone()
+        return str((r["valor"] if r else "") or "").strip()
+    except Exception:  # noqa: BLE001  (banco sem a tabela: cai no caminho antigo, sem mentir)
+        return ""
+
+
 def ligar_camera(camera_id: str) -> dict:
     """Liga a camera pela tela, reusando o ultimo envio dela (mesmo ajuste, mesma origem).
 
@@ -598,7 +609,15 @@ def ligar_camera(camera_id: str) -> dict:
                        srt_port=int(d.get("srt_port") or 8890),
                        embarcacao_id=cam["embarcacao_id"])
     if not fonte.startswith("live:camera") and not fonte.startswith("dshow:"):
-        return {"erro": "esta camera nunca foi transmitida daqui: use Enviar video para ligar o envio"}
+        # Sem envio anterior: quem MANDA e' o dispositivo gravado no CADASTRO desta maquina (0.8.0).
+        # Assim o admin liga a transmissao em terra e o bordo abre a propria camera, sem ninguem
+        # encostar nele e sem depender de um envio de teste feito antes.
+        cadastrado = _dispositivo_cadastrado(camera_id)
+        if not cadastrado:
+            return {"erro": "esta camera nunca foi transmitida daqui: use Enviar video para ligar o envio"}
+        fonte = f"dshow:{cadastrado}"
+        d = dict(d or {})
+        d["dispositivo"] = cadastrado
     disp = d.get("dispositivo") or (fonte.split("dshow:", 1)[1] if "dshow:" in fonte else DISPOSITIVO_PADRAO)
     return ao_vivo(tipo="camera", dispositivo=disp, rotulo=cam["rotulo"], fluxo_id=cam["fluxo_id"],
                    resolucao=d.get("resolucao") or "1280x720", fps=int(d.get("fps_alvo") or 30),
