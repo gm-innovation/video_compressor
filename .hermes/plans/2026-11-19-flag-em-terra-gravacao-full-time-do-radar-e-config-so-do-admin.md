@@ -3,6 +3,12 @@
 **Status:** APROVADO pelo dono em 19/11/2026 · **Data:** 19/11/2026 · **Base:** 0.6.10 (`8fc7544`)
 **Alvo:** 0.7.0 (mudança de modelo: sai fila de ordens, entra flag de estado; entra gravação contínua do radar)
 
+**Situação (19/11/2026):** implementado, provado e publicado na **0.7.0** (`9ca021d`). Fases 1–5 no código;
+provado por `tests/e2e-flag-de-estado-liga-a-camera.py`, `tests/e2e-dois-clientes-um-sai.py`,
+`tests/test-gravacao-continua-do-radar.py`, `tests/e2e-hd-do-radar-cliente-pede-trecho.py`,
+`tests/e2e-tela-do-radar-hd-do-cliente.py` (tela real) e a regressão da 0.6.10 (11/11).
+Falta só a **medição em bancada** (30 fps / ≤3 s / ≥80%) na cadeia nova.
+
 ## O que o dono pediu (palavras dele)
 
 > "não podemos contar que o computador de captura a bordo terá porta aberta para receber comandos ou
