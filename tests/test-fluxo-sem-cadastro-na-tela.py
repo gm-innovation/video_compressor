@@ -55,8 +55,12 @@ def preparar_banco() -> None:
         c.close()
 
 
-def caminhos_falsos() -> dict:
-    """O que o mediamtx diria: um fluxo com cadastro e um sem (o caso do dono)."""
+def caminhos_falsos(apenas_locais: bool = False) -> dict:
+    """O que o mediamtx diria: um fluxo com cadastro e um sem (o caso do dono).
+
+    `apenas_locais` existe porque `fluxos_sem_cadastro()` só confere o que é DESTA máquina (o cadastro
+    que ele sabe ler é o banco local) — o stub aceita o argumento para não quebrar a chamada.
+    """
     return {
         "cam-com-cadastro": {"name": "cam-com-cadastro", "ready": True, "tracks": ["video"],
                              "readers": [{"type": "rtspSession"}]},

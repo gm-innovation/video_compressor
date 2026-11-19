@@ -343,10 +343,16 @@ def _qualidade_por_fluxo() -> dict:
     return fora
 
 
-def _caminhos_vivos() -> dict:
-    """Todos os caminhos vivos do mediamtx (esta maquina + cada lado terra conhecido)."""
+def _caminhos_vivos(apenas_locais: bool = False) -> dict:
+    """Todos os caminhos vivos do mediamtx (esta maquina + cada lado terra conhecido).
+
+    `apenas_locais=True` limita ao mediamtx DESTA maquina. E' o que `fluxos_sem_cadastro` precisa: o
+    cadastro que ele sabe conferir e' o banco local, entao um fluxo que esta' no mediamtx do LADO TERRA
+    aparecia aqui como "no ar, sem cadastro" — acusacao falsa (medido 19/11/2026: `vps-sintetica` no ar
+    na VPS desde 14/11 sem nenhuma linha local, e a Producao do bordo acusando o que nao e' dele).
+    """
     mt = {}
-    for h in _hosts_mediamtx():
+    for h in (["127.0.0.1"] if apenas_locais else _hosts_mediamtx()):
         corpo = _mediamtx("/v3/paths/list", None if h in ("127.0.0.1", "localhost") else h)
         for p in (corpo or {}).get("items", []):
             nome = str(p.get("name") or "").strip()
@@ -373,7 +379,7 @@ def fluxos_sem_cadastro() -> list[dict]:
     except Exception:
         return []
     saida = []
-    for nome, p in _caminhos_vivos().items():
+    for nome, p in _caminhos_vivos(apenas_locais=True).items():
         if nome in com_ingesto or not (p.get("ready") and p.get("tracks")):
             continue
         cam = cadastradas.get(nome)

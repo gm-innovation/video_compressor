@@ -432,8 +432,12 @@ def main() -> int:
         exigir(j.get("tempos") == [300], f"o cliente ve a lista JA' cortada pelo teto ({j.get('tempos')})")
         exigir(j.get("teto_do_produto_s") == 300, "a tela do cliente sabe qual e' o teto do produto")
         s, j = pedir("POST", base + "/api/transmissao/config", {"tempo_maximo_s": 1800}, token_sessao=tok_cli)
-        exigir(s == 422 and "liberado" in (j.get("erro") or ""),
-               f"o cliente NAO configura acima do teto ({s} {j})")
+        # 0.7.0 (dono: "o admin fixa"): o cliente nao configura o tempo — o teto e' do administrador. A
+        # recusa subiu de 422 ("acima do que foi liberado") para 403 ("definido pelo administrador"); as
+        # duas formas recusam, e a regra que este teste guarda e' a recusa.
+        recusou = s in (403, 422) and ("administrador" in (j.get("erro") or "")
+                                       or "liberado" in (j.get("erro") or ""))
+        exigir(recusou, f"o cliente NAO configura o tempo da transmissao ({s} {j})")
         s, j = pedir("POST", base + "/api/transmissao/iniciar",
                      {"camera_id": "cam-02", "segundos_max": 3600}, token_sessao=tok_cli)
         linha_teto = j.get("transmissao") or {}
