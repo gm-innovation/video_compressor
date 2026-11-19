@@ -1,6 +1,12 @@
 # Cadastro no banco, configuração do bordo vinda de terra e usuário só de captura
 
 **Status:** APROVADO pelo dono em 19/11/2026 — as 4 decisões pendentes ficam como propostas aceitas (dono: "você é o especialista")
+
+**Situação (19/11/2026):** **Fase 1 implementada, provada e publicada** — commit `d4435e9`. Local:
+`tests/e2e-cadastro-de-camera-salva-no-banco.py` **rc=0 (23/23)**; VPS com `api.py`/`supabase_escrita.py`/
+`schema-transmissao.sql` de md5 idêntico ao local, `pipeline-api` ativa e `/api/saude` com
+`supabase: {configurado: true, alcance: ok}`; Supabase `gscfcobpejxhtyzwfrjp`: `cameras` saiu de **1** para
+**16** linhas (12 em "Bancada de testes (propria)" e 4 em "PSV Exemplo (demo)"). Fases 2–6 pendentes.
 **Data:** 19/11/2026 · **Base:** 0.7.0 (`9ca021d` + plano `2d94e25`)
 **Alvo:** 0.8.0 — o cadastro de câmera passa a ser salvo no banco (hoje só existe no SQLite local), o bordo
 deixa de ter tela de configuração, passa a **buscar** o que terra publica e passa a **reportar a própria saúde**
