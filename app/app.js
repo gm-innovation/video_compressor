@@ -37,12 +37,16 @@ async function abrir() {
   const eu = await api('/api/eu');
   if (!eu.corpo || !eu.corpo.autenticado) return;
   S.usuario = eu.corpo;
+  S.papel = eu.corpo.papel;
   // ligar/desligar a CAMERA so faz sentido onde a camera esta plugada: a propria maquina de
   // captura (local) ou a operacao. O cliente remoto nunca ve esses botoes.
-  S.podeCamera = !!(eu.corpo.local || eu.corpo.papel !== 'cliente');
+  S.podeCamera = !!((eu.corpo.local || eu.corpo.papel !== 'cliente')
+                    && !['cliente', 'observador'].includes(eu.corpo.papel));
   $('entrada').classList.add('oculto'); $('sistema').classList.remove('oculto');
   $('conta-email').textContent = eu.corpo.email;
-  $('conta-papel').textContent = eu.corpo.papel === 'cliente' ? 'Cliente' : 'Operação LECSOR';
+  $('conta-papel').textContent = eu.corpo.papel === 'cliente' ? 'Cliente'
+    : (eu.corpo.papel === 'observador' ? 'Observador (Petrobras)' : 'Operação LECSOR');
+  if (eu.corpo.papel === 'observador') return abrirObservador();
   $('iniciais').textContent = eu.corpo.nome.split(/\s+/).filter((p) => p.length > 2).slice(0, 2).map((p) => p[0]).join('').toUpperCase() || 'LC';
   const em = await api('/api/embarcacoes');
   S.embarcacoes = (em.corpo && em.corpo.embarcacoes) || [];
@@ -52,6 +56,41 @@ async function abrir() {
     $('embarcacao').appendChild(o);
   }
   if (S.embarcacoes.length) S.embarcacaoId = S.embarcacoes[0].id;
+  await atualizar();
+  if (!S.timer) S.timer = setInterval(atualizar, 5000);
+}
+
+/* Observador (tipo 4 — Petrobras, plano de 19/11/2026, Fase 4): o radar de oleo de todas as
+   embarcacoes, de todas as empresas, e nada mais. Sem cadastro, sem transmissao, sem analytics —
+   o servidor ja' devolve so' radar para este papel; aqui a tela apenas esconde o que nao existe. */
+async function abrirObservador() {
+  for (const b of document.querySelectorAll('.lateral .item')) {
+    if (!['visualizar', 'radar_hd'].includes(b.dataset.tela)) b.classList.add('oculto');
+  }
+  for (const g of document.querySelectorAll('.lateral .grupo')) g.classList.add('oculto');
+  const ia = $('btn-ia'); if (ia) ia.classList.add('oculto');
+  const bAuto = $('btn-auto'); if (bAuto) bAuto.textContent = 'Radar ao vivo';
+  for (const b of document.querySelectorAll('#controles button[data-layout]')) b.classList.add('oculto');
+  const bDest = $('btn-destaque'); if (bDest) bDest.classList.add('oculto');
+  const itVis = document.querySelector('.lateral .item[data-tela="visualizar"]');
+  if (itVis) itVis.innerHTML = '<span class="ic">🛰</span>Radar ao vivo';
+  const em = await api('/api/embarcacoes');
+  S.embarcacoes = (em.corpo && em.corpo.embarcacoes) || [];
+  limpar($('embarcacao'));
+  for (const e of S.embarcacoes) {
+    const o = document.createElement('option'); o.value = e.id; o.textContent = e.nome;
+    $('embarcacao').appendChild(o);
+  }
+  /* Abre na primeira embarcacao que TENHA radar: o observador entra para ver radar, e cair numa
+     embarcacao sem radar seria uma tela vazia sem motivo. */
+  const todas = await api('/api/cameras');
+  const comRadar = new Set(((todas.corpo || {}).cameras || []).map((c) => c.embarcacao_id));
+  const primeira = S.embarcacoes.find((e) => comRadar.has(e.id));
+  S.embarcacaoId = (primeira || S.embarcacoes[0] || {}).id || null;
+  /* Abre no RADAR AO VIVO: e' nele que o seletor de embarcacao (todo o grupo, de todas as empresas)
+     fica a mao. O HD do radar e' a outra aba, e la' a tabela ja' diz de qual embarcacao e' cada
+     trecho — nao precisa de seletor. */
+  await trocarTela('visualizar');
   await atualizar();
   if (!S.timer) S.timer = setInterval(atualizar, 5000);
 }
@@ -603,7 +642,8 @@ function desenharTela() {
     const blocos = [];
     for (const c of (cat.catalogos || [])) {
       for (const b of (c.blocos || [])) {
-        blocos.push({ camera_id: c.camera_id, arquivo: b.arquivo, inicio: String(b.inicio || ''), bytes: b.bytes || 0 });
+        blocos.push({ camera_id: c.camera_id, arquivo: b.arquivo, inicio: String(b.inicio || ''),
+                      bytes: b.bytes || 0, embarcacao: c.embarcacao_nome || c.embarcacao_id || '' });
       }
     }
     blocos.sort((a, b) => String(b.inicio).localeCompare(String(a.inicio)));
@@ -619,12 +659,13 @@ function desenharTela() {
     }
     const jaPedido = {};
     for (const p of (cat.pedidos || [])) jaPedido[p.camera_id + '|' + p.arquivo] = p;
-    tabelaEmPalco([
-      { rotulo: 'Quando (início do trecho)', campo: 'quando' },
-      { rotulo: 'Tamanho', campo: 'tamanho' },
-      { rotulo: 'Situação', campo: 'situacao' },
-      { rotulo: 'Trecho', valor: (l) => l.acao },
-    ], mostrados.slice(0, 300).map((b) => {
+    const colunasHd = [];
+    if (S.papel === 'observador') colunasHd.push({ rotulo: 'Embarcação', campo: 'embarcacao' });
+    colunasHd.push({ rotulo: 'Quando (início do trecho)', campo: 'quando' },
+                   { rotulo: 'Tamanho', campo: 'tamanho' },
+                   { rotulo: 'Situação', campo: 'situacao' },
+                   { rotulo: 'Trecho', valor: (l) => l.acao });
+    tabelaEmPalco(colunasHd, mostrados.slice(0, 300).map((b) => {
       const p = jaPedido[b.camera_id + '|' + b.arquivo];
       let acao;
       let situacao = 'no HD do barco';
@@ -643,7 +684,8 @@ function desenharTela() {
         acao = document.createElement('button'); acao.className = 'pil'; acao.textContent = 'pedir';
         acao.addEventListener('click', () => pedirTrechoDoHd(b.camera_id, b.arquivo, acao));
       }
-      return { quando: b.inicio.replace('T', ' ').slice(0, 19), tamanho: emMB(b.bytes), situacao, acao };
+      return { embarcacao: b.embarcacao, quando: b.inicio.replace('T', ' ').slice(0, 19),
+               tamanho: emMB(b.bytes), situacao, acao };
     }), S.hd ? 'Nenhum trecho neste horário — tente um intervalo maior (as imagens ficam guardadas no computador de captura e o mais antigo gira quando o disco enche).'
       : 'Carregando as imagens do radar…');
   } else if (t === 'relatorios') {

@@ -19,6 +19,29 @@ sistema comprime na máquina e o vídeo comprimido sobe para o lado terra (`dest
 ## Instaladores prontos (Windows x64) — PLUG & PLAY desde a 0.2.0
 Na página de releases: https://github.com/gm-innovation/video_compressor/releases
 
+### 0.9.0 — **os 4 escopos de cliente, o app de captura que se cadastra sozinho e a visão da Petrobras**
+- **Os 4 tipos de cliente** (dono, 19/11/2026): (1) uma embarcação, (2) algumas, (3) a empresa inteira,
+  (4) **Petrobras** — todas as embarcações de todas as empresas. Os tipos 1 e 2 são **vínculo explícito**
+  (`usuario_embarcacoes`, concedido pelo admin, com trilha); o tipo 3 é o de sempre (sem vínculo = todas as da
+  empresa); o tipo 4 é o papel **`observador`**: vê o **radar de óleo** de todo mundo e **nada mais** — sem
+  câmera, sem analytics, sem botão.
+- **O app de captura se cadastra sozinho** (Fase 2): no boot, e de tempo em tempo, o app **varre os
+  dispositivos desta máquina** e cadastra o que achar — **sem endereço de câmera e sem credencial** passando
+  pela tela. O id nasce do **seletor único** (`@device_pnp_…`), o que separa duas câmeras de mesmo nome; a
+  **placa de radar (HDMI) não vira câmera** (radar é por embarcação). Terra **não manda lista**: o bordo
+  descobre, cadastra e **publica**; terra só decide depois (`transmitir`, alvo, teto).
+- **O cadastro do bordo não se perde** (Fase 3, defeito medido): `POST /api/cameras` na **própria máquina de
+  captura** nasce **no banco do bordo** (com o dispositivo em `config_local`) e é publicado — a sessão do
+  usuário de captura é atendida **no bordo** (`/api/entrar`, `/api/eu`, `/api/sair` são locais), sem o que a
+  câmera ia só para terra.
+- **Saúde do bordo** (0.8.0): o bordo envia CPU/memória/disco/dispositivos e **o resultado da varredura**
+  (sem segredo); o admin vê semáforo e **bordo mudo = problema**, com retenção de 30 dias auditada.
+- **Configuração do bordo** (0.8.0): terra **publica** (`config_bordo` com versão), o bordo **olha**,
+  aplica só a diferença e confirma; `POST /api/config/aplicar` é **local**.
+- Provas novas: `tests/test-escopos-de-acesso.py`, `tests/e2e-escopo-no-admin.py`,
+  `tests/e2e-varredura-do-bordo.py`, `tests/test-fluxo-no-lado-terra.py`,
+  `tests/e2e-observador-do-radar.py` — mais a regressão curada em `tools/regressao-090.py`.
+
 ### 0.7.0 — **terra publica o desejo, o PC de captura obedece; e o radar de óleo grava full time no HD do barco**
 - Arquitetura (dono, 19/11/2026): o computador de captura a bordo **não tem porta aberta** — a informação
   **não sai de terra para o bordo**. **Terra publica o desejo** por câmera (com versão), o **bordo olha**

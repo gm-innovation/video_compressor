@@ -173,14 +173,26 @@ def main() -> int:
             exigir(s == 200 and j.get("ok"), "admin do PC de captura autenticou (http %s)" % s)
             s, j = captura.pedir("/api/cameras", {"id": "cam-01", "fluxo_id": "cam-01",
                                                   "rotulo": "CAM 01", "ip": "192.168.0.50",
-                                                  "porta": "554", "embarcacao_id": "bancada"})
+                                                  "porta": "554", "embarcacao_id": "bancada",
+                                                  "dispositivo": "CAM 01 CX"})
             exigir(s == 201 and (j.get("lado_terra") or {}).get("ok"),
                    "cadastrar cam-01 no PC de captura publica no lado terra (http %s, lado_terra=%s)"
                    % (s, (j.get("lado_terra") or {}).get("motivo") or (j.get("lado_terra") or {}).get("ok")))
-            # PENDENCIA CONHECIDA (medida aqui, 19/11/2026): com duas maquinas de verdade, `POST
-            # /api/cameras` e' encaminhado para terra e o BORDO fica sem a camera cadastrada; ligar a
-            # rota como local esbarra em `/api/entrar` (a sessao do usuario de captura tambem mora em
-            # terra). O conserto e' de desenho e esta' registrado no plano da 0.8.0 para aprovacao.
+            # CONSERTO (Fase 3 do plano de 19/11/2026): a camera cadastrada AQUI nasce no banco do
+            # bordo (com o dispositivo em config_local) e a publicacao a leva ao lado terra. Antes,
+            # `POST /api/cameras` era encaminhado e o bordo ficava sem a camera que ele mesmo cadastrou.
+            con = sqlite3.connect(tmp / "bordo.db")
+            bordo_cam01 = con.execute("SELECT rotulo FROM cameras WHERE id='cam-01'").fetchone()
+            disp_cam01 = con.execute("SELECT valor FROM config_local WHERE camera_id='cam-01'"
+                                     " AND chave='dispositivo'").fetchone()
+            con.close()
+            exigir(bool(bordo_cam01), "cam-01 nasceu no banco do BORDO (nao so' em terra)")
+            exigir(bool(disp_cam01), "o dispositivo local da cam-01 ficou no bordo (config_local=%r)"
+                   % ((disp_cam01 or [None])[0],))
+            con = sqlite3.connect(tmp / "pipeline.db")
+            terra_cam01 = con.execute("SELECT rotulo FROM cameras WHERE id='cam-01'").fetchone()
+            con.close()
+            exigir(bool(terra_cam01), "e a MESMA cam-01 chegou ao banco de TERRA (publicacao)")
 
             s, j = cliente.pedir("/api/cameras")
             cam01 = next((c for c in j.get("cameras", []) if c["id"] == "cam-01"), None)

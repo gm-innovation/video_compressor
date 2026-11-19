@@ -59,6 +59,17 @@
       <div class="campo"><label>Local a bordo</label><input id="cad-local" placeholder="ex.: proa"></div>
       <button class="principal" id="cad-enviar" style="width:100%">Cadastrar nesta máquina</button>
       <div id="cad-msg" class="sub" style="margin-top:10px"></div>
+
+      <div style="margin-top:14px;border-top:1px solid rgba(255,255,255,.12);padding-top:10px">
+        <h2 style="font-size:14px">O que este computador encontrou</h2>
+        <p class="sub">O app varre sozinho as câmeras e a placa do radar desta máquina e cadastra o que achar —
+          nenhum endereço de câmera e nenhuma senha passam por aqui. Se você acabou de ligar um aparelho, use
+          "varrer agora".</p>
+        <div id="varredura-resumo" class="sub">ainda não houve varredura nesta sessão</div>
+        <ul id="varredura-lista" class="sub" style="margin:6px 0 0 18px"></ul>
+        <button class="principal" id="varredura-agora" style="width:100%;margin-top:8px">Varrer agora</button>
+        <div id="varredura-msg" class="sub" style="margin-top:6px"></div>
+      </div>
     </section>
 
     <section class="cartao" data-so-admin>
@@ -167,6 +178,40 @@ if (cadBtn) cadBtn.onclick = async () => {
   $('cad-msg').textContent = r.ok ? 'cadastrada: ' + (j.id || id) + ' — o admin já a vê para configurar'
     : ('recusado: ' + (j.erro || ('HTTP ' + r.status)) + (j.campos_faltando ? ' (' + j.campos_faltando.join(', ') + ')' : ''));
   if (r.ok) { $('cad-rotulo').value = ''; $('cad-dispositivo').value = ''; $('cad-local').value = ''; fluxos(); }
+};
+
+/* ---- varredura (plano de 19/11/2026, Fase 2): o que ESTA maquina achou sozinha ---- */
+function pintaVarredura(v) {
+  const r = $('varredura-resumo'), l = $('varredura-lista');
+  if (!r) return;
+  if (!v || (!v.ok && !v.motivo && !v.vistos)) {
+    r.textContent = 'ainda não houve varredura nesta sessão';
+    if (l) l.innerHTML = '';
+    return;
+  }
+  if (!v.ok) {
+    r.textContent = 'a varredura não rodou: ' + (v.motivo || 'motivo não informado');
+    if (l) l.innerHTML = '';
+    return;
+  }
+  r.textContent = 'varredura: ' + v.vistos + ' dispositivo(s) de vídeo, ' + (v.cadastradas || []).length
+    + ' cadastrada(s) agora' + (v.quando ? ' — última às ' + String(v.quando).replace('T', ' ').slice(11, 19) : '');
+  if (!l) return;
+  l.innerHTML = (v.dispositivos || []).map((d) => '<li>' + esc(d.rotulo || d.id || '?')
+    + (d.radar ? ' — <b>placa de radar (HDMI)</b>' : '') + (d.cadastrada ? '' : ' — não cadastrado') + '</li>').join('');
+}
+async function lerVarredura() {
+  try { const j = await (await fetch('/api/varredura')).json(); pintaVarredura(j.varredura || j); } catch (e) {}
+}
+const varrerBtn = $('varredura-agora');
+if (varrerBtn) varrerBtn.onclick = async () => {
+  $('varredura-msg').textContent = 'varrendo esta máquina…';
+  const r = await fetch('/api/varredura', { method: 'POST' });
+  const j = await r.json().catch(() => ({}));
+  const v = j.varredura || j;
+  $('varredura-msg').textContent = r.ok ? 'varredura concluída — o que achei está aí em cima'
+    : ('não deu: ' + (j.erro || v.motivo || ('HTTP ' + r.status)));
+  pintaVarredura(v); fluxos();
 };
 
 

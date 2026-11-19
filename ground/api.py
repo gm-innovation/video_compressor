@@ -50,7 +50,18 @@ ROTAS_CAPTURA = ("/api/dispositivos", "/api/envios", "/api/ingestao", "/api/inge
                  # A configuracao que o bordo APLICA e' desta maquina (quem publica e' terra, e a
                  # publicacao chega pelo agente). Sem esta entrada, o servidor do bordo encaminharia o
                  # "aplicar" para o lado terra — que nao tem a camera nem o alvo.
-                 "/api/config/aplicar")
+                 "/api/config/aplicar",
+                 # A VARREDURA e' desta MAQUINA (plano de 19/11/2026, Fase 2): quem varre os dispositivos
+                 # e' o PC de captura. Sem esta entrada o servidor do bordo encaminhava o pedido ao lado
+                 # terra e a tela mostrava a varredura — e o banco — de OUTRA maquina (medido: a resposta
+                 # vinha com o banco do lado terra e 1 dispositivo, que era o do lado terra).
+                 "/api/varredura")
+
+# Rotas de captura que valem por IGUALDADE (nao por prefixo): quem esta' sentado nesta maquina entra
+# no sistema AQUI. O plano de 19/11/2026 (Fase 3) mediu que, sem isto, o bordo encaminhava `/api/entrar`
+# para terra: a pessoa entrava, mas a sessao so' existia do outro lado e o cadastro local respondia 401 —
+# o bordo ficava sem a camera que ele mesmo acabou de cadastrar.
+ROTAS_CAPTURA_LOCAIS = ("/api/entrar", "/api/eu", "/api/sair", "/api/cameras")
 ORIGENS_CAPTURA_PADRAO = ("http://187.127.60.250:8085", "http://127.0.0.1:8085",
                           "http://127.0.0.1:8765", "http://localhost:8765")
 
@@ -63,6 +74,8 @@ def origens_captura() -> tuple:
 
 
 def eh_rota_de_captura(rota: str) -> bool:
+    if rota in ROTAS_CAPTURA_LOCAIS:
+        return True
     return any(rota == r or rota.startswith(r + "/") for r in ROTAS_CAPTURA)
 from ingestao import iniciar as ing_iniciar, parar as ing_parar, listar as ing_listar  # noqa: E402
 from ingestao import desligar_camera as ing_desligar_camera, ligar_camera as ing_ligar_camera  # noqa: E402
@@ -87,6 +100,12 @@ _CACHE_METRICAS: dict = {}
 DURACAO_SESSAO_H = 12
 INICIADO_EM = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
 PAPEL_ADMIN = ("operador", "admin")
+# tipo 4 do dono (19/11/2026, Petrobras): enxerga TODAS as embarcacoes de TODAS as empresas e SO'
+# LEITURA — nenhuma rota de escrita/operacao aceita este papel (todas checam PAPEL_ADMIN), entao o
+# observador nunca opera, nunca configura e nunca cadastra.
+PAPEL_OBSERVADOR = "observador"
+PAPEIS_VE_TUDO = PAPEL_ADMIN + (PAPEL_OBSERVADOR,)
+PAPEIS_DE_USUARIO = ("cliente", "operador", "admin", "tecnico", PAPEL_OBSERVADOR)
 
 
 def conexao() -> sqlite3.Connection:
@@ -135,15 +154,54 @@ def auditar(usuario, acao: str, alvo: str, ip: str = "") -> None:
                   (usuario["id"] if usuario else None, usuario["email"] if usuario else "", acao, alvo, ip))
 
 
-def pode_ver_camera(usuario, camera: sqlite3.Row | None) -> bool:
-    """Cliente so ve camera da propria empresa; operador/admin veem tudo."""
-    if camera is None:
+def pode_ver_embarcacao(usuario, embarcacao_id: str) -> bool:
+    """A REGRA UNICA do acesso do cliente (dono, 19/11/2026: os quatro tipos).
+
+    operador/admin veem tudo e operam; `observador` (Petrobras) ve tudo e NAO opera (as rotas de
+    escrita checam PAPEL_ADMIN, nao esta funcao). Para o papel `cliente`:
+      * com vinculo em `usuario_embarcacoes` -> EXATAMENTE as embarcacoes concedidas (tipos 1 e 2);
+      * sem vinculo nenhum -> todas as embarcacoes do proprio `cliente_id` (tipo 3, o que ja' existia:
+        instalacao antiga nao perde acesso).
+    """
+    if usuario is None or not embarcacao_id:
         return False
-    if usuario["papel"] in PAPEL_ADMIN:
+    if usuario["papel"] in PAPEIS_VE_TUDO:
         return True
     with conexao() as c:
-        emb = c.execute("SELECT cliente_id FROM embarcacoes WHERE id = ?", (camera["embarcacao_id"],)).fetchone()
+        concedidas = [r["embarcacao_id"] for r in c.execute(
+            "SELECT embarcacao_id FROM usuario_embarcacoes WHERE usuario_id=?", (usuario["id"],)).fetchall()]
+        if concedidas:
+            return embarcacao_id in concedidas
+        emb = c.execute("SELECT cliente_id FROM embarcacoes WHERE id = ?", (embarcacao_id,)).fetchone()
     return bool(emb) and emb["cliente_id"] == usuario["cliente_id"]
+
+
+def pode_ver_camera(usuario, camera: sqlite3.Row | None) -> bool:
+    """Camera visivel = a embarcacao dela e' visivel (a regra esta em `pode_ver_embarcacao`).
+
+    O papel `observador` (tipo 4, Petrobras — plano de 19/11/2026, Fase 4) e' a excecao: ele ve' os
+    radares de oleo de TODAS as empresas e mais nada. Quem decide isso e' quem LISTA (`/api/cameras`),
+    com `eh_camera_de_radar`: aqui a funcao continua sendo so' "a embarcacao e' visivel?".
+    """
+    if camera is None:
+        return False
+    return pode_ver_embarcacao(usuario, camera["embarcacao_id"])
+
+
+def eh_camera_de_radar(camera) -> bool:
+    """O radar de oleo desta embarcacao e' uma linha de `cameras` — o que o separa das outras e' o NOME
+    que o bordo declara (id, rotulo, fluxo ou alvo dizem "radar"). E' o unico criterio usado para o
+    `observador` ver radar e nao ver camera nenhuma (plano de 19/11/2026, Fase 4)."""
+    if camera is None:
+        return False
+    try:
+        partes = [str(camera[k] or "") for k in ("id", "rotulo", "fluxo_id", "local", "alvo")]
+    except (KeyError, IndexError, TypeError):
+        try:
+            partes = [str(camera.get(k) or "") for k in ("id", "rotulo", "fluxo_id", "local", "alvo")]
+        except Exception:  # noqa: BLE001
+            return False
+    return "radar" in " ".join(partes).lower()
 
 
 
@@ -1086,6 +1144,17 @@ def inicializar(semear_demo: bool = False) -> None:
                 print("[api] migracao aplicada: papel tecnico em usuarios", flush=True)
             except _sqlite3.Error as e:
                 print("[api] aviso: nao apliquei a migracao do papel tecnico:", e, flush=True)
+        # Papel `observador` (tipo 4 do dono, 19/11/2026 — Petrobras ve todas as embarcacoes de todas
+        # as empresas, so' leitura): mesmo caminho do tecnico, mesma tabela recriada preservando tudo.
+        tabela = c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='usuarios'").fetchone()
+        if tabela and PAPEL_OBSERVADOR not in (tabela["sql"] or ""):
+            import sqlite3 as _sqlite3
+            script = (RAIZ / "db" / "migracao-observador.sql").read_text(encoding="utf-8")
+            try:
+                c.executescript(script)
+                print("[api] migracao aplicada: papel observador em usuarios", flush=True)
+            except _sqlite3.Error as e:
+                print("[api] aviso: nao apliquei a migracao do papel observador:", e, flush=True)
         for f in json.loads((RAIZ / "db" / "fases-seed.json").read_text(encoding="utf-8")):
             c.execute("""INSERT INTO fases (id,numero,nome,prioridade,status,criterio_aceite,evidencia)
                          VALUES (:id,:numero,:nome,:prioridade,:status,:criterio_aceite,:evidencia)
@@ -1604,12 +1673,12 @@ class Handler(SimpleHTTPRequestHandler):
         return bool(u) and u["papel"] == "cliente"
 
     def _embarcacao_do_cliente(self, u, embarcacao_id: str) -> bool:
-        """A embarcacao tem de ser da PROPRIA empresa do cliente (mesma regra de `pode_ver_camera`)."""
-        if not embarcacao_id:
-            return False
-        with conexao() as c:
-            e = c.execute("SELECT cliente_id FROM embarcacoes WHERE id=?", (embarcacao_id,)).fetchone()
-        return bool(e) and u["cliente_id"] == e["cliente_id"]
+        """A embarcacao tem de ser VISIVEL para este usuario — mesma regra de `pode_ver_camera`.
+
+        Uma regra so' (19/11/2026): quem tem vinculo em `usuario_embarcacoes` so' alcanca as
+        concedidas; quem nao tem vinculo alcanca as da propria empresa.
+        """
+        return pode_ver_embarcacao(u, embarcacao_id)
 
     def _token_do_bordo(self) -> bool:
         """Autoriza o BORDO (agente de ordens): token de ingestao, nunca sessao de navegador."""
@@ -2156,10 +2225,20 @@ class Handler(SimpleHTTPRequestHandler):
             if not u:
                 return self._json(401, {"erro": "entre no sistema"})
             with conexao() as c:
-                if u["papel"] in PAPEL_ADMIN:
+                if u["papel"] in PAPEIS_VE_TUDO:
                     linhas = c.execute("SELECT * FROM embarcacoes ORDER BY nome").fetchall()
                 else:
-                    linhas = c.execute("SELECT * FROM embarcacoes WHERE cliente_id=? ORDER BY nome", (u["cliente_id"],)).fetchall()
+                    # escopo do cliente (19/11/2026): vinculo explicito = so' as concedidas; sem
+                    # vinculo = todas as da propria empresa (o que ja' existia).
+                    concedidas = [r["embarcacao_id"] for r in c.execute(
+                        "SELECT embarcacao_id FROM usuario_embarcacoes WHERE usuario_id=?", (u["id"],)).fetchall()]
+                    if concedidas:
+                        marcas = ",".join("?" * len(concedidas))
+                        linhas = c.execute(f"SELECT * FROM embarcacoes WHERE id IN ({marcas}) ORDER BY nome",
+                                           concedidas).fetchall()
+                    else:
+                        linhas = c.execute("SELECT * FROM embarcacoes WHERE cliente_id=? ORDER BY nome",
+                                           (u["cliente_id"],)).fetchall()
             return self._json(200, {"embarcacoes": [dict(x) for x in linhas]})
         if rota == "/api/transmissao/pedidos":
             # A OPERACAO ve os pedidos ABERTOS de todas as embarcacoes e cancela o que quiser (plano,
@@ -2358,6 +2437,21 @@ class Handler(SimpleHTTPRequestHandler):
                     return self._json(401, {"erro": "entre no sistema"})
                 return self._json(200, catalogo_do_hd(cam["embarcacao_id"], cam_id),
                                   {"Cache-Control": "no-store"})
+            if u and u["papel"] == PAPEL_OBSERVADOR:
+                # Tipo 4 (Petrobras — plano de 19/11/2026, Fase 4): o HD do radar de TODAS as
+                # embarcacoes de TODAS as empresas, com o nome de cada uma (a tela lista embarcacao a
+                # embarcacao). E' o unico conteudo que este papel enxerga.
+                with conexao() as c:
+                    embs = [dict(x) for x in c.execute(
+                        "SELECT id,nome FROM embarcacoes ORDER BY nome").fetchall()]
+                junto = {"embarcacao_id": "", "embarcacoes": embs, "catalogos": [], "pedidos": []}
+                for e in embs:
+                    r = catalogo_do_hd(e["id"])
+                    for cat in r["catalogos"]:
+                        cat["embarcacao_nome"] = e["nome"]
+                    junto["catalogos"] += r["catalogos"]
+                    junto["pedidos"] += r["pedidos"]
+                return self._json(200, junto, {"Cache-Control": "no-store"})
             if u and u["papel"] == "cliente":
                 # O CLIENTE acessa as imagens da embarcacao dele (dono, 19/11/2026).
                 with conexao() as c:
@@ -2532,6 +2626,15 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:  # noqa: BLE001
                 return self._json(500, {"erro": f"nao consegui medir a prontidao ({type(e).__name__}: {e})"})
             return self._json(200, d, {"Cache-Control": "no-store"})
+        if rota == "/api/varredura":
+            # O que a VARREDURA DO BORDO achou nesta maquina (Fase 2, 19/11/2026) e de quanto em quanto
+            # tempo ela repete. Le' o ultimo resultado: nao dispara varredura nova so' porque a tela abriu.
+            if not (u or self._local()):
+                return self._json(401, {"erro": "entre no sistema"})
+            import varredura_do_bordo
+            return self._json(200, {"varredura": varredura_do_bordo.ultima(),
+                                    "intervalo_s": varredura_do_bordo.intervalo()},
+                              {"Cache-Control": "no-store"})
         if rota == "/api/cameras":
             if not u:
                 return self._json(401, {"erro": "entre no sistema"})
@@ -2543,6 +2646,8 @@ class Handler(SimpleHTTPRequestHandler):
                 for cam in c.execute(sql, ((emb,) if emb else ())).fetchall():
                     if not pode_ver_camera(u, cam):
                         continue
+                    if u["papel"] == PAPEL_OBSERVADOR and not eh_camera_de_radar(cam):
+                        continue  # tipo 4: radar de oleo de todas as empresas, e so' ele
                     p = mt.get(cam["fluxo_id"], {})
                     no_ar = bool(p.get("ready")) and bool(p.get("tracks"))
                     # por que NAO esta no ar: estado e motivo do ultimo envio (a tela avisa em vez de
@@ -2606,6 +2711,42 @@ class Handler(SimpleHTTPRequestHandler):
                 linha["supabase"] = (None if conhecidos is None
                                      else (str(linha["email"]).lower() in conhecidos))
             return self._json(200, {"usuarios": usuarios, "verificado": conhecidos is not None})
+        if rota.startswith("/api/usuarios/") and rota.endswith("/embarcacoes"):
+            # ESCOPO do cliente (dono, 19/11/2026): quais embarcacoes este usuario pode ver. Quem
+            # concede e' o admin; a tela mostra o vinculo explicito e o que vem herdado do cliente_id.
+            uid = rota[len("/api/usuarios/"):-len("/embarcacoes")].strip("/")
+            if not (u and u["papel"] == "admin"):
+                return self._json(401, {"erro": "so o administrador do sistema"})
+            with conexao() as c:
+                alvo = c.execute("SELECT id,email,nome,papel,cliente_id,ativo FROM usuarios WHERE id=?",
+                                 (uid,)).fetchone()
+                if not alvo:
+                    return self._json(404, {"erro": "usuario nao encontrado"})
+                if alvo["papel"] == PAPEL_OBSERVADOR:
+                    return self._json(200, {"usuario": dict(alvo), "embarcacoes": [], "vinculos": 0,
+                                            "escopo": "todas_as_empresas",
+                                            "nota": "o observador (tipo 4) ve todas as embarcacoes de "
+                                                    "todas as empresas e nao recebe vinculo"})
+                if alvo["papel"] != "cliente":
+                    return self._json(422, {"erro": "vinculo por embarcacao e' so' do papel cliente",
+                                            "papel": alvo["papel"]})
+                concedidas = {r["embarcacao_id"] for r in c.execute(
+                    "SELECT embarcacao_id FROM usuario_embarcacoes WHERE usuario_id=?", (uid,)).fetchall()}
+                linhas = c.execute("SELECT id,nome,cliente_id FROM embarcacoes WHERE cliente_id=? ORDER BY nome",
+                                   (alvo["cliente_id"],)).fetchall()
+            lista = [dict(x) for x in linhas]
+            for x in lista:
+                x["concedida"] = x["id"] in concedidas
+            if not concedidas:
+                escopo = "todas_as_embarcacoes_da_empresa"
+            elif len(concedidas) == 1:
+                escopo = "uma_embarcacao_da_empresa"
+            else:
+                escopo = "algumas_embarcacoes_da_empresa"
+            return self._json(200, {"usuario": dict(alvo), "embarcacoes": lista, "vinculos": len(concedidas),
+                                    "escopo": escopo,
+                                    "nota": "sem nenhum vinculo o cliente ve todas as embarcacoes da "
+                                            "propria empresa"})
         if rota == "/api/clientes":
             if not (u and u["papel"] in PAPEL_ADMIN):
                 return self._json(401, {"erro": "entre no sistema"})
@@ -2651,6 +2792,9 @@ class Handler(SimpleHTTPRequestHandler):
         if rota == "/api/analises":
             if not (u or self._local()):
                 return self._json(401, {"erro": "entre no sistema"})
+            if u and u["papel"] == PAPEL_OBSERVADOR:
+                # Tipo 4 (Petrobras): o radar de oleo, e nada de analytics/agentes (plano, Fase 4).
+                return self._json(200, {"agentes": [], "contagens": [], "eventos": []})
             return self._json(200, analises())
         if rota.startswith("/hls/"):
             return self._hls(rota[len("/hls/"):], u)
@@ -3176,9 +3320,8 @@ class Handler(SimpleHTTPRequestHandler):
             faltando = [k for k in ("email", "nome", "papel") if not str(d.get(k, "")).strip()]
             if faltando:
                 return self._json(422, {"erro": "usuario incompleto", "campos_faltando": faltando})
-            if d["papel"] not in ("cliente", "operador", "admin", "tecnico"):
-                return self._json(422, {"erro": "papel invalido",
-                                        "aceitos": ["cliente", "operador", "admin", "tecnico"]})
+            if d["papel"] not in PAPEIS_DE_USUARIO:
+                return self._json(422, {"erro": "papel invalido", "aceitos": list(PAPEIS_DE_USUARIO)})
             if d["papel"] == "cliente" and not d.get("cliente_id"):
                 return self._json(422, {"erro": "usuario de cliente precisa de cliente_id"})
             if d["papel"] != "cliente":
@@ -3204,6 +3347,50 @@ class Handler(SimpleHTTPRequestHandler):
             # a senha inicial aparece UMA vez, para quem criou entregar; o banco guarda so o hash
             return self._json(201, {"id": uid, "email": email, "papel": d["papel"],
                                     "senha_inicial": senha, "supabase": supabase})
+        if rota.startswith("/api/usuarios/") and rota.endswith("/embarcacoes"):
+            # CONCEDER/REVOGAR embarcacao para um cliente (admin). Grava o conjunto INTEIRO: o corpo
+            # manda a lista final; lista vazia volta o usuario ao padrao (todas as da propria empresa).
+            # Embarcacao de OUTRA empresa e' recusada — vinculo nao amplia empresa.
+            uid = rota[len("/api/usuarios/"):-len("/embarcacoes")].strip("/")
+            if not (u and u["papel"] == "admin"):
+                return self._json(401, {"erro": "so o administrador do sistema"})
+            d = self._corpo()
+            ids = d.get("embarcacao_ids")
+            if not isinstance(ids, list):
+                return self._json(422, {"erro": "mande `embarcacao_ids` (lista; vazia = todas da empresa)"})
+            ids = sorted({str(i).strip() for i in ids if str(i).strip()})
+            with conexao() as c:
+                alvo = c.execute("SELECT id,email,nome,papel,cliente_id FROM usuarios WHERE id=?",
+                                 (uid,)).fetchone()
+                if not alvo:
+                    return self._json(404, {"erro": "usuario nao encontrado"})
+                if alvo["papel"] != "cliente":
+                    return self._json(422, {"erro": "vinculo por embarcacao e' so' do papel cliente",
+                                            "papel": alvo["papel"]})
+                antes = {r["embarcacao_id"] for r in c.execute(
+                    "SELECT embarcacao_id FROM usuario_embarcacoes WHERE usuario_id=?", (uid,)).fetchall()}
+                if ids:
+                    marcas = ",".join("?" * len(ids))
+                    validas = {r["id"] for r in c.execute(
+                        f"SELECT id FROM embarcacoes WHERE id IN ({marcas}) AND cliente_id=?",
+                        (*ids, alvo["cliente_id"])).fetchall()}
+                    fora = [i for i in ids if i not in validas]
+                    if fora:
+                        return self._json(422, {"erro": "embarcacao nao e' da empresa deste cliente",
+                                                "fora": fora})
+                c.execute("DELETE FROM usuario_embarcacoes WHERE usuario_id=?", (uid,))
+                for i in ids:
+                    c.execute("""INSERT OR IGNORE INTO usuario_embarcacoes
+                                 (usuario_id,embarcacao_id,concedido_por) VALUES (?,?,?)""",
+                              (uid, i, u["email"]))
+            depois = set(ids)
+            ganhos, perdidos = sorted(depois - antes), sorted(antes - depois)
+            if ganhos:
+                auditar(u, "escopo_concedido", f"{alvo['email']}:{','.join(ganhos)}", self.client_address[0])
+            if perdidos:
+                auditar(u, "escopo_revogado", f"{alvo['email']}:{','.join(perdidos)}", self.client_address[0])
+            return self._json(200, {"ok": True, "vinculos": len(depois), "concedidas": sorted(depois),
+                                    "ganhos": ganhos, "perdidos": perdidos})
         if rota.startswith("/api/usuarios/") and rota.endswith("/senha"):
             # Redefinir senha pelo administrador: a senha nova vale no banco local E no Supabase.
             # E' o conserto de quem foi criado antes desta correcao (senha so' local -> 401 no login).
@@ -3270,6 +3457,16 @@ class Handler(SimpleHTTPRequestHandler):
                           (d["id"], d["cliente_id"], d["nome"], d.get("imo", ""), d.get("estado", "em operacao")))
             auditar(u, "criar_embarcacao", d["id"], self.client_address[0])
             return self._json(201, {"id": d["id"]})
+        if rota == "/api/varredura":
+            # VARRER AGORA (botao da tela do bordo). Mesma regra do cadastro de camera: operacao/admin,
+            # ou o usuario do PC de captura NA PROPRIA maquina (a varredura so' faz sentido onde a camera
+            # esta' plugada). Cliente nao varre. A varredura nao mexe na configuracao do admin.
+            if not ((u and u["papel"] in PAPEL_ADMIN)
+                    or (u and u["papel"] in ("tecnico", "captura") and self._local())):
+                return self._json(401, {"erro": "entre no sistema"})
+            import varredura_do_bordo
+            r = varredura_do_bordo.varrer()
+            return self._json(200 if r.get("ok") else 422, r)
         if rota == "/api/cameras/anuncio":
             return self._anuncio_bordo()
         if rota == "/api/qualidade/anuncio":
@@ -4330,6 +4527,37 @@ def _fechar_minutos_em_loop() -> None:
         time.sleep(60)
 
 
+def _varredura_em_loop() -> None:
+    """Varre os dispositivos desta maquina no boot e de tempo em tempo — sem nunca derrubar a API.
+
+    So' roda em MAQUINA DE CAPTURA (a que tem embarcacao no pacote): o lado terra nao tem camera e nao
+    teria o que cadastrar, e varrer la' seria trabalho a toa com resposta enganosa. Espera curta no
+    inicio (a API precisa estar de pe' e o banco criado), depois usa o intervalo do ambiente
+    (`LECSOR_ESPERA_DA_VARREDURA`, padrao 300 s). Falha vira aviso no log: a tela e a saude mostram.
+    """
+    if not (os.environ.get("LECSOR_EMBARCACAO") or "").strip():
+        print("[api] varredura do bordo: nao rodo aqui (esta maquina nao tem embarcacao no pacote: "
+              "nao e' um computador de captura)", flush=True)
+        return
+    time.sleep(5)
+    while True:
+        try:
+            import varredura_do_bordo
+            r = varredura_do_bordo.varrer()
+            if r.get("ok"):
+                if r.get("cadastradas") or r.get("atualizadas"):
+                    print(f"[api] varredura do bordo: +{len(r.get('cadastradas') or [])} "
+                          f"~{len(r.get('atualizadas') or [])} camera(s) em {r.get('embarcacao_id')} "
+                          f"(publicadas {len(r.get('publicadas') or [])})", flush=True)
+            else:
+                print(f"[api] varredura do bordo nao cadastrou nada: {r.get('motivo')}", flush=True)
+            espera = varredura_do_bordo.intervalo()
+        except Exception as e:  # noqa: BLE001
+            print(f"[api] aviso: varredura do bordo falhou ({type(e).__name__}: {e})", flush=True)
+            espera = 300
+        time.sleep(espera)
+
+
 def _publicar_cadastro_no_boot() -> None:
     """Publica no lado terra o cadastro das cameras desta maquina, e NAO DESISTE em silencio.
 
@@ -4391,6 +4619,10 @@ def principal() -> int:
     # Publica o cadastro das cameras desta maquina no lado terra (best-effort, em segundo plano: nao
     # pode atrasar o boot da API).
     threading.Thread(target=_publicar_cadastro_no_boot, daemon=True).start()
+    # VARREDURA DO BORDO (plano de 19/11/2026, Fase 2): no inicio do sistema o app olha a propria maquina,
+    # cadastra a camera na embarcacao que o pacote ja' traz e publica em terra. Em segundo plano (nao
+    # atrasa o boot) e repetida de tempo em tempo (cabo/USB que entrou depois).
+    threading.Thread(target=_varredura_em_loop, daemon=True).start()
     # Vigia da transmissao a pedido do cliente: fecha a sessao sem batimento (tela fechada /
     # computador desligado), corta no tempo maximo e libera a camera quando ninguem mais esta' vendo.
     threading.Thread(target=vigiar_transmissoes, daemon=True).start()

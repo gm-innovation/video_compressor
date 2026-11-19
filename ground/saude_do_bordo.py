@@ -210,6 +210,23 @@ def _banco_resumo() -> dict:
         return {"ok": False, "motivo": f"{type(e).__name__}: {e}"}
 
 
+def _varredura() -> dict:
+    """O ultimo resultado da varredura do bordo, sem segredo (contagens, ids e motivo)."""
+    try:
+        import varredura_do_bordo
+        r = varredura_do_bordo.ultima()
+        if not r:
+            return {"ainda": "nenhuma varredura desde que o sistema subiu"}
+        return {"ok": bool(r.get("ok")), "vistos": r.get("vistos"),
+                "cadastradas": r.get("cadastradas") or [], "atualizadas": r.get("atualizadas") or [],
+                "publicadas": r.get("publicadas") or [],
+                "falhas_de_publicacao": r.get("falhas_de_publicacao") or [],
+                "radar": r.get("radar") or {}, "motivo": r.get("motivo") or "",
+                "intervalo_s": varredura_do_bordo.intervalo()}
+    except Exception as e:  # noqa: BLE001
+        return {"erro": f"{type(e).__name__}: {e}"}
+
+
 def retrato() -> dict:
     """O retrato completo — sem segredo nenhum. E' isto que sobe para o admin."""
     cpu, mem, mem_livre, nao_medido = _cpu_memoria()
@@ -228,6 +245,9 @@ def retrato() -> dict:
         "agente": _agente(),
         "mediamtx": _mediamtx(),
         "banco": _banco_resumo(),
+        # VARREDURA DO BORDO (Fase 2, 19/11/2026): o que o app achou nesta maquina sozinho — quantos
+        # dispositivos viu, o que cadastrou e o que ficou sem publicar. Sem segredo: so' contagem e id.
+        "varredura": _varredura(),
         "nao_medido": nao_medido,
     }
     return r

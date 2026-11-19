@@ -21,7 +21,7 @@ TOKEN = (os.environ.get("GITHUB_TOKEN_FOR_RELEASES") or os.environ.get("GH_TOKEN
 DIST = pathlib.Path.home() / "lecsor-pipeline-video" / "desktop" / "dist"
 PAPEIS = ("Captura", "Terra", "Admin", "Cliente")
 # Ordem de publicacao: o PRIMEIRO e' o `latest` do GitHub. Nova versao entra na frente.
-VERSOES_PUBLICADAS = ("0.7.0", "0.6.10", "0.6.9", "0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
+VERSOES_PUBLICADAS = ("0.9.0", "0.8.0", "0.7.0", "0.6.10", "0.6.9", "0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
 
 
 def instaladores(versao: str) -> list:
@@ -36,7 +36,52 @@ def instaladores(versao: str) -> list:
     return [DIST / papel.lower() / f"LECSOR-{papel}-{versao}-x64.exe" for papel in PAPEIS]
 
 NOTAS = {
-        "0.7.0": (
+    "0.9.0": (
+        "**Os 4 escopos de cliente, o app de captura que se cadastra sozinho e a visão da Petrobras.**\n\n"
+        "**1. Os 4 tipos de cliente** (dono, 19/11/2026): (1) uma embarcação da empresa, (2) algumas, "
+        "(3) a empresa inteira, (4) **Petrobras — todas as embarcações de todas as empresas**. Os tipos 1 e 2 "
+        "viraram **vínculo explícito** (`usuario_embarcacoes`, concedido pelo **admin**, com trilha na "
+        "auditoria); sem vínculo nenhum o cliente continua vendo **todas as da própria empresa** (tipo 3, como "
+        "sempre foi — nada muda para quem já usava). O tipo 4 é o papel **`observador`**: vê o **radar de óleo "
+        "de todas as embarcações, de todas as empresas**, e **mais nada** — sem câmera comum, sem analytics, "
+        "sem botão de operação.\n\n"
+        "**2. O app do PC de captura se cadastra sozinho.** No boot — e de tempo em tempo — o app **varre os "
+        "dispositivos desta máquina** e cadastra o que achar, publicando em terra. **Nenhum endereço de câmera "
+        "e nenhuma credencial passam por essa tela**: o id nasce do **seletor único do dispositivo** "
+        "(`@device_pnp_…`), que é o que separa **duas câmeras de mesmo nome**; a **placa de captura de radar "
+        "(HDMI) não é cadastrada como câmera** (radar é por embarcação). Terra **não manda lista de câmeras** — "
+        "terra só **decide depois** (`transmitir`, alvo, teto). A varredura **não sobrescreve** o que o admin "
+        "configurou.\n\n"
+        "**3. O cadastro do bordo não se perde** (defeito medido em 19/11/2026 e corrigido). Antes, "
+        "`POST /api/cameras` na máquina de captura era **encaminhado para terra** e o bordo ficava sem a câmera "
+        "que ele mesmo cadastrou. Agora o cadastro feito **na própria máquina** nasce **no banco do bordo** "
+        "(com o dispositivo em `config_local`) e é **publicado**; a sessão do usuário de captura é atendida "
+        "**no bordo** (`/api/entrar`, `/api/eu`, `/api/sair` passaram a ser locais).\n\n"
+        "**4. Saúde do bordo** (vem da 0.8.0, agora com a varredura no retrato): o bordo envia CPU, memória, "
+        "disco, dispositivos e **o que a varredura achou** — sempre **sem segredo**; o admin vê semáforo por "
+        "embarcação e **bordo mudo é tratado como problema**, com retenção de 30 dias auditada.\n\n"
+        "**5. Configuração do bordo** (0.8.0): terra **publica** o desejo (`config_bordo`, com versão), o bordo "
+        "**olha**, aplica só a diferença e **confirma**; aplicar é **local** (`POST /api/config/aplicar`).\n\n"
+        "* **Provas:** `tests/test-escopos-de-acesso.py` (matriz HTTP dos 4 tipos + conceder/revogar), "
+        "`tests/e2e-escopo-no-admin.py` (tela do admin), `tests/e2e-varredura-do-bordo.py` (duas APIs reais, "
+        "duas câmeras de MESMO NOME e uma placa de radar), `tests/test-fluxo-no-lado-terra.py` (a câmera nasce "
+        "no bordo **e** em terra) e `tests/e2e-observador-do-radar.py` (Chromium: o observador vê o radar de "
+        "duas empresas e **nenhuma** câmera). Regressão curada: `tools/regressao-090.py`, todos rc=0.\n"),
+    "0.8.0": (
+        "**A configuração do bordo vem de terra e a saúde do bordo chega ao admin.**\n\n"
+        "* **Um app só, a tela vem da role**: o usuário de captura cadastra as câmeras desta máquina; a "
+        "qualidade, o tempo de transmissão e o que transmitir são publicados pelo **administrador**.\n"
+        "* **Config publicada, bordo obedece**: terra publica (`config_bordo` com versão), o bordo olha, aplica "
+        "só a diferença e confirma; a recusa volta com motivo.\n"
+        "* **Saúde do bordo**: CPU, memória, disco, dispositivos e erros das últimas 24 h (sem segredo), com "
+        "semáforo no painel do admin; **bordo mudo = problema**; retenção de 30 dias auditada.\n"
+        "* **Cadastro espelhado**: o cadastro da câmera também vai para o banco do dono (Supabase) pelo lado "
+        "terra; `ip` e `porta` **nunca** sobem.\n"
+        "* **Provas:** `tests/e2e-cadastro-de-camera-salva-no-banco.py`, "
+        "`tests/e2e-config-do-bordo-vinda-de-terra.py`, `tests/test-papeis-de-config.py`, "
+        "`tests/e2e-tela-do-captura-so-cadastra.py`, `tests/e2e-admin-configura-e-bordo-obedece.py`, "
+        "`tests/e2e-saude-do-bordo-no-admin.py`.\n"),
+    "0.7.0": (
         "**Terra publica o desejo, o PC de captura obedece — e o radar de óleo fica gravado o tempo "
         "todo, no disco do barco.**\n\n"
         "Arquitetura (dono, 19/11/2026): *o computador de captura a bordo não tem porta aberta para "

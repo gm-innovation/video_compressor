@@ -247,7 +247,7 @@ const SUBS = {
   cameras: ['Câmeras', 'Câmera do produto aponta para um fluxo publicado; nunca guarda credencial de câmera.'],
   tempo: ['Tempo real', 'Como está a compressão, a velocidade de envio e a banda consumida e economizada, atualizando a cada 2 segundos.'],
   producao: ['Produção', 'Cards por embarcação e câmera: enviando/parado, média de compressão, banda utilizada e economizada, horas de streaming e disponibilidade — com filtro de período.'],
-  usuarios: ['Usuários', 'Só o administrador cadastra. Papéis: cliente (vê a própria empresa), operador, administrador e técnico (captura a bordo).'],
+  usuarios: ['Usuários', 'Só o administrador cadastra. Papéis: cliente (vê a empresa; o escopo por embarcação é definido em "escopo de acesso"), operador, administrador, técnico (captura a bordo) e observador (vê todas as empresas, só leitura).'],
   analises: ['Análises de vídeo', 'Contagem e eventos sobem de bordo (Fase 5) — sem agente a bordo a tela fica vazia.'],
   auditoria: ['Auditoria', 'Quem viu qual câmera, quando — e o que foi negado.'],
   marcas: ['Marcas e zonas', 'A linha de contagem e as zonas de risco que o agente de bordo usa, desenhadas aqui.'],
@@ -780,7 +780,7 @@ function telaUsuarios(t) {
   const linha = document.createElement('div'); linha.className = 'linha-form'; caixa.appendChild(linha);
   const email = campo(linha, 'u-email', 'E-mail', '');
   const nome = campo(linha, 'u-nome', 'Nome', '');
-  const papel = campo(linha, 'u-papel', 'Papel (cliente | operador | admin | tecnico)', 'cliente');
+  const papel = campo(linha, 'u-papel', 'Papel (cliente | operador | admin | tecnico | observador)', 'cliente');
   const cli = campo(linha, 'u-cliente', 'Cliente (só para papel cliente)', '');
   const onde = document.createElement('div'); caixa.appendChild(onde);
   caixa.appendChild(botao('Criar usuário', 'marca', async () => {
@@ -813,6 +813,9 @@ function telaUsuarios(t) {
           const r = await api('/api/usuarios/' + encodeURIComponent(l.id) + '/ativo', { method: 'POST', body: JSON.stringify({ ativo: !l.ativo }) });
           if (!r.ok) alert(JSON.stringify(r.corpo)); await atualizar();
         }));
+        if (l.papel === 'cliente' || l.papel === 'observador') {
+          c.appendChild(botao('escopo de acesso', 'mini', () => abrirEscopo(l)));
+        }
         c.appendChild(botao('redefinir senha', 'mini', async () => {
           const r = await api('/api/usuarios/' + encodeURIComponent(l.id) + '/senha', { method: 'POST', body: JSON.stringify({}) });
           if (!r.ok) return mostrarRecado('recusado: ' + JSON.stringify(r.corpo), true);
@@ -824,6 +827,56 @@ function telaUsuarios(t) {
         }));
         return c;
       } }], A.usuarios, 'nenhum usuário'));
+  const painel = document.createElement('div');
+  painel.id = 'escopo-de-acesso';
+  t.appendChild(painel);
+}
+
+// ESCOPO DE ACESSO do cliente (dono, 19/11/2026: os quatro tipos). O banco guarda o vinculo explicito
+// (`usuario_embarcacoes`); sem vinculo nenhum o cliente ve todas as embarcacoes da propria empresa.
+// O papel `observador` (Petrobras) nao recebe vinculo: ele ve todas as empresas, so leitura.
+async function abrirEscopo(u) {
+  const alvo = document.getElementById('escopo-de-acesso');
+  if (!alvo) return;
+  const r = await api('/api/usuarios/' + encodeURIComponent(u.id) + '/embarcacoes');
+  if (!r.ok) { mostrarRecado('não deu para ler o escopo: ' + JSON.stringify(r.corpo || {}), true); return; }
+  const d = r.corpo || {};
+  alvo.innerHTML = '';
+  const cx = document.createElement('div');
+  cx.className = 'caixa-form';
+  cx.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Escopo de acesso — ' + u.email }));
+  if (d.escopo === 'todas_as_empresas') {
+    cx.appendChild(recado('Este usuário é o OBSERVADOR (tipo 4): vê todas as embarcações de todas as empresas, '
+      + 'e SOMENTE LEITURA — não configura, não cadastra e não opera.', false));
+  } else {
+    const marcas = [];
+    for (const e of (d.embarcacoes || [])) {
+      const lab = document.createElement('label');
+      lab.style.display = 'block';
+      const ck = document.createElement('input');
+      ck.type = 'checkbox';
+      ck.checked = !!e.concedida;
+      ck.dataset.emb = e.id;
+      lab.appendChild(ck);
+      lab.appendChild(document.createTextNode(' ' + e.nome + ' (' + e.id + ')'));
+      cx.appendChild(lab);
+      marcas.push(ck);
+    }
+    if (!(d.embarcacoes || []).length) cx.appendChild(recado('Esta empresa ainda não tem embarcação cadastrada.', true));
+    cx.appendChild(botao('Salvar escopo', 'marca', async () => {
+      const ids = marcas.filter((c) => c.checked).map((c) => c.dataset.emb);
+      const s = await api('/api/usuarios/' + encodeURIComponent(u.id) + '/embarcacoes',
+        { method: 'POST', body: JSON.stringify({ embarcacao_ids: ids }) });
+      if (!s.ok) return mostrarRecado('recusado: ' + JSON.stringify(s.corpo), true);
+      mostrarRecado('escopo salvo: ' + (s.corpo.vinculos
+        ? s.corpo.vinculos + ' embarcação(ões) concedida(s) a este cliente'
+        : 'sem vínculo — o cliente vê todas as embarcações da própria empresa'), false);
+      abrirEscopo(u);
+    }));
+    cx.appendChild(recado('Nenhuma marcada = TODAS as embarcações da empresa (tipo 3). Uma marcada = uma '
+      + 'embarcação (tipo 1). Algumas marcadas = algumas (tipo 2).', false));
+  }
+  alvo.appendChild(cx);
 }
 
 function telaAnalises(t) {
