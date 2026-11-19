@@ -29,6 +29,7 @@
     <button class="item on" data-tela="visualizar"><span class="ic">▦</span>Visualizar</button>
     <button class="item" data-tela="alertas"><span class="ic">🔔</span>Alertas</button>
     <button class="item" data-tela="gravacoes"><span class="ic">🎬</span>Gravações</button>
+    <button class="item" data-tela="radar_hd"><span class="ic">🛰</span>Radar de óleo (HD)</button>
     <button class="item" data-tela="relatorios"><span class="ic">📊</span>Relatórios</button>
 
     <div class="grupo">Cadastros</div>
@@ -69,6 +70,15 @@
         <button class="pil" id="btn-sair">sair</button>
       </div>
     </header>
+
+    <div class="faixa-hd oculto" id="hd-filtro">
+      <span class="rotulo-hd">Procurar no HD do radar por data e hora:</span>
+      <input type="datetime-local" id="hd-de" title="De">
+      <input type="datetime-local" id="hd-ate" title="Até">
+      <button class="pil" id="hd-filtrar">filtrar</button>
+      <button class="pil" id="hd-tudo">ver tudo</button>
+      <span class="rotulo-hd" id="hd-resumo"></span>
+    </div>
 
     <div class="palco" id="palco"></div>
 

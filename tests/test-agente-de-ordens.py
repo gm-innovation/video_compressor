@@ -131,7 +131,11 @@ def main() -> int:
     log_t = log_b = None
     try:
         api_terra, base_terra, log_t = sobe_api(terra_db, p_terra,
-                                               {"LECSOR_TOKEN_INGESTAO": TOKEN, "LECSOR_EMBARCACAO": "bancada"})
+                                               {"LECSOR_TOKEN_INGESTAO": TOKEN, "LECSOR_EMBARCACAO": "bancada",
+                                                # Este teste e' do caminho ANTIGO (fila de ordens): o lado
+                                                # terra que ainda nao tem a flag de estado (0.7.0) responde
+                                                # 404 e o agente cai na fila — que e' o que se prova aqui.
+                                                "LECSOR_SEM_FLAG": "1"})
         api_bordo, base_bordo, log_b = sobe_api(bordo_db, p_bordo,
                                                 {"LECSOR_EMBARCACAO": "bancada", "LECSOR_PORT": str(p_bordo)})
         con = sqlite3.connect(terra_db)

@@ -21,7 +21,7 @@ TOKEN = (os.environ.get("GITHUB_TOKEN_FOR_RELEASES") or os.environ.get("GH_TOKEN
 DIST = pathlib.Path.home() / "lecsor-pipeline-video" / "desktop" / "dist"
 PAPEIS = ("Captura", "Terra", "Admin", "Cliente")
 # Ordem de publicacao: o PRIMEIRO e' o `latest` do GitHub. Nova versao entra na frente.
-VERSOES_PUBLICADAS = ("0.6.10", "0.6.9", "0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
+VERSOES_PUBLICADAS = ("0.7.0", "0.6.10", "0.6.9", "0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
 
 
 def instaladores(versao: str) -> list:
@@ -36,6 +36,30 @@ def instaladores(versao: str) -> list:
     return [DIST / papel.lower() / f"LECSOR-{papel}-{versao}-x64.exe" for papel in PAPEIS]
 
 NOTAS = {
+        "0.7.0": (
+        "**Terra publica o desejo, o PC de captura obedece — e o radar de óleo fica gravado o tempo "
+        "todo, no disco do barco.**\n\n"
+        "Arquitetura (dono, 19/11/2026): *o computador de captura a bordo não tem porta aberta para "
+        "receber comandos; a única certeza é que ele pode enviar*. A informação **não sai de terra para o "
+        "bordo**: **terra publica o desejo** por câmera (com versão), o **bordo olha** e age só na "
+        "diferença, e o **bordo conta o real** — é assim que a tela sabe que a câmera subiu.\n\n"
+        "* **Para quando não há ninguém assistindo** — e só então. Fechou a tela, desligou o computador "
+        "ou caiu a conexão, o lado terra derruba **só a sessão de quem saiu**; se outro cliente está "
+        "acompanhando, a transmissão continua para ele (batimento de 60 s, sem-resposta de 30 s).\n"
+        "* **HD do radar de óleo gravando full time** no PC de captura: as imagens que chegam **por HDMI, "
+        "como qualquer câmera**, são comprimidas e fatiadas em **blocos de 60 s** com índice por horário. "
+        "O disco funciona como **anel**: quando o espaço acaba, o bloco **mais antigo** é sobreposto e a "
+        "gravação **nunca para** (cada sobreposição entra na trilha). Nasce **desligada** e quem liga é o "
+        "administrador (`LECSOR_GRAVACAO_CONTINUA=1` + o dispositivo HDMI + a pasta do HD).\n"
+        "* **O cliente acessa as imagens quando quiser:** tela nova **Radar de óleo (HD)** no cliente, com "
+        "**filtro por data e hora**; ele escolhe o trecho e clica **PEDIR** — o PC de captura lê o pedido "
+        "e **envia** o bloco (pedido que já saiu do anel volta como *indisponível*), e o cliente **BAIXA** "
+        "em terra. Nenhum vídeo sobe sem pedido.\n"
+        "* **Todas as configurações são do administrador.** Com o tempo de transmissão fixado pelo admin, "
+        "o cliente não escolhe mais nada (a caixa sai da tela e a API recusa a mudança).\n"
+        "* **Provas:** flag ligando a câmera de verdade em repouso; dois clientes com um saindo; gravação "
+        "em blocos com o anel sobrepondo o mais antigo; o cliente pedindo e baixando o trecho; e a TELA do "
+        "cliente aberta de verdade (Chromium) mostrando, filtrando, pedindo e baixando.\n"),
     "0.6.10": (
         "**As câmeras ficam em stand-by no PC de captura e só transmitem quando o cliente ativa.**\n\n"
         "Arquitetura (dono, 19/11/2026): o sinal de cada câmera é **dividido por um split** e chega à nossa "

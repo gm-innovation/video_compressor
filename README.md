@@ -19,6 +19,24 @@ sistema comprime na máquina e o vídeo comprimido sobe para o lado terra (`dest
 ## Instaladores prontos (Windows x64) — PLUG & PLAY desde a 0.2.0
 Na página de releases: https://github.com/gm-innovation/video_compressor/releases
 
+### 0.7.0 — **terra publica o desejo, o PC de captura obedece; e o radar de óleo grava full time no HD do barco**
+- Arquitetura (dono, 19/11/2026): o computador de captura a bordo **não tem porta aberta** — a informação
+  **não sai de terra para o bordo**. **Terra publica o desejo** por câmera (com versão), o **bordo olha**
+  (`GET /api/estado-desejado`) e age só na diferença, e o **bordo conta o real** (`POST /api/estado-real`).
+- **Para quando não há ninguém assistindo** — e só então: fechou a tela / desligou o PC / caiu a conexão, o
+  lado terra derruba **só a sessão de quem saiu**; com outro cliente assistindo, a transmissão continua.
+- **HD do radar de óleo gravando full time** no PC de captura (imagens que chegam **por HDMI**, como
+  qualquer câmera): blocos de **60 s** + `indice.sqlite`, **retenção = anel de disco** (sobrepõe o mais
+  antigo e nunca para; trilha `bloco_sobreposto`). Nasce **desligada** — o admin liga com
+  `LECSOR_GRAVACAO_CONTINUA=1` + `LECSOR_HD_DISPOSITIVO` + `LECSOR_HD_DIR`.
+- **O cliente acessa as imagens quando quiser:** tela **Radar de óleo (HD)** com **filtro por data e hora**,
+  **PEDIR** o trecho (o bordo lê o pedido e envia o bloco) e **BAIXAR** em terra.
+- **Configuração só do administrador:** com o tempo de transmissão fixado pelo admin, a caixa sai da tela do
+  cliente e `/api/transmissao/config` responde **403**.
+- Provas: `tests/e2e-flag-de-estado-liga-a-camera.py`, `tests/e2e-dois-clientes-um-sai.py`,
+  `tests/test-gravacao-continua-do-radar.py`, `tests/e2e-hd-do-radar-cliente-pede-trecho.py`,
+  `tests/e2e-tela-do-radar-hd-do-cliente.py` (tela real).
+
 ### 0.6.10 — **as câmeras ficam em stand-by no PC de captura e só transmitem quando o cliente ativa**
 - Arquitetura (dono, 19/11/2026): o sinal de cada câmera é **dividido por um split** e chega à nossa
   máquina de captura; o DVR grava por conta dele. O nosso sistema **não abre câmera em repouso**.

@@ -192,10 +192,27 @@ function subir(config) {
       ordens = 'agente de ordens: no ar (obedece o cliente: liga e desliga a camera)';
     }
     if (ordens) fs.appendFileSync(path.join(logs, 'agente-ordens.log'), `[app] ${ordens}\n`);
+    // GRAVACAO CONTINUA do radar de oleo (dono, 19/11/2026): memoria LOCAL do radar no PC de captura,
+    // independente do streaming. Nasce DESLIGADA — quem liga e' o admin (env do pacote/servidor).
+    let hd = '';
+    const gravador = path.join(repo, 'ground', 'gravacao_continua.py');
+    if (!(configAtual.capturaLocal && configAtual.servidorLocal && configAtual.servidorLocal.ligado)) {
+      hd = 'gravacao continua do radar: nao (esta maquina nao e a de captura)';
+    } else if (!fs.existsSync(gravador)) {
+      hd = 'gravacao continua do radar: nao vem neste pacote';
+    } else if (!String(env.LECSOR_GRAVACAO_CONTINUA || '').trim()) {
+      hd = 'gravacao continua do radar: DESLIGADA (o admin liga com LECSOR_GRAVACAO_CONTINUA=1)';
+    } else if (!String(env.LECSOR_HD_DISPOSITIVO || '').trim()) {
+      hd = 'gravacao continua do radar: DESLIGADO — falta LECSOR_HD_DISPOSITIVO (o HDMI do radar)';
+    } else {
+      item('gravacao-continua', python, ['-u', gravador], repo, env);
+      hd = `gravacao continua do radar: no ar (blocos de ${String(env.LECSOR_BLOCO_SEGUNDOS || '60')}s em ${String(env.LECSOR_HD_DIR || 'ground/hd')})`;
+    }
+    if (hd) fs.appendFileSync(path.join(logs, 'gravacao-continua.log'), `[app] ${hd}\n`);
   } catch (e) { querendo = false; return { erro: e.message }; }
   querendo = true;
   analiseAtual = analise ? 'servidor: ' + analise : '';
-  return { ok: true, subiu: filhos.length, repo, python, analise, ordens };
+  return { ok: true, subiu: filhos.length, repo, python, analise, ordens, hd };
 }
 
 function ffmpegInfo() {

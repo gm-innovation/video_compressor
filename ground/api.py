@@ -232,6 +232,247 @@ def parar_se_ninguem_vendo(embarcacao_id: str, camera_id: str, fluxo_id: str, mo
     return True
 
 
+def _desejo_das_cameras(embarcacao_id: str) -> list[dict]:
+    """O DESEJO de terra, por camera (dono, 19/11/2026).
+
+    O computador de captura NAO tem porta aberta: a informacao nao sai de terra para o bordo. Quem sabe
+    quem esta' assistindo e' terra, entao terra PUBLICA o desejo e o bordo OLHA. A `versao` sobe apenas
+    quando o desejo muda — assim o bordo age na diferenca e nunca repete o que ja' esta' feito.
+    """
+    carimbo = em_iso()
+    saida: list[dict] = []
+    with conexao() as c:
+        cams = [dict(x) for x in c.execute(
+            "SELECT id, embarcacao_id, fluxo_id, ativo FROM cameras WHERE embarcacao_id=? ORDER BY id",
+            (embarcacao_id,)).fetchall()]
+    for cam in cams:
+        cid = cam["id"]
+        with conexao() as c:
+            vivas = [dict(x) for x in c.execute(
+                """SELECT id, usuario_email FROM transmissoes
+                   WHERE camera_id=? AND estado IN ('pedida','no_ar') ORDER BY criada_em""",
+                (cid,)).fetchall()]
+            linha_manual = c.execute("SELECT manual FROM desejo_camera WHERE camera_id=?",
+                                     (cid,)).fetchone()
+        manual = (linha_manual["manual"] or "") if linha_manual else ""
+        if not cam["ativo"]:
+            desejo, motivo, tid = "parar", "a operacao desativou esta camera", ""
+        elif manual == "parar":
+            # o boto do operador (stand-by) manda: ele desligou esta camera na mao
+            desejo, motivo, tid = "parar", "o operador desligou esta camera na mao", ""
+        elif vivas:
+            desejo = "ligar"
+            quem = ", ".join(sorted({str(v["usuario_email"] or "tela") for v in vivas}))[:150]
+            motivo = f"{len(vivas)} sessao(oes) assistindo: {quem}"
+            tid = vivas[0]["id"]
+        elif manual == "ligar":
+            desejo, motivo, tid = "ligar", "o operador ligou esta camera na mao", ""
+        else:
+            desejo, motivo, tid = "parar", "ninguem esta' assistindo", ""
+        mudou = False
+        with conexao() as c:
+            atual = c.execute("SELECT * FROM desejo_camera WHERE camera_id=?", (cid,)).fetchone()
+            igual = bool(atual) and atual["desejo"] == desejo and (atual["motivo"] or "") == motivo \
+                and (atual["transmissao_id"] or "") == (tid or "")
+            if igual:
+                versao = int(atual["versao"])
+            else:
+                versao = (int(atual["versao"]) + 1) if atual else 1
+                c.execute("""INSERT INTO desejo_camera
+                             (camera_id,embarcacao_id,desejo,versao,motivo,transmissao_id,atualizado_em)
+                             VALUES (?,?,?,?,?,?,?) ON CONFLICT(camera_id) DO UPDATE SET
+                               embarcacao_id=excluded.embarcacao_id, desejo=excluded.desejo,
+                               versao=excluded.versao, motivo=excluded.motivo,
+                               transmissao_id=excluded.transmissao_id,
+                               atualizado_em=excluded.atualizado_em""",
+                          (cid, embarcacao_id, desejo, versao, motivo, tid or "", carimbo))
+                mudou = True
+        if mudou:
+            auditar(None, "desejo_camera_mudou", f"{cid} -> {desejo} (v{versao}): {motivo}")
+        saida.append({"camera_id": cid, "fluxo_id": cam["fluxo_id"] or "", "desejo": desejo,
+                      "versao": versao, "motivo": motivo, "transmissao_id": tid or ""})
+    return saida
+
+
+# Estados que o bordo conta no `/api/estado-real` (o que REALMENTE esta' no ar na maquina de captura).
+ESTADOS_DO_BORDO = ("no_ar", "parado", "erro", "sem_entrada")
+
+
+def guardar_estado_real(embarcacao_id: str, cameras: list, de=None) -> dict:
+    """O bordo conta o que esta' no ar (dono, 19/11/2026). Quem manda no "de verdade" e' ele.
+
+    E' por aqui que a tela do cliente sabe que a transmissao subiu — e, quando o bordo diz que a camera
+    entrou no ar, a sessao do cliente vira `no_ar` na hora (sem depender de ordem atendida).
+    """
+    carimbo = em_iso()
+    contados, mudancas = [], []
+    for item in (cameras or [])[:80]:
+        if not isinstance(item, dict):
+            continue
+        cid = str(item.get("camera_id") or "").strip()
+        if not cid:
+            continue
+        est = str(item.get("estado") or "").strip().lower()
+        if est not in ESTADOS_DO_BORDO:
+            est = "desconhecido"
+        motivo = str(item.get("motivo") or "")[:300]
+        fluxo = str(item.get("fluxo_id") or "")[:80]
+        desde = str(item.get("desde") or "")[:40]
+        gravando = 1 if item.get("gravando") else 0
+        try:
+            versao = int(item.get("versao_desejo") or 0)
+        except Exception:
+            versao = 0
+        with conexao() as c:
+            antigo = c.execute("SELECT * FROM estado_bordo WHERE camera_id=?", (cid,)).fetchone()
+            c.execute("""INSERT INTO estado_bordo
+                         (camera_id,embarcacao_id,estado,motivo,fluxo_id,desde,gravando,versao_desejo,atualizado_em)
+                         VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(camera_id) DO UPDATE SET
+                           embarcacao_id=excluded.embarcacao_id, estado=excluded.estado,
+                           motivo=excluded.motivo, fluxo_id=excluded.fluxo_id, desde=excluded.desde,
+                           gravando=excluded.gravando, versao_desejo=excluded.versao_desejo,
+                           atualizado_em=excluded.atualizado_em""",
+                      (cid, embarcacao_id, est, motivo, fluxo, desde, gravando, versao, carimbo))
+            mudou = (not antigo) or antigo["estado"] != est or (antigo["motivo"] or "") != motivo
+            if est == "no_ar":
+                c.execute("""UPDATE transmissoes SET estado='no_ar',
+                             fluxo_id=CASE WHEN ?<>'' THEN ? ELSE fluxo_id END
+                             WHERE camera_id=? AND estado='pedida'""", (fluxo, fluxo, cid))
+                # a ordem de iniciar que ficou na fila (lado terra que ainda escreve ordem) esta'
+                # ATENDIDA de fato: o bordo contou que a camera esta' no ar. Sem isto o vigia do
+                # "sem resposta" mataria a sessao do cliente depois de 30 s, com a camera funcionando.
+                c.execute("""UPDATE ordens_do_bordo SET estado='atendida', atendida_em=?,
+                             resultado=CASE WHEN resultado='' THEN 'feito: camera no ar (flag de estado)' ELSE resultado END
+                             WHERE camera_id=? AND acao='iniciar' AND estado IN ('pedido','entregue')""",
+                          (carimbo, cid))
+            elif est == "parado":
+                c.execute("""UPDATE ordens_do_bordo SET estado='atendida', atendida_em=?,
+                             resultado=CASE WHEN resultado='' THEN 'feito: camera parada (flag de estado)' ELSE resultado END
+                             WHERE camera_id=? AND acao='parar' AND estado IN ('pedido','entregue')""",
+                          (carimbo, cid))
+            elif est in ("erro", "sem_entrada"):
+                # NAO fecha a sessao do cliente aqui: uma falha passageira (a API local reiniciando, o
+                # cabo fora por um instante) nao pode derrubar quem esta' assistindo. A sessao segue
+                # `pedida` e o vigia do lado terra a fecha com "sem sinal" se a maquina nao conseguir
+                # mesmo — o bordo continua tentando a cada leitura da flag.
+                pass
+        if mudou:
+            auditar(de, "estado_real_do_bordo", f"{cid}: {est} {motivo}"[:250])
+            mudancas.append({"camera_id": cid, "estado": est})
+        contados.append({"camera_id": cid, "estado": est})
+    return {"ok": True, "contados": contados, "mudancas": mudancas, "agora": carimbo}
+
+
+def hd_dir() -> Path:
+    """Onde guardamos os trechos que o BORDO envia do HD do radar (dono, 19/11/2026)."""
+    return gravacao_modulo.diretorio() / "hd"
+
+
+def guardar_catalogo_do_hd(embarcacao_id: str, camera_id: str, resumo: dict, blocos: list) -> dict:
+    """Terra guarda o CATALOGO do HD do bordo (o que existe, por horario) — nunca o video inteiro."""
+    with conexao() as c:
+        c.execute("""INSERT INTO hd_catalogo (embarcacao_id,camera_id,resumo,blocos,atualizado_em)
+                     VALUES (?,?,?,?,?) ON CONFLICT(embarcacao_id,camera_id) DO UPDATE SET
+                       resumo=excluded.resumo, blocos=excluded.blocos, atualizado_em=excluded.atualizado_em""",
+                  (embarcacao_id, camera_id, json.dumps(resumo or {}, ensure_ascii=False)[:4000],
+                   json.dumps((blocos or [])[-500:], ensure_ascii=False)[:200000], em_iso()))
+    return {"ok": True, "camera_id": camera_id, "blocos": len(blocos or [])}
+
+
+def catalogo_do_hd(embarcacao_id: str, camera_id: str = "") -> dict:
+    """O catalogo publicado pelo bordo (para a tela pesquisar por data e hora)."""
+    with conexao() as c:
+        if camera_id:
+            linhas = [dict(x) for x in c.execute(
+                "SELECT * FROM hd_catalogo WHERE embarcacao_id=? AND camera_id=?",
+                (embarcacao_id, camera_id)).fetchall()]
+            pedidos = [dict(x) for x in c.execute(
+                """SELECT id,camera_id,arquivo,estado,trecho,bytes,motivo,criado_em,pronto_em,usuario_email
+                   FROM hd_pedidos WHERE embarcacao_id=? AND camera_id=? ORDER BY criado_em DESC LIMIT 50""",
+                (embarcacao_id, camera_id)).fetchall()]
+        else:
+            linhas = [dict(x) for x in c.execute(
+                "SELECT * FROM hd_catalogo WHERE embarcacao_id=?", (embarcacao_id,)).fetchall()]
+            pedidos = [dict(x) for x in c.execute(
+                """SELECT id,camera_id,arquivo,estado,trecho,bytes,motivo,criado_em,pronto_em,usuario_email
+                   FROM hd_pedidos WHERE embarcacao_id=? ORDER BY criado_em DESC LIMIT 50""",
+                (embarcacao_id,)).fetchall()]
+    saida = []
+    for l in linhas:
+        try:
+            l["resumo"] = json.loads(l["resumo"] or "{}")
+        except Exception:
+            l["resumo"] = {}
+        try:
+            l["blocos"] = json.loads(l["blocos"] or "[]")
+        except Exception:
+            l["blocos"] = []
+        saida.append(l)
+    return {"embarcacao_id": embarcacao_id, "catalogos": saida, "pedidos": pedidos}
+
+
+def pedidos_de_hd(embarcacao_id: str) -> list:
+    """Os trechos que o cliente pediu e o bordo ainda nao enviou (vai no corpo da flag)."""
+    with conexao() as c:
+        return [{"id": x["id"], "camera_id": x["camera_id"], "arquivo": x["arquivo"]}
+                for x in c.execute("""SELECT id,camera_id,arquivo FROM hd_pedidos
+                                      WHERE embarcacao_id=? AND estado='pedido' ORDER BY criado_em LIMIT 20""",
+                                   (embarcacao_id,)).fetchall()]
+
+
+def pedir_trecho_do_hd(usuario, camera_id: str, arquivo: str) -> dict:
+    """O cliente pede um trecho do HD do radar: vira pedido para o bordo (quem envia e' o bordo)."""
+    nome = Path(str(arquivo or "")).name
+    if not re.match(r"^bloco-\d{8}-\d{6}\.mp4$", nome):
+        return {"erro": "trecho invalido: informe um bloco (bloco-AAAAMMDD-HHMMSS.mp4)"}
+    with conexao() as c:
+        cam = c.execute("SELECT id, embarcacao_id FROM cameras WHERE id=?", (camera_id,)).fetchone()
+        if not cam:
+            return {"erro": "camera nao encontrada"}
+        ja = c.execute("""SELECT id,estado FROM hd_pedidos WHERE camera_id=? AND arquivo=?
+                          AND estado IN ('pedido','enviado') ORDER BY criado_em DESC""",
+                       (camera_id, nome)).fetchone()
+        if ja and ja["estado"] == "enviado":
+            return {"ok": True, "ja_tinha": True, "id": ja["id"],
+                    "recado": "este trecho ja' esta' em terra: baixe pelo historico"}
+        pid = secrets.token_hex(8)
+        c.execute("""INSERT INTO hd_pedidos (id,embarcacao_id,camera_id,arquivo,usuario_email,estado,criado_em)
+                     VALUES (?,?,?,?,?,'pedido',?)""",
+                  (pid, cam["embarcacao_id"], camera_id, nome, usuario["email"], em_iso()))
+    auditar(usuario, "trecho_do_hd_pedido", f"{camera_id} {nome}", "")
+    return {"ok": True, "id": pid, "recado": "pedido enviado ao PC de captura: o trecho chega em instantes"}
+
+
+def guardar_trecho_do_hd(pid: str, caminho: Path, bytes_recebidos: int, motivo: str = "") -> dict:
+    """O bordo enviou o trecho: marca o pedido como pronto (o cliente baixa) ou registra o erro."""
+    with conexao() as c:
+        p = c.execute("SELECT * FROM hd_pedidos WHERE id=?", (pid,)).fetchone()
+        if not p:
+            return {"erro": "pedido nao encontrado"}
+        if motivo:
+            c.execute("UPDATE hd_pedidos SET estado='erro', motivo=?, pronto_em=? WHERE id=?",
+                      (motivo[:200], em_iso(), pid))
+        else:
+            c.execute("""UPDATE hd_pedidos SET estado='enviado', trecho=?, bytes=?, motivo='', pronto_em=?
+                         WHERE id=?""", (caminho.name, int(bytes_recebidos), em_iso(), pid))
+    return {"ok": True, "id": pid, "estado": "enviado" if not motivo else "erro"}
+
+
+def ler_desejo_e_estado(embarcacao_id: str) -> list[dict]:
+    """Desejo (terra) x estado real (bordo) por camera — e' o que a tela do operador mostra lado a lado."""
+    desejos = _desejo_das_cameras(embarcacao_id)
+    with conexao() as c:
+        reais = {r["camera_id"]: dict(r) for r in c.execute(
+            "SELECT * FROM estado_bordo WHERE embarcacao_id=?", (embarcacao_id,)).fetchall()}
+    for d in desejos:
+        r = reais.get(d["camera_id"]) or {}
+        d["estado_real"] = r.get("estado") or "desconhecido"
+        d["estado_motivo"] = r.get("motivo") or ""
+        d["gravando"] = bool(r.get("gravando"))
+        d["estado_em"] = r.get("atualizado_em") or ""
+    return desejos
+
+
 def _vigiar_uma_vez(agora: dt.datetime | None = None) -> dict:
     """Uma passada da regra do tempo e do batimento (quem chama e' `vigiar_transmissoes`)."""
     agora = agora or dt.datetime.now(dt.timezone.utc)
@@ -480,6 +721,11 @@ def inicializar(semear_demo: bool = False) -> None:
                            ("radar_taxa", "TEXT DEFAULT '30fps'"), ("radar_alvo", "TEXT DEFAULT ''")):
             if nome not in colunas_emb:
                 c.execute(f"ALTER TABLE embarcacoes ADD COLUMN {nome} {tipo}")
+        # FLAG de estado (0.7.0): instalacao que atualiza ganha a coluna `manual` do desejo aqui — o
+        # boto do operador (stand-by) precisa vencer o "ninguem esta' assistindo" sem passo manual.
+        colunas_desejo = {r["name"] for r in c.execute("PRAGMA table_info(desejo_camera)")}
+        if colunas_desejo and "manual" not in colunas_desejo:
+            c.execute("ALTER TABLE desejo_camera ADD COLUMN manual TEXT NOT NULL DEFAULT ''")
         # Papel `tecnico` (bordo) precisa do CHECK novo. SQLite nao altera CHECK no lugar: o
         # `db/migracao-tecnico.sql` recria a tabela preservando as linhas, e roda aqui para a
         # instalacao que ATUALIZA se consertar sozinha (o dono nao faz passo manual no cliente).
@@ -1680,6 +1926,70 @@ class Handler(SimpleHTTPRequestHandler):
                                                 "transmissao_id": l["transmissao_id"],
                                                 "motivo": l["motivo"]} for l in linhas]},
                               {"Cache-Control": "no-store"})
+        if rota == "/api/estado-desejado":
+            if os.environ.get("LECSOR_SEM_FLAG") == "1":
+                # lado terra ANTIGO: nao existe a flag (o agente do bordo cai na fila de ordens)
+                return self._json(404, {"erro": "esta versao do lado terra nao tem a flag de estado"})
+            # A FLAG (dono, 19/11/2026): o bordo NAO recebe conexao nenhuma — ele OLHA para terra e,
+            # quando a flag muda, inicia ou para a transmissao. Responde na hora (o bordo compara com o
+            # que ele tem no ar e so' age na diferenca); quem sustenta o "ligar" e' a sessao do cliente.
+            if not self._token_do_bordo():
+                return self._json(401, {"erro": "token de ingestao invalido"})
+            q = parse_qs(urlparse(self.path).query)
+            emb = (q.get("embarcacao_id", [""])[0] or os.environ.get("LECSOR_EMBARCACAO_BORDO") or "").strip()
+            if not emb:
+                return self._json(422, {"erro": "informe a embarcacao"})
+            try:
+                cams = _desejo_das_cameras(emb)
+                pedidos = pedidos_de_hd(emb)
+            except Exception as e:  # noqa: BLE001
+                return self._json(500, {"erro": f"nao consegui calcular o desejo ({type(e).__name__}: {e})"})
+            return self._json(200, {"embarcacao_id": emb, "agora": em_iso(), "cameras": cams,
+                                    "pedidos": pedidos}, {"Cache-Control": "no-store"})
+        if rota == "/api/hd/catalogo":
+            # O catalogo do HD do radar: o bordo publica o que existe; a tela pesquisa por data e hora.
+            cam_id = (parse_qs(urlparse(self.path).query).get("camera_id", [""])[0] or "").strip()
+            if cam_id:
+                with conexao() as c:
+                    cam = c.execute("SELECT * FROM cameras WHERE id=?", (cam_id,)).fetchone()
+                if not pode_ver_camera(u, cam):
+                    return self._json(403, {"erro": "esta camera nao e' da sua empresa"})
+                if not u and not self._local():
+                    return self._json(401, {"erro": "entre no sistema"})
+                return self._json(200, catalogo_do_hd(cam["embarcacao_id"], cam_id),
+                                  {"Cache-Control": "no-store"})
+            if u and u["papel"] == "cliente":
+                # O CLIENTE acessa as imagens da embarcacao dele (dono, 19/11/2026).
+                with conexao() as c:
+                    embs = [x["id"] for x in c.execute(
+                        "SELECT id FROM embarcacoes WHERE cliente_id=?", (u["cliente_id"],)).fetchall()]
+                junto = {"embarcacao_id": u["cliente_id"], "catalogos": [], "pedidos": []}
+                for e in embs:
+                    r = catalogo_do_hd(e)
+                    junto["catalogos"] += r["catalogos"]
+                    junto["pedidos"] += r["pedidos"]
+                return self._json(200, junto, {"Cache-Control": "no-store"})
+            if not (self._pode_operar(u) or self._local()):
+                return self._json(401, {"erro": "entre no sistema"})
+            emb2 = (parse_qs(urlparse(self.path).query).get("embarcacao_id", [""])[0] or "").strip()
+            if not emb2:
+                return self._json(422, {"erro": "informe a camera ou a embarcacao"})
+            return self._json(200, catalogo_do_hd(emb2), {"Cache-Control": "no-store"})
+        if rota == "/api/hd/baixar":
+            # O cliente baixa o trecho que ELE pediu (ou a operacao/admin). O arquivo veio do bordo.
+            qq = parse_qs(urlparse(self.path).query)
+            pid = (qq.get("id", [""])[0] or "").strip()
+            if not u or not pid:
+                return self._json(401, {"erro": "entre no sistema e informe o trecho"})
+            with conexao() as c:
+                p = c.execute("SELECT * FROM hd_pedidos WHERE id=?", (pid,)).fetchone()
+            if not p or p["estado"] != "enviado" or not p["trecho"]:
+                return self._json(404, {"erro": "trecho nao esta' pronto em terra"})
+            dono = (p["usuario_email"] or "") == (u["email"] or "") or u["papel"] in PAPEL_ADMIN \
+                or u["papel"] in ("operador", "tecnico")
+            if not dono:
+                return self._json(403, {"erro": "este trecho nao e' seu"})
+            return self._enviar_arquivo(hd_dir() / p["trecho"], baixar=True)
         if rota in ("/api/metricas", "/api/tempo-real", "/api/metricas/tempo-real"):
             if not (self._pode_operar(u) or self._local()):
                 return self._json(403, {"erro": "so operacao e administrador veem as metricas"})
@@ -2372,6 +2682,15 @@ class Handler(SimpleHTTPRequestHandler):
                 quem = f"{u['papel']}:{u['email']}" if u else "tela local"
                 o = enfileirar_ordem(cam["embarcacao_id"], cam_id, cam["fluxo_id"],
                                      "parar" if desligar else "iniciar", motivo=f"pedido de {quem}")
+                # alem da ordem (compatibilidade), grava a INTENCAO na flag: o bordo olha o desejo e age
+                # na diferenca — e' assim que o botao do operador chega ao PC de captura sem porta aberta.
+                with conexao() as c:
+                    c.execute("""INSERT INTO desejo_camera
+                                   (camera_id,embarcacao_id,desejo,versao,motivo,transmissao_id,manual,atualizado_em)
+                                 VALUES (?,?,?,0,'','',?,?)
+                                 ON CONFLICT(camera_id) DO UPDATE SET manual=excluded.manual""",
+                              (cam_id, cam["embarcacao_id"], "parar" if desligar else "ligar",
+                               "parar" if desligar else "ligar", em_iso()))
                 auditar(u, "ordem_camera_desligada" if desligar else "ordem_camera_ligada",
                         f"{cam_id} ({cam['embarcacao_id']}) ordem #{o['seq']}", self.client_address[0])
                 return self._json(200, {"ok": True, "ordem": o["seq"], "enviado_ao_bordo": True,
@@ -2763,6 +3082,13 @@ class Handler(SimpleHTTPRequestHandler):
             if seg not in TEMPOS_DE_TRANSMISSAO:
                 return self._json(422, {"erro": f"tempo fora da lista; escolha um de {list(TEMPOS_DE_TRANSMISSAO)}"})
             seg, cortado_pelo_teto = aplicar_teto_do_produto(seg)   # o teto do produto manda na lista do cliente
+            fixado = tempo_maximo_do_produto()
+            if fixado:
+                # dono (19/11/2026): "todas as configuracoes serao feitas por mim (admin)". O tempo da
+                # sessao e' FIXADO pelo admin — o que o cliente escolheu na tela nao vale aqui.
+                if seg != fixado:
+                    cortado_pelo_teto = True
+                seg = fixado
             aberta = self._transmissao_aberta(u["email"], cam_id)
             if aberta:
                 # pedir de novo o que ja' esta' aberto nao abre uma segunda sessao (a tela pode
@@ -2783,6 +3109,9 @@ class Handler(SimpleHTTPRequestHandler):
                           (tid, seq, cam["embarcacao_id"], cam_id, cam["fluxo_id"], u["email"],
                            seg, carimbo, carimbo, termina))
                 linha = c.execute("SELECT * FROM transmissoes WHERE id=?", (tid,)).fetchone()
+                # o cliente pediu a transmissao: a intencao dele e' mais nova que o clique do operador,
+                # entao o override manual sai de cena (a sessao passa a sustentar o "ligar").
+                c.execute("UPDATE desejo_camera SET manual='' WHERE camera_id=?", (cam_id,))
             ordem = enfileirar_ordem(cam["embarcacao_id"], cam_id, cam["fluxo_id"], "iniciar",
                                      f"pedido do cliente {u['email']}", tid)
             auditar(u, "transmissao_pedida", f"{cam_id} ({texto_do_tempo(seg)})", self.client_address[0])
@@ -2969,6 +3298,13 @@ class Handler(SimpleHTTPRequestHandler):
             # Tela de configuracao do cliente: o tempo maximo de cada transmissao.
             if not u:
                 return self._json(401, {"erro": "entre no sistema"})
+            # Com o tempo FIXADO pelo administrador (dono, 19/11/2026), o cliente nao configura nada:
+            # o que ele escolher na tela nao vale — entao nao aceitamos a mudanca nem por API.
+            fixado = tempo_maximo_do_produto()
+            if fixado:
+                return self._json(403, {
+                    "erro": f"o tempo de transmissao e' definido pelo administrador ({texto_do_tempo(fixado)})",
+                    "teto_do_produto_s": fixado, "configuravel": False}, {"Cache-Control": "no-store"})
             d = self._corpo()
             try:
                 seg = int(d.get("tempo_maximo_s"))
@@ -3018,6 +3354,69 @@ class Handler(SimpleHTTPRequestHandler):
             auditar(None, f"ordem_{estado}", f"{o['camera_id']} ({resultado})", self.client_address[0])
             return self._json(200, {"ok": True, "ordem": oid, "estado": estado, "resultado": resultado},
                               {"Cache-Control": "no-store"})
+        if rota == "/api/estado-real":
+            if not self._token_do_bordo():
+                return self._json(401, {"erro": "token de ingestao invalido"})
+            d = self._corpo()
+            emb = str(d.get("embarcacao_id") or os.environ.get("LECSOR_EMBARCACAO_BORDO") or "").strip()
+            if not emb:
+                return self._json(422, {"erro": "informe a embarcacao"})
+            cams = d.get("cameras")
+            if not isinstance(cams, list):
+                return self._json(422, {"erro": "informe a lista de cameras com o estado real"})
+            r = guardar_estado_real(emb, cams, de=None)
+            return self._json(200, r, {"Cache-Control": "no-store"})
+        if rota == "/api/hd/catalogo":
+            # O BORDO publica o catalogo do HD do radar (o que existe, por horario). So' o catalogo:
+            # video sobe apenas quando o cliente pede um trecho.
+            if not self._token_do_bordo():
+                return self._json(401, {"erro": "token de ingestao invalido"})
+            d = self._corpo()
+            emb = str(d.get("embarcacao_id") or "").strip()
+            cam_id = str(d.get("camera_id") or "").strip()
+            if not emb or not cam_id:
+                return self._json(422, {"erro": "informe a embarcacao e a camera"})
+            blocos = d.get("blocos") if isinstance(d.get("blocos"), list) else []
+            r = guardar_catalogo_do_hd(emb, cam_id, d.get("resumo") or {}, blocos)
+            return self._json(200, r, {"Cache-Control": "no-store"})
+        if rota == "/api/hd/trecho":
+            # O BORDO envia o bloco que o cliente pediu (corpo cru = o proprio mp4). Quem envia e' o
+            # bordo; terra nunca alcanca o PC de captura.
+            if not self._token_do_bordo():
+                return self._json(401, {"erro": "token de ingestao invalido"})
+            qq = parse_qs(urlparse(self.path).query)
+            pid = (qq.get("id", [""])[0] or "").strip()
+            motivo = (qq.get("motivo", [""])[0] or "").strip()
+            if not pid:
+                return self._json(422, {"erro": "informe o pedido (id)"})
+            if motivo:
+                r = guardar_trecho_do_hd(pid, Path(""), 0, motivo=motivo)
+                auditar(None, "trecho_do_hd_erro", f"{pid}: {motivo}"[:200], self.client_address[0])
+                return self._json(200, r, {"Cache-Control": "no-store"})
+            nome = (qq.get("arquivo", [""])[0] or "trecho.mp4")
+            destino = hd_dir() / f"{pid}-{Path(nome).name}"
+            try:
+                destino.parent.mkdir(parents=True, exist_ok=True)
+                n = self._corpo_bruto(destino, limite=200_000_000)
+            except ValueError as e:
+                return self._json(422, {"erro": str(e)})
+            r = guardar_trecho_do_hd(pid, destino, n)
+            auditar(None, "trecho_do_hd_recebido", f"{pid} {destino.name} ({n} B)", self.client_address[0])
+            return self._json(200, {**r, "bytes": n}, {"Cache-Control": "no-store"})
+        if rota == "/api/hd/pedir":
+            # O cliente pede um trecho do HD do radar (por data/hora ele escolhe o bloco na tela).
+            if not u:
+                return self._json(401, {"erro": "entre no sistema"})
+            d = self._corpo()
+            cam_id = str(d.get("camera_id") or "").strip()
+            with conexao() as c:
+                cam = c.execute("SELECT * FROM cameras WHERE id=?", (cam_id,)).fetchone()
+            if not pode_ver_camera(u, cam):
+                return self._json(403, {"erro": "esta camera nao e' da sua empresa"})
+            r = pedir_trecho_do_hd(u, cam_id, str(d.get("arquivo") or ""))
+            if "erro" in r:
+                return self._json(422, r)
+            return self._json(201, r, {"Cache-Control": "no-store"})
         if rota == "/api/decisoes":
             if not (u and u["papel"] in PAPEL_ADMIN):
                 return self._json(401, {"erro": "so operador/admin registra decisao"})

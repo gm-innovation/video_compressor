@@ -7,8 +7,10 @@ const S = {
   eventos: [], contagens: [], relatorios: null, timer: null,
   analises: { agentes: [], contagens: [], eventos: [] }, agentesPorCamera: {},
   /* transmissao a pedido do cliente: o que esta' no ar, o historico e o tempo configurado */
-  transmissao: { abertas: [], historico: [], tempos: [], tempo_maximo_s: 900 }, minhas: []
-};
+  transmissao: { abertas: [], historico: [], tempos: [], tempo_maximo_s: 900 }, minhas: [],
+    /* HD do radar de oleo: o catalogo do que existe no PC de captura (nada de video sem pedido) */
+    hd: null
+  };
 const $ = (id) => document.getElementById(id);
 const limpar = (el) => { while (el.firstChild) el.removeChild(el.firstChild); };
 const esc = (s) => String(s === null || s === undefined ? '' : s);
@@ -73,6 +75,7 @@ async function atualizar() {
   }
   if (S.tela === 'alertas' || S.tela === 'relatorios') await dadosExtras();
   if (S.tela === 'transmissao' || S.tela === 'configuracao' || S.tela === 'gravacoes') await carregarTransmissao();
+  if (S.tela === 'radar_hd') await carregarHd();
   if (S.tela === 'visualizar') {
     if (mudouLista || !$('palco').dataset.montado) desenharVisualizar();
     else { pintarEstados(); S.cameras.forEach((c) => desenharCaixas(c.id)); }
@@ -97,7 +100,7 @@ async function atualizar() {
 let marcaTela = '';
 function assinaturaTelas() {
   try {
-    return JSON.stringify([S.tela, S.cameras, S.eventos, S.contagens, S.relatorios, S.analises, S.transmissao],
+    return JSON.stringify([S.tela, S.cameras, S.eventos, S.contagens, S.relatorios, S.analises, S.transmissao, S.hd],
       (k, v) => ((k === 'gerado_em' || k === 'caixas_idade' || k === 'agora' || k === 'atualizado_em') ? undefined : v));
   } catch (e) { return 'erro:' + Math.random(); }
 }
@@ -540,6 +543,7 @@ const TELAS = {
   visualizar: ['Transmissões ao vivo', 'Monitoramento em tempo real das câmeras selecionadas.'],
   alertas: ['Alertas', 'Queda de câmera, perda de sinal e eventos das análises de vídeo.'],
   gravacoes: ['Gravações', 'Trechos gravados pela operação (depende da retenção da embarcação).'],
+  radar_hd: ['Radar de óleo (HD)', 'As imagens do radar ficam gravadas o tempo todo no computador de captura. Procure por data e hora e peça o trecho que quiser ver.'],
   relatorios: ['Relatórios', 'Indicadores medidos pelo sistema: disponibilidade, contagens e qualidade do link.'],
   pessoas: ['Pessoas', 'Cadastro usado pelas análises de vídeo — só liga com a autorização registrada.'],
   cameras: ['Câmeras', 'Câmeras liberadas para a sua empresa e o estado de cada uma.'],
@@ -552,6 +556,7 @@ function desenharTela() {
   const [titulo, sub] = TELAS[S.tela] || TELAS.visualizar;
   $('titulo-tela').textContent = titulo; $('sub-tela').textContent = sub;
   $('controles').classList.toggle('oculto', S.tela !== 'visualizar');
+  $('hd-filtro').classList.toggle('oculto', S.tela !== 'radar_hd');
   $('paginacao').classList.add('oculto');
   const t = S.tela;
   if (t === 'alertas') {
@@ -591,6 +596,56 @@ function desenharTela() {
         return a;
       })(),
     })), 'Nenhuma gravação ainda. Grave pela tela Transmitir — a gravação fica no lado terra e não é apagada.');
+  } else if (t === 'radar_hd') {
+    /* O HD do radar fica no PC de captura gravando o tempo todo; aqui o cliente procura por data e hora,
+       PEDE o trecho e baixa quando chegar (dono, 19/11/2026). Nada sobe de video sem pedido. */
+    const cat = S.hd || { catalogos: [], pedidos: [] };
+    const blocos = [];
+    for (const c of (cat.catalogos || [])) {
+      for (const b of (c.blocos || [])) {
+        blocos.push({ camera_id: c.camera_id, arquivo: b.arquivo, inicio: String(b.inicio || ''), bytes: b.bytes || 0 });
+      }
+    }
+    blocos.sort((a, b) => String(b.inicio).localeCompare(String(a.inicio)));
+    const de = ($('hd-de') || {}).value || '';
+    const ate = ($('hd-ate') || {}).value || '';
+    const mostrados = blocos.filter((b) => (!de || b.inicio >= de) && (!ate || b.inicio <= ate + ':59'));
+    const resumo = $('hd-resumo');
+    if (resumo) {
+      const total = blocos.reduce((s, b) => s + (b.bytes || 0), 0);
+      resumo.textContent = blocos.length
+        ? `${blocos.length} trecho(s) · ${emMB(total)} · de ${blocos[blocos.length - 1].inicio.replace('T', ' ').slice(0, 16)} até ${blocos[0].inicio.replace('T', ' ').slice(0, 16)}`
+        : 'o computador de captura ainda não publicou imagens do radar';
+    }
+    const jaPedido = {};
+    for (const p of (cat.pedidos || [])) jaPedido[p.camera_id + '|' + p.arquivo] = p;
+    tabelaEmPalco([
+      { rotulo: 'Quando (início do trecho)', campo: 'quando' },
+      { rotulo: 'Tamanho', campo: 'tamanho' },
+      { rotulo: 'Situação', campo: 'situacao' },
+      { rotulo: 'Trecho', valor: (l) => l.acao },
+    ], mostrados.slice(0, 300).map((b) => {
+      const p = jaPedido[b.camera_id + '|' + b.arquivo];
+      let acao;
+      let situacao = 'no HD do barco';
+      if (p && p.estado === 'enviado') {
+        acao = document.createElement('a');
+        acao.href = '/api/hd/baixar?id=' + encodeURIComponent(p.id);
+        acao.textContent = 'baixar';
+        situacao = 'pronto em terra';
+      } else if (p && p.estado === 'pedido') {
+        acao = document.createElement('button'); acao.className = 'pil'; acao.disabled = true;
+        acao.textContent = 'chegando…'; situacao = 'pedido enviado ao barco';
+      } else if (p && p.estado === 'erro') {
+        acao = document.createElement('button'); acao.className = 'pil'; acao.disabled = true;
+        acao.textContent = 'indisponível'; situacao = 'saiu do HD (' + (p.motivo || 'erro') + ')';
+      } else {
+        acao = document.createElement('button'); acao.className = 'pil'; acao.textContent = 'pedir';
+        acao.addEventListener('click', () => pedirTrechoDoHd(b.camera_id, b.arquivo, acao));
+      }
+      return { quando: b.inicio.replace('T', ' ').slice(0, 19), tamanho: emMB(b.bytes), situacao, acao };
+    }), S.hd ? 'Nenhum trecho neste horário — tente um intervalo maior (as imagens ficam guardadas no computador de captura e o mais antigo gira quando o disco enche).'
+      : 'Carregando as imagens do radar…');
   } else if (t === 'relatorios') {
     const linhas = S.cameras.map((c) => ({ camera: c.rotulo, estado: c.no_ar ? 'no ar' : 'fora do ar',
       encoder: c.encoder && c.encoder.bitrate ? c.encoder.bitrate : '', leitores: c.leitores }));
@@ -912,6 +967,17 @@ function desenharConfiguracao() {
   limpar(p); p.dataset.montado = '';
   const cx = document.createElement('div'); cx.className = 'config-caixa';
   const d = document.createElement('div'); d.className = 'vazio';
+  /* Dono (19/11/2026): "todas as configuracoes serao feitas por mim (admin), nada sera configurado pelo
+     cliente". Com o tempo FIXADO pelo administrador, o cliente so' LE — a caixa de escolher sai. */
+  const fixado = (S.transmissao || {}).teto_do_produto_s || 0;
+  if (fixado) {
+    d.textContent = 'O tempo de cada transmissão é definido pelo administrador da LECSOR '
+      + `(${Math.round(fixado / 60)} min). Você não precisa configurar nada. Ao estourar o tempo a `
+      + 'transmissão para e você inicia de novo — a menos que esteja gravando. Tudo fica no histórico.';
+    cx.appendChild(d);
+    p.appendChild(cx);
+    return;
+  }
   d.textContent = 'Tempo máximo de cada transmissão. Ao estourar, a transmissão para e você inicia de '
     + 'novo — a menos que esteja gravando. Tudo o que for feito fica no histórico.';
   cx.appendChild(d);
@@ -1051,6 +1117,22 @@ $('embarcacao').addEventListener('change', (ev) => {
 $('limpar').addEventListener('click', () => { S.selecionadas = new Set(); S.pagina = 1; desenharVisualizar(); atualizarRodape(); });
 $('todos-alertas').addEventListener('click', () => trocarTela('alertas'));
 $('ir-relatorios').addEventListener('click', () => trocarTela('relatorios'));
+$('hd-filtrar').addEventListener('click', () => desenharTela());
+$('hd-tudo').addEventListener('click', () => { $('hd-de').value = ''; $('hd-ate').value = ''; desenharTela(); });
+
+/* HD do radar: o cliente ve o catalogo, pede o trecho e baixa (o bordo e' quem envia). */
+async function carregarHd() {
+  const r = await api('/api/hd/catalogo');
+  S.hd = (r.ok && r.corpo) || { catalogos: [], pedidos: [] };
+  return S.hd;
+}
+async function pedirTrechoDoHd(cameraId, arquivo, botao) {
+  if (botao) { botao.disabled = true; botao.textContent = 'pedindo…'; }
+  const r = await api('/api/hd/pedir', { method: 'POST', body: JSON.stringify({ camera_id: cameraId, arquivo }) });
+  if (r.ok) { await carregarHd(); desenharTela(); return; }
+  if (botao) { botao.disabled = false; botao.textContent = 'pedir'; }
+  alert((r.corpo && r.corpo.erro) || 'não consegui pedir este trecho');
+}
 setInterval(relogios, 1000); setInterval(() => { if (S.tela === 'visualizar') pintarEstados(); }, 2000);
 /* "estou aqui" da transmissao (10 s): e' o que mantem viva a sessao aberta nesta tela */
 setInterval(baterPonto, 10000);

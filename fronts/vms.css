@@ -194,3 +194,9 @@ table.historico tr:last-child td{border-bottom:0}
   .config-caixa{padding:12px}
   table.historico{display:block;overflow-x:auto;white-space:nowrap}
 }
+
+/* HD do radar de oleo: filtro por data e hora acima do palco (dono, 19/11/2026) */
+.faixa-hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 18px 0}
+.faixa-hd .rotulo-hd{font-size:12px;color:var(--fraco,#94a3b8)}
+.faixa-hd input[type=datetime-local]{background:var(--painel,#0f172a);color:inherit;border:1px solid #1e293b;
+  border-radius:8px;padding:6px 8px;font-size:12px;font-family:inherit}

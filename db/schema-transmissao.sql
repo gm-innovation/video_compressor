@@ -68,6 +68,64 @@ CREATE TABLE IF NOT EXISTS configs_do_produto (
   atualizado_em TEXT NOT NULL
 );
 
+-- ---------------------------------------------------------------------------------------------
+-- FLAG DE ESTADO (dono, 19/11/2026). O computador de captura a bordo NAO tem porta aberta: a unica
+-- certeza e' de que ele PODE ENVIAR (sair). Entao a informacao nao vai de terra para bordo — o bordo
+-- e' quem OLHA para terra, e quando a flag muda ele inicia ou para a transmissao.
+--   `desejo_camera`  = o que TERRA quer (com versao: o bordo so' age quando a versao muda);
+--   `estado_bordo`   = o que o BORDO conta que realmente esta' no ar (quem manda no "de verdade").
+CREATE TABLE IF NOT EXISTS desejo_camera (
+  camera_id      TEXT PRIMARY KEY,
+  embarcacao_id  TEXT NOT NULL DEFAULT '',
+  desejo         TEXT NOT NULL DEFAULT 'parar',   -- ligar | parar
+  versao         INTEGER NOT NULL DEFAULT 0,      -- sobe a cada mudanca de desejo
+  motivo         TEXT DEFAULT '',                 -- por que, em portugues (vai para a tela e a trilha)
+  transmissao_id TEXT DEFAULT '',                 -- a sessao que sustenta o "ligar" (se houver)
+  manual         TEXT NOT NULL DEFAULT '',        -- '' | 'ligar' | 'parar' (o operador ligou/desligou na mao)
+  atualizado_em  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS estado_bordo (
+  camera_id      TEXT PRIMARY KEY,
+  embarcacao_id  TEXT NOT NULL DEFAULT '',
+  estado         TEXT NOT NULL DEFAULT '',        -- no_ar | parado | erro | sem_entrada
+  motivo         TEXT DEFAULT '',
+  fluxo_id       TEXT DEFAULT '',
+  desde          TEXT DEFAULT '',
+  gravando       INTEGER NOT NULL DEFAULT 0,
+  versao_desejo  INTEGER NOT NULL DEFAULT 0,      -- a versao do desejo que ele estava lendo
+  atualizado_em  TEXT NOT NULL
+);
+
+-- HD do RADAR no PC de captura (dono, 19/11/2026): a gravacao continua mora no BORDO; terra guarda so' o
+-- CATALOGO (o que existe, por horario) para o cliente pesquisar. O video so' sobe quando o cliente PEDE
+-- um trecho — e quem envia e' o bordo (nunca terra alcancando o bordo).
+CREATE TABLE IF NOT EXISTS hd_catalogo (
+  embarcacao_id TEXT NOT NULL,
+  camera_id     TEXT NOT NULL,
+  resumo        TEXT DEFAULT '',                  -- JSON do resumo (blocos, bytes, primeiro, ultimo, livre)
+  blocos        TEXT DEFAULT '',                  -- JSON da lista recente de blocos (arquivo/inicio/bytes)
+  atualizado_em TEXT NOT NULL,
+  PRIMARY KEY (embarcacao_id, camera_id)
+);
+
+CREATE TABLE IF NOT EXISTS hd_pedidos (
+  id            TEXT PRIMARY KEY,
+  embarcacao_id TEXT NOT NULL DEFAULT '',
+  camera_id     TEXT NOT NULL DEFAULT '',
+  arquivo       TEXT NOT NULL DEFAULT '',          -- o bloco pedido (nome no HD do bordo)
+  usuario_email TEXT NOT NULL DEFAULT '',
+  estado        TEXT NOT NULL DEFAULT 'pedido',   -- pedido | enviado | erro
+  trecho        TEXT DEFAULT '',                   -- nome do arquivo que chegou em terra
+  bytes         INTEGER NOT NULL DEFAULT 0,
+  motivo        TEXT DEFAULT '',
+  criado_em     TEXT NOT NULL,
+  pronto_em     TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS ix_hd_pedidos_pendentes ON hd_pedidos(embarcacao_id, estado);
+
+
+
 -- Ficha da GRAVACAO no lado terra (dono, 18/11/2026): a VPS mantem so' o arquivo que foi gravado, e so'
 -- ate' o cliente baixar. O cliente e' AVISADO quando o arquivo fica pronto; quando ele sai da tela (ou
 -- desliga o sistema), o arquivo e' apagado. A LINHA daqui NAO e' apagada: `apagada_em` diz quando o

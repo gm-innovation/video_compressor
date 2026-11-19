@@ -196,7 +196,186 @@ def vigiar_teto(local: str) -> list[dict]:
     return cortados
 
 
+def ler_flag(base: str, token: str, emb: str):
+    """Le a FLAG de terra (dono, 19/11/2026): o desejo por camera, na versao atual.
+
+    Devolve `None` quando o lado terra ainda nao tem a rota (`/api/estado-desejado`) — nesse caso o
+    agente cai na pergunta antiga das ordens, para nao parar em pe' com um lado terra mais velho.
+    """
+    s, j = _http("GET", f"{base}/api/estado-desejado?embarcacao_id={emb}", token=token, timeout=30)
+    if s == 404 or (s == 422 and "rota" in str(j.get("erro") or "").lower()):
+        return None
+    if s != 200:
+        _log(f"aviso: o lado terra recusou a leitura da flag ({s} {j.get('erro')})")
+        return None
+    return j
+
+
+def _ligado(cam_id: str) -> str:
+    """Fluxo deste camera se ESTE agente o tem no ar (senao string vazia)."""
+    for fluxo, dado in LIGADOS.items():
+        if str(dado.get("camera_id") or "") == cam_id:
+            return fluxo
+    return ""
+
+
+def aplicar_flag(cameras: list, local: str, base: str, token: str, emb: str) -> dict:
+    """Compara a flag de terra com o que ESTA' no ar aqui e age so' na diferenca. Nunca finge sucesso."""
+    acoes, reais = [], []
+    for cam in cameras:
+        cam_id = str((cam or {}).get("camera_id") or "").strip()
+        desejo = str((cam or {}).get("desejo") or "").strip()
+        if not cam_id or desejo not in ("ligar", "parar"):
+            continue
+        fluxo_ligado = _ligado(cam_id)
+        if desejo == "ligar" and not fluxo_ligado:
+            s, r = _chamar_local(local, "iniciar", cam_id)
+            if s == 200 and not r.get("erro"):
+                fluxo = str(r.get("fluxo_id") or (cam or {}).get("fluxo_id") or cam_id)
+                LIGADOS[fluxo] = {"camera_id": cam_id, "desde": time.time()}
+                _salvar_ligados()
+                _log(f"flag: o desejo virou LIGAR — abri a camera {cam_id} ({fluxo})")
+                acoes.append({"camera_id": cam_id, "acao": "ligar", "ok": True})
+            else:
+                erro = str(r.get("erro") or f"a API local respondeu {s}")
+                _log(f"flag: NAO consegui ligar a camera {cam_id} ({erro})")
+                acoes.append({"camera_id": cam_id, "acao": "ligar", "ok": False, "erro": erro})
+        elif desejo == "parar" and fluxo_ligado:
+            s, r = _chamar_local(local, "desligar", cam_id)
+            if s == 200 and not r.get("erro"):
+                LIGADOS.pop(fluxo_ligado, None)
+                _salvar_ligados()
+                _log(f"flag: o desejo virou PARAR — desliguei a camera {cam_id}")
+                acoes.append({"camera_id": cam_id, "acao": "parar", "ok": True})
+            else:
+                erro = str(r.get("erro") or f"a API local respondeu {s}")
+                _log(f"flag: NAO consegui desligar a camera {cam_id} ({erro})")
+                acoes.append({"camera_id": cam_id, "acao": "parar", "ok": False, "erro": erro})
+        # o que eu conto e' o que esta' NO AR aqui, medido por mim (nao o que o lado terra esperava)
+        fluxo_agora = _ligado(cam_id)
+        ultima = [a for a in acoes if a["camera_id"] == cam_id and not a.get("ok")]
+        reais.append({"camera_id": cam_id,
+                      "estado": "no_ar" if fluxo_agora else ("erro" if ultima else "parado"),
+                      "motivo": (ultima[-1].get("erro") if ultima else
+                                 ("no ar por ordem do cliente" if fluxo_agora else "parada (ninguem assistindo)")),
+                      "fluxo_id": fluxo_agora,
+                      "desde": (time.strftime("%Y-%m-%dT%H:%M:%S",
+                                              time.localtime(LIGADOS.get(fluxo_agora, {}).get("desde", time.time())))
+                                if fluxo_agora else ""),
+                      "versao_desejo": int((cam or {}).get("versao") or 0)})
+    if reais:
+        try:
+            _http("POST", f"{base}/api/estado-real", {"embarcacao_id": emb, "cameras": reais}, token=token)
+        except Exception as e:
+            _log(f"aviso: nao consegui contar o estado real ao lado terra ({type(e).__name__}: {e})")
+    return {"acoes": acoes, "reais": reais}
+
+
+def _chamar_local(local: str, acao: str, cam_id: str):
+    """Chama a API LOCAL desta maquina (quem captura e' ela). Erro de rede nao pode virar 'feito'."""
+    try:
+        return _http("POST", local + _chave(acao), {"camera_id": cam_id})
+    except Exception as e:
+        return 0, {"erro": f"nao alcancei a API local ({type(e).__name__}: {e})"}
+
+
+def _http_bytes(url: str, dados: bytes, token: str):
+    """Envia BYTES crus (o bloco do HD) — o mesmo caminho de saida do bordo, nunca uma porta aberta."""
+    req = urllib.request.Request(url, data=dados, method="POST",
+                                 headers={"Content-Type": "application/octet-stream",
+                                          "Content-Length": str(len(dados)),
+                                          "Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=300) as f:
+            return f.status, json.loads(f.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read() or b"{}")
+        except Exception:
+            return e.code, {}
+    except Exception as e:
+        return 0, {"erro": f"{type(e).__name__}: {e}"}
+
+
+def _gravacao_continua():
+    """O modulo do HD do radar, se este pacote tiver (guardado: sem ele o agente segue normal)."""
+    try:
+        import gravacao_continua as g   # noqa: PLC0415
+        return g
+    except Exception:
+        try:
+            sys.path.insert(0, str(RAIZ / "ground"))
+            import gravacao_continua as g   # noqa: PLC0415
+            return g
+        except Exception:
+            return None
+
+
+def publicar_catalogo(base: str, token: str, emb: str) -> None:
+    """Publica o catalogo do HD do radar em terra: o cliente pesquisa por data e hora (nao sobe video)."""
+    g = _gravacao_continua()
+    if not g or not g.ligada():
+        return
+    try:
+        resumo = g.resumo()
+        blocos = g.blocos()[-500:]
+        _http("POST", f"{base}/api/hd/catalogo",
+              {"embarcacao_id": emb, "camera_id": g.camera(), "resumo": resumo, "blocos": blocos},
+              token=token)
+    except Exception as e:
+        _log(f"aviso: nao consegui publicar o catalogo do HD ({type(e).__name__}: {e})")
+
+
+def atender_pedidos(base: str, token: str, emb: str, pedidos: list) -> int:
+    """Envia ao lado terra os blocos que o cliente pediu. Bloco que ja' saiu do HD volta como motivo."""
+    g = _gravacao_continua()
+    if not g or not pedidos:
+        return 0
+    enviados = 0
+    for p in pedidos[:5]:
+        pid, arquivo = str(p.get("id") or ""), str(p.get("arquivo") or "")
+        if not pid or not arquivo:
+            continue
+        caminho = g.diretorio() / Path(arquivo).name
+        if not caminho.exists() or not caminho.is_file():
+            _log(f"pedido {pid}: o bloco {arquivo} ja' saiu do HD (anel de disco)")
+            _http("POST", f"{base}/api/hd/trecho?id={pid}&motivo=bloco+ja+saiu+do+HD+%28anel+de+disco%29",
+                  {}, token=token)
+            continue
+        try:
+            dados = caminho.read_bytes()
+        except OSError as e:
+            _log(f"pedido {pid}: nao consegui ler {arquivo} ({e})")
+            continue
+        s, r = _http_bytes(f"{base}/api/hd/trecho?id={pid}&arquivo={arquivo}", dados, token)
+        if s == 200 and not r.get("erro"):
+            enviados += 1
+            _log(f"pedido {pid}: enviei o bloco {arquivo} ({len(dados)} B)")
+        else:
+            _log(f"pedido {pid}: o lado terra recusou o bloco {arquivo} ({s} {r.get('erro')})")
+    return enviados
+
+
+def intervalo_da_flag() -> float:
+    """De quanto em quanto tempo o bordo OLHA a flag (env `LECSOR_ESPERA_DA_FLAG`, padrao 2 s)."""
+    try:
+        v = float(os.environ.get("LECSOR_ESPERA_DA_FLAG") or 2.0)
+    except Exception:
+        v = 2.0
+    return min(30.0, max(0.5, v))
+
+
 def uma_rodada(base: str, local: str, token: str, emb: str, espera: float) -> int:
+    # A FLAG VEM PRIMEIRO (dono, 19/11/2026): o computador de captura nao recebe conexao nenhuma — ele
+    # olha para terra. A fila de ordens continua sendo atendida quando existir (lado terra mais velho).
+    flag = ler_flag(base, token, emb)
+    if flag is not None:
+        aplicar_flag(flag.get("cameras") or [], local, base, token, emb)
+        atender_pedidos(base, token, emb, flag.get("pedidos") or [])
+        publicar_catalogo(base, token, emb)
+        vigiar_teto(local)
+        time.sleep(intervalo_da_flag())   # olhar de novo em instantes, sem martelar o lado terra
+        return 0
     s, j = _http("GET", f"{base}/api/ordens?embarcacao_id={emb}&espera={espera:g}", token=token,
                  timeout=max(40.0, espera + 20))
     if s != 200:
