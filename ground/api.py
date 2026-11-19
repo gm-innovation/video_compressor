@@ -3043,7 +3043,12 @@ class Handler(SimpleHTTPRequestHandler):
             # o bordo DECLARA os numeros do envio que esta' no ar (lado "declarado" do atestado)
             return self._anuncio_envio()
         if rota == "/api/cameras":
-            if not (u and u["papel"] in PAPEL_ADMIN):
+            # Quem cadastra: operacao/admin em qualquer lugar; o usuario de CAPTURA so' na propria
+            # maquina de captura (dono, 19/11/2026: "o tipo de app e' definido pela role do usuario";
+            # no PC de captura o unico usuario e' o de captura, e ele SO' cadastra). Sem `_local()`
+            # um tecnico remoto nao cadastra nada — a captura so' existe onde a camera esta' plugada.
+            if not ((u and u["papel"] in PAPEL_ADMIN)
+                    or (u and u["papel"] in ("tecnico", "captura") and self._local())):
                 return self._json(401, {"erro": "entre no sistema"})
             d = self._corpo()
             # identificador derivado do fluxo: menos campo para o dono preencher

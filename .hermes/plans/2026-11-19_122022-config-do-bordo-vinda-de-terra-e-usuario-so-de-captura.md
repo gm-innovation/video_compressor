@@ -14,7 +14,17 @@ do bordo, já em `ROTAS_CAPTURA`); no agente, `ler_config()`/`aplicar_config()`/
 (`LECSOR_ESPERA_DA_CONFIG`, padrão 15 s) aplicam **só a diferença** e confirmam — e `teto_do_bordo()` passa a
 obedecer o que o admin publicou. Provado por `tests/e2e-config-do-bordo-vinda-de-terra.py` **rc=0 (21/21)**,
 incluindo a recusa com motivo (`gravacao_continua` ainda não aplicável) sem derrubar o que já estava aplicado.
-Fases 3–6 pendentes.
+**Fase 3 implementada e provada** — `portal/index.html` marca em `data-so-admin` tudo o que é de operação
+(enviar vídeo de teste, envios, fases, medições, evidências, registrar medição) e `aplicarPapeis()` (lido de
+`/api/eu`) esconde isso para `tecnico|captura`, mostrando no lugar o **cadastro desta máquina** (rótulo +
+dispositivo) e o aviso de que só cadastra; o usuário de captura cadastra porque `POST /api/cameras` aceita
+`tecnico|captura` **só quando o pedido vem da própria máquina** (`_local()`), nunca de outro IP;
+`admin/admin.js` + `admin/index.html` ganharam a tela **Configuração do bordo** (alvo por câmera, teto da
+embarcação, e "nada publicado"/"aguardando o bordo"/"RECUSADO: motivo" por chave) e
+`docs/matriz-de-permissoes-0.8.0.md` declara a fronteira. Provado por `tests/test-papeis-de-config.py`
+(**20/20, rc=0**, matriz por HTTP) e `tests/e2e-tela-do-captura-so-cadastra.py` (**24/24, rc=0**, Chromium:
+técnico só cadastra e o cadastro chega ao banco; admin tem a tela nova; nenhum erro de javascript).
+Fases 4–6 pendentes.
 **Data:** 19/11/2026 · **Base:** 0.7.0 (`9ca021d` + plano `2d94e25`)
 **Alvo:** 0.8.0 — o cadastro de câmera passa a ser salvo no banco (hoje só existe no SQLite local), o bordo
 deixa de ter tela de configuração, passa a **buscar** o que terra publica e passa a **reportar a própria saúde**

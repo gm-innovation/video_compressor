@@ -1,6 +1,6 @@
 /* Admin do projeto e do sistema: acompanhamento (§6) + administracao (clientes, embarcacoes,
    cameras, usuarios, analises, auditoria, saude). Le e escreve tudo pela API do produto. */
-const A = { usuario: null, resumo: null, clientes: [], usuarios: [], verificarCredencial: false, sistema: null, cameras: [], embarcacoes: [], tela: 'painel', timer: null, marca: null, radarForm: null, radarAviso: null, prontidao: null };
+const A = { usuario: null, resumo: null, clientes: [], usuarios: [], verificarCredencial: false, sistema: null, cameras: [], embarcacoes: [], tela: 'painel', timer: null, marca: null, radarForm: null, radarAviso: null, prontidao: null, config: null };
 const $ = (id) => document.getElementById(id);
 const limpar = (el) => { while (el.firstChild) el.removeChild(el.firstChild); };
 const esc = (s) => String(s === null || s === undefined ? '' : s);
@@ -252,7 +252,8 @@ const SUBS = {
   auditoria: ['Auditoria', 'Quem viu qual câmera, quando — e o que foi negado.'],
   marcas: ['Marcas e zonas', 'A linha de contagem e as zonas de risco que o agente de bordo usa, desenhadas aqui.'],
   envios: ['Enviar vídeo', 'Escolhe a fonte (arquivo, link ou câmera desta máquina) e a qualidade por câmera: o sistema codifica, publica em SRT e mede o corte de banda.'],
-  saude: ['Saúde do sistema', 'Estado da API, do lado terra e das contagens do banco.']
+  saude: ['Saúde do sistema', 'Estado da API, do lado terra e das contagens do banco.'],
+  config_bordo: ['Configuração do bordo', 'Você publica aqui e o computador de captura busca: alvo de banda por câmera e teto de tempo da embarcação. O bordo confirma o que aplicou — ou o motivo da recusa.']
 };
 
 /* --------------------------------------------------------- telas */
@@ -283,7 +284,7 @@ function desenhar(forcado) {
   const despacho = { painel: telaPainel, fases: telaFases, medicoes: telaMedicoes, decisoes: telaDecisoes,
     evidencias: telaEvidencias, documentos: telaDocumentos, clientes: telaClientes, embarcacoes: telaEmbarcacoes,
     cameras: telaCameras, usuarios: telaUsuarios, tempo: telaTempoReal, producao: telaProducao, analises: telaAnalises, marcas: telaMarcas, envios: telaEnvios,
-    auditoria: telaAuditoria, saude: telaSaude };
+    auditoria: telaAuditoria, saude: telaSaude, config_bordo: telaConfigDoBordo };
   (despacho[A.tela] || telaPainel)(tela);
 }
 
@@ -1804,6 +1805,97 @@ function telaSaude(t) {
   const d = document.createElement('div'); d.className = 'recado ok';
   d.textContent = 'banco: ' + (s.banco || '—');
   t.appendChild(d);
+}
+
+
+/* ------------------------------------------------------------------ configuração do bordo (0.8.0)
+   O dono: "eu configuraria tudo pelo meu usuario admin, pela premissa de nao enviar nada para bordo".
+   Aqui o admin PUBLICA (terra) e vê o que o bordo confirmou. Campos que o bordo ainda não aplica
+   aparecem como publicáveis, e a resposta dele vem com o motivo — nada de "achei que apliquei". */
+const ALVOS_DA_BANDA = ['1500', '1200', '1000', '800', '500', '300'];
+
+async function telaConfigDoBordo(t) {
+  const embs = A.embarcacoes || [];
+  if (!embs.length) { t.appendChild(recado('nenhuma embarcação cadastrada ainda', true)); return; }
+  const escolhida = (A.config && A.config.embarcacao_id) || embs[0].id;
+
+  const barra = document.createElement('div'); barra.className = 'linha-form';
+  const rot = document.createElement('label'); rot.textContent = 'Embarcação';
+  const sel = document.createElement('select'); sel.id = 'cfg-emb';
+  embs.forEach((e) => sel.appendChild(Object.assign(document.createElement('option'),
+    { value: e.id, textContent: (e.nome || e.id) + ' (' + e.id + ')', selected: e.id === escolhida })));
+  barra.appendChild(rot); barra.appendChild(sel); t.appendChild(barra);
+  sel.onchange = () => { A.config = { embarcacao_id: sel.value }; desenhar(true); };
+
+  const r = await api('/api/config?embarcacao_id=' + encodeURIComponent(escolhida));
+  const dados = (r.ok && r.corpo) || { chaves: [], aplicadas: [], versao: 0 };
+  const achar = (cam, chave) => (dados.aplicadas || []).find((x) => x.camera_id === (cam || '') && x.chave === chave) || null;
+
+  /* --- alvo de banda por câmera (é o que o bordo aplica de verdade) --- */
+  const cams = (A.cameras || []).filter((c) => c.embarcacao_id === escolhida);
+  const cx = document.createElement('div'); cx.className = 'caixa-form';
+  cx.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Banda por câmera' }));
+  if (!cams.length) {
+    cx.appendChild(recado('esta embarcação ainda não tem câmera cadastrada', true));
+  }
+  cams.forEach((c) => {
+    const linha = document.createElement('div'); linha.className = 'linha-form';
+    const desejada = (dados.chaves || []).find((x) => x.camera_id === c.id && x.chave === 'alvo_kbps');
+    const aplic = achar(c.id, 'alvo_kbps');
+    const sel2 = document.createElement('select'); sel2.id = 'cfg-alvo-' + c.id;
+    ALVOS_DA_BANDA.forEach((v) => sel2.appendChild(Object.assign(document.createElement('option'),
+      { value: v, textContent: (Number(v) / 1000).toFixed(1).replace('.', ',') + ' Mbps', selected: desejada && desejada.valor === v })));
+    const estado = document.createElement('span'); estado.className = 'nota';
+    estado.textContent = !desejada ? 'nada publicado'
+      : (aplic && aplic.versao >= desejada.versao
+        ? 'aplicado (v' + aplic.versao + ')'
+        : (aplic && aplic.motivo ? 'RECUSADO: ' + aplic.motivo : 'aguardando o bordo'));
+    linha.appendChild(Object.assign(document.createElement('label'), { textContent: c.rotulo || c.id }));
+    linha.appendChild(sel2);
+    linha.appendChild(botao('Publicar', 'mini', async () => {
+      const rr = await api('/api/config', { method: 'POST', body: JSON.stringify({ embarcacao_id: escolhida, camera_id: c.id, chave: 'alvo_kbps', valor: sel2.value }) });
+      await atualizar();
+      A.tela = 'config_bordo'; A.config = { embarcacao_id: escolhida }; desenhar(true);
+      mostrarRecado(rr.ok ? 'publicado para o bordo: ' + (c.rotulo || c.id) + ' = ' + sel2.value + ' kbps (v' + (rr.corpo.versao || '?') + ')'
+        : 'recusado: ' + JSON.stringify(rr.corpo), !rr.ok);
+    }));
+    linha.appendChild(estado);
+    cx.appendChild(linha);
+  });
+  t.appendChild(cx);
+
+  /* --- teto de tempo da embarcação (o bordo passa a usar este teto) --- */
+  const tetoDesejado = (dados.chaves || []).find((x) => x.camera_id === '' && x.chave === 'teto_s');
+  const tetoAplic = achar('', 'teto_s');
+  const ct = document.createElement('div'); ct.className = 'caixa-form';
+  ct.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Teto de transmissão da embarcação' }));
+  const l2 = document.createElement('div'); l2.className = 'linha-form';
+  const inp = campo(l2, 'cfg-teto', 'Teto (minutos)', tetoDesejado ? String(Math.round(Number(tetoDesejado.valor) / 60)) : '');
+  l2.appendChild(botao('Publicar teto', 'mini', async () => {
+    const rr = await api('/api/config', { method: 'POST', body: JSON.stringify({ embarcacao_id: escolhida, camera_id: '', chave: 'teto_s', valor: String(Math.round(Number(inp.value) * 60)) }) });
+    await atualizar();
+    A.tela = 'config_bordo'; A.config = { embarcacao_id: escolhida }; desenhar(true);
+    mostrarRecado(rr.ok ? 'teto publicado (v' + (rr.corpo.versao || '?') + '): o bordo corta sozinho depois disso'
+      : 'recusado: ' + JSON.stringify(rr.corpo), !rr.ok);
+  }));
+  const nota2 = document.createElement('span'); nota2.className = 'nota';
+  nota2.textContent = tetoDesejado ? ('publicado: ' + Math.round(Number(tetoDesejado.valor) / 60) + ' min — '
+    + (tetoAplic && tetoAplic.versao >= tetoDesejado.versao ? 'aplicado (v' + tetoAplic.versao + ')' : 'aguardando o bordo')) : 'nada publicado';
+  l2.appendChild(nota2);
+  ct.appendChild(l2); t.appendChild(ct);
+
+  /* --- desejada x aplicada, tudo o que está publicado --- */
+  const linhas = (dados.chaves || []).map((k) => ({
+    camera_id: k.camera_id || '(embarcação)', chave: k.chave, desejada: k.valor,
+    versao: 'v' + k.versao, quando: k.atualizado_em || '',
+    estado: (() => { const a = achar(k.camera_id, k.chave);
+      if (!a) return 'aguardando o bordo';
+      if (a.motivo) return 'RECUSADO: ' + a.motivo;
+      return a.versao >= k.versao ? 'aplicado (v' + a.versao + ')' : 'aguardando o bordo'; })() }));
+  t.appendChild(tabela([{ rotulo: 'Câmera', campo: 'camera_id' }, { rotulo: 'Chave', campo: 'chave' },
+    { rotulo: 'Valor', campo: 'desejada' }, { rotulo: 'Publicado', campo: 'versao' },
+    { rotulo: 'Quando', campo: 'quando' }, { rotulo: 'No bordo', campo: 'estado' }], linhas,
+    'nada publicado para esta embarcação ainda'));
 }
 
 /* --------------------------------------------------------- interface */

@@ -49,7 +49,19 @@
 
 <div class="casca">
   <div class="colunas">
-    <section class="cartao">
+    <section class="cartao" id="cadastro-local" data-so-captura>
+      <h2>Cadastrar câmera deste computador</h2>
+      <p class="sub">Aqui você diz <b>onde</b> a imagem entra nesta máquina. Qualidade, tempo de transmissão e o
+        que transmitir não se escolhem aqui — isso é publicado pelo administrador, em terra, e este computador
+        busca sozinho. Nada de endereço de câmera pela internet.</p>
+      <div class="campo"><label>Rótulo (o que aparece na tela)</label><input id="cad-rotulo" placeholder="ex.: câmera do convés"></div>
+      <div class="campo"><label>Dispositivo local (o nome que o Windows mostra)</label><input id="cad-dispositivo" placeholder="ex.: ACER HD User Facing" required></div>
+      <div class="campo"><label>Local a bordo</label><input id="cad-local" placeholder="ex.: proa"></div>
+      <button class="principal" id="cad-enviar" style="width:100%">Cadastrar nesta máquina</button>
+      <div id="cad-msg" class="sub" style="margin-top:10px"></div>
+    </section>
+
+    <section class="cartao" data-so-admin>
       <h2>Enviar vídeo para testar</h2>
       <p class="sub">Arquivo do computador ou link http(s). O sistema codifica (libx264), publica em SRT e mede o corte de banda — sem tocar em câmera nem credencial.</p>
       <div class="aba">
@@ -84,7 +96,7 @@
       <div id="msg" class="sub" style="margin-top:10px"></div>
     </section>
 
-    <section class="cartao">
+    <section class="cartao" data-so-admin>
       <h2>Envios e medição de compressão</h2>
       <p class="sub">Entrada = bitrate do seu vídeo · Saída = o que o encode gera · Corte = quanto de banda o pipeline economiza. Atualiza sozinho.</p>
       <table class="tabela" id="t-envios"><tr><th>#</th><th>rótulo</th><th>fonte</th><th>entrada</th><th>saída</th><th>compressão</th><th>fps</th><th>publicado há</th><th>estado</th><th></th></tr></table>
@@ -94,16 +106,16 @@
   <h2 style="margin:22px 0 8px">Fluxos ao vivo (encode → SRT → terra → navegador)</h2>
   <div class="grade-vms" id="fluxos"></div>
 
-  <h2 style="margin:26px 0 8px">Fases</h2>
-  <table class="tabela" id="t-fases"></table>
-  <h2 style="margin:22px 0 8px">Medições registradas (valor + fonte + data + hardware + comando)</h2>
-  <table class="tabela" id="t-med"></table>
+  <div data-so-admin><h2 style="margin:26px 0 8px">Fases</h2>
+  <table class="tabela" id="t-fases"></table></div>
+  <div data-so-admin><h2 style="margin:22px 0 8px">Medições registradas (valor + fonte + data + hardware + comando)</h2>
+  <table class="tabela" id="t-med"></table></div>
   <h2 style="margin:22px 0 8px">Inventário de câmeras</h2>
   <table class="tabela" id="t-inv"></table>
-  <h2 style="margin:22px 0 8px">Evidências</h2>
-  <table class="tabela" id="t-ev"></table>
+  <div data-so-admin><h2 style="margin:22px 0 8px">Evidências</h2>
+  <table class="tabela" id="t-ev"></table></div>
 
-  <h2 style="margin:22px 0 8px">Registrar medição</h2>
+  <div data-so-admin><h2 style="margin:22px 0 8px">Registrar medição</h2>
   <form id="f" class="cartao">
     <div class="campo"><label>valor</label><input name="valor" placeholder="bitrate 5,51 Mbps; corte 99,26%; VMAF 94,87" required></div>
     <div class="campo"><label>fonte</label><input name="fonte" placeholder="bench/saida/resultado-fase0.json" required></div>
@@ -111,7 +123,7 @@
     <div class="campo"><label>hardware/versão</label><input name="hardware_versao" placeholder="RTX 4050 · ffmpeg 9.0.1" required></div>
     <div class="campo"><label>comando</label><input name="comando" placeholder="ffmpeg -i …" required></div>
     <button class="principal" type="submit">Gravar</button>
-  </form>
+  </form></div>
 </div>
 
 <script src="/fronts/video.js"></script>
@@ -122,6 +134,41 @@ const num = (v, u = '') => (v === null || v === undefined || v === '' ? '—' : 
 const mbps = (k) => (k === null || k === undefined ? '—' : (k / 1000).toLocaleString('pt-BR', {maximumFractionDigits: 2}) + ' Mbps');
 
 setInterval(() => { $('relogio').textContent = new Date().toLocaleTimeString('pt-BR'); }, 1000);
+
+/* ---- quem e' quem (0.8.0) --------------------------------------------------------------------
+   O proprio app se organiza pela role do usuario (dono: "o tipo de app e' definido pela role do
+   usuario"). Nesta tela o usuario de CAPTURA so' cadastra e ve o que esta no ar: alvo, tempo e o que
+   transmitir sao publicados pelo admin, em terra. Nao ha' tela separada para manter em dobro. */
+let EU = { autenticado: false, papel: '', local: false };
+async function aplicarPapeis() {
+  try { EU = await (await fetch('/api/eu')).json(); } catch (e) {}
+  const captura = ['tecnico', 'captura'].includes(EU.papel);
+  document.querySelectorAll('[data-so-admin]').forEach((e) => { e.style.display = captura ? 'none' : ''; });
+  const cad = $('cadastro-local');
+  if (cad) cad.style.display = captura ? '' : 'none';
+  if (captura) {
+    const d = document.createElement('div'); d.className = 'cartao'; d.id = 'aviso-captura';
+    d.innerHTML = '<h2>Este computador só cadastra</h2><p class="sub">Você entrou como <b>' + esc(EU.papel)
+      + '</b>: aqui você cadastra as câmeras deste computador e acompanha o que está no ar. A qualidade, o tempo '
+      + 'de transmissão e o que transmitir são publicados pelo administrador, em terra — este computador busca sozinho.</p>';
+    document.querySelector('.casca').prepend(d);
+  }
+}
+const cadBtn = $('cad-enviar');
+if (cadBtn) cadBtn.onclick = async () => {
+  const rotulo = $('cad-rotulo').value.trim() || $('cad-dispositivo').value.trim();
+  const disp = $('cad-dispositivo').value.trim();
+  if (!disp) { $('cad-msg').textContent = 'informe o dispositivo local desta máquina'; return; }
+  const id = rotulo.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-|-$/g, '');
+  const corpo = { id, rotulo, fluxo_id: id, local: $('cad-local').value.trim() || 'bordo', ip: '', porta: '',
+                  protocolo: 'dshow', canal: '', alvo: '' };
+  const r = await fetch('/api/cameras', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
+  const j = await r.json().catch(() => ({}));
+  $('cad-msg').textContent = r.ok ? 'cadastrada: ' + (j.id || id) + ' — o admin já a vê para configurar'
+    : ('recusado: ' + (j.erro || ('HTTP ' + r.status)) + (j.campos_faltando ? ' (' + j.campos_faltando.join(', ') + ')' : ''));
+  if (r.ok) { $('cad-rotulo').value = ''; $('cad-dispositivo').value = ''; $('cad-local').value = ''; fluxos(); }
+};
+
 
 /* ---- envio ----
    Arquivo vai cru no corpo (sem multipart) com o nome nos parametros da URL; o servidor
@@ -275,9 +322,17 @@ $('f').addEventListener('submit', async (ev) => {
   else aviso(j.erro + ' → faltando: ' + (j.campos_faltando || []).join(', '), true);
 });
 
-function carregar() { envios(); fluxos(); }
-carregar(); projeto();
-setInterval(envios, 4000);
+function eCaptura() { return ['tecnico', 'captura'].includes(EU.papel); }
+function carregar() {
+  /* o usuario de captura nao ve' os envios: nao chama a rota (o 403 so' sujaria a tela) */
+  fluxos();
+  if (!eCaptura()) envios();
+}
+
+/* primeiro a role (a tela decide o que mostrar), depois os dados — nessa ordem, para nao
+   pedir a rota que o papel nao pode ver. */
+aplicarPapeis().then(() => { carregar(); projeto(); });
+setInterval(() => { if (!eCaptura()) envios(); }, 4000);
 setInterval(fluxos, 8000);
 setInterval(projeto, 30000);
 </script></body></html>

@@ -2,7 +2,8 @@
  *
  *   cliente                  -> /app    (acompanhamento das cameras)
  *   operador | admin         -> /admin  (console da operacao)
- *   tecnico  | captura       -> /       ("Enviar video" — a bancada de captura)
+ *   tecnico  | captura       -> /       (SO' cadastro da maquina de captura: camera e radar; a
+ *                                        qualidade/tempo vem publicada de terra — 0.8.0, Fase 3)
  *
  * O papel vem do SERVIDOR (`/api/eu` ou a resposta do `/api/entrar`); a interface nao decide
  * permissao, so' para onde ir. Quem autoriza a entrar e' o cadastro da instalacao: conta que nao
