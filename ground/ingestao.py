@@ -1061,18 +1061,23 @@ def _camera_em_uso(dispositivo: str | None, validade_s: int = 12) -> dict | None
 def maquina_de_captura() -> bool:
     """Esta maquina E' a de captura? (onde a entrada das cameras esta' plugada).
 
-    Prova, nessa ordem:
-      1) o BORDO se declara pelo ambiente (`LECSOR_EMBARCACAO`, que vem no `ambiente.json` do pacote de
-         captura e o lado terra nao tem) -> esta maquina captura;
-      2) esta maquina E' o lado terra (`LECSOR_LADO_TERRA_API` aponta para ela mesma) -> NAO captura;
-      3) existe entrada de video que o ffmpeg enxerga nesta maquina -> captura (maquina de bancada).
+    Regra, nesta ordem:
+      1) FATO FISICO: sem entrada de video que o ffmpeg enxergue NESTA maquina nao ha' captura possivel
+         -> nao e' a maquina de captura (a VPS do lado terra carrega o `ground/ambiente.json` do bordo
+         por engano e, sem esta regra, se declarava maquina de captura e tentava abrir dshow no Linux;
+         medido em 19/11/2026: `ingestoes` 186-191 com "Unknown input format: 'dshow'");
+      2) esta maquina E' o lado terra (`LECSOR_LADO_TERRA_API` aponta para ela mesma) -> nao captura;
+      3) sobrou: e' a maquina de captura (o bordo ou a bancada com a entrada plugada).
 
-    Sem nenhuma das provas a captura NAO roda aqui: quem manda ligar manda ORDEM para o bordo (medido
-    19/11/2026 — o lado terra tentou `-f dshow` no Linux e respondeu "Unknown input format: 'dshow'",
-    enchendo a tela de erro sem ninguem entender de onde vinha).
+    Sem ser a maquina de captura, quem manda ligar manda ORDEM para o bordo (a tela do lado terra so'
+    enfileira a ordem; quem abre a entrada e' o PC de bordo).
     """
-    if (os.environ.get("LECSOR_EMBARCACAO") or "").strip():
-        return True
+    try:
+        disp = listar_dispositivos()
+    except Exception:  # noqa: BLE001 — ambiente sem ffmpeg nao pode derrubar a checagem
+        return False
+    if not (disp.get("video") or disp.get("dispositivos")):
+        return False
     base_terra = (os.environ.get("LECSOR_LADO_TERRA_API") or "").strip()
     if base_terra:
         try:
@@ -1080,12 +1085,9 @@ def maquina_de_captura() -> bool:
 
             if eh_esta_maquina(base_terra):
                 return False
-        except Exception:  # noqa: BLE001 — erro aqui nao pode derrubar a checagem
+        except Exception:  # noqa: BLE001
             pass
-    try:
-        return bool(listar_dispositivos().get("video"))
-    except Exception:  # noqa: BLE001 — ambiente sem ffmpeg nao pode derrubar a checagem
-        return False
+    return True
 
 
 def prontidao_das_cameras() -> dict:

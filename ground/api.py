@@ -2352,6 +2352,13 @@ class Handler(SimpleHTTPRequestHandler):
             # Medido em 19/11/2026: sem isso o lado terra tentava `-f dshow` no Linux e a tela respondia
             # "Unknown input format: 'dshow'" / codigo 234, sem ninguem entender de onde vinha.
             if not ing_maquina_de_captura():
+                if self._local():
+                    # o pedido nasceu NESTA maquina: nao ha' para onde mandar ordem (criar ordem aqui
+                    # seria um pedido que ninguem escuta) — e a captura NAO acontece aqui. Diga a verdade.
+                    return self._json(422, {
+                        "erro": ("esta maquina nao e' a de captura: nao ha' entrada de video aqui — "
+                                 "a camera liga no PC de bordo (confira o cabo/USB do split)"),
+                        "maquina_de_captura": False}, {"Cache-Control": "no-store"})
                 try:
                     with conexao() as c:
                         cam = c.execute("SELECT id, embarcacao_id, fluxo_id, rotulo FROM cameras WHERE id=?",

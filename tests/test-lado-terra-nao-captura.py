@@ -143,23 +143,42 @@ def ffmpegs() -> int:
         return 0
 
 
+def ip_lan() -> str:
+    """IP desta maquina na rede (o que o NAVEGADOR de fora usa): uma requisicao por ele NAO e' 'local'.
+
+    O lado terra so' cria ordem para pedido de FORA da maquina (pedido local no lado terra viraria ordem
+    que ninguem escuta). Por isso a prova do clique remoto precisa falar pelo IP da rede, nao pelo 127.0.0.1.
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
+
+
 def main() -> int:
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="lecsor-lado-terra-"))
     terra_db, bordo_db = tmp / "terra.db", tmp / "bordo.db"
     p_terra = porta_livre()
     p_bordo = porta_livre({p_terra})
+    lan = ip_lan()
     procs = []
     try:
         base_terra_cfg = f"http://127.0.0.1:{p_terra}"
-        proc_t, base_terra, _ = sobe_api(terra_db, p_terra,
-                                         {"LECSOR_LADO_TERRA_API": base_terra_cfg,   # o lado terra se reconhece
-                                          "LECSOR_TOKEN_INGESTAO": TOKEN})            # e NAO tem embarcacao
+        proc_t, base_terra_local, _ = sobe_api(terra_db, p_terra,
+                                               {"LECSOR_LADO_TERRA_API": base_terra_cfg,   # o lado terra se reconhece
+                                                "LECSOR_BIND": "0.0.0.0",                 # como o servico da VPS
+                                                "LECSOR_TOKEN_INGESTAO": TOKEN})           # e NAO tem embarcacao
         procs.append(proc_t)
         proc_b, base_bordo, _ = sobe_api(bordo_db, p_bordo,
                                          {"LECSOR_EMBARCACAO": "bancada",
                                           "LECSOR_LADO_TERRA_API": base_terra_cfg,
                                           "LECSOR_TOKEN_INGESTAO": TOKEN})
         procs.append(proc_b)
+        # o clique do operador chega de FORA da maquina do lado terra (como no navegador de verdade)
+        base_terra = f"http://{lan}:{p_terra}" if lan != "127.0.0.1" else base_terra_local
+        print(f"     (para o log) lado terra em {base_terra_local} (clique simulado por {base_terra}) / bordo em {base_bordo}")
         semear(terra_db)
         semear(bordo_db)
         con = sqlite3.connect(terra_db)
@@ -209,8 +228,17 @@ def main() -> int:
             "SELECT COUNT(*) FROM auditoria_acesso WHERE acao='camera_ligada'").fetchone()[0]
         exigir(mentiu == 0, f"nada de 'camera_ligada' no lado terra (achou {mentiu})")
 
+        # --- 4b) pedido LOCAL no lado terra (sem navegador de fora): NAO vira ordem (ordem local nao
+        #     seria escutada por ninguem) e diz a verdade — e' o pedido do proprio agente/da bancada.
+        n_ordens_antes = um(terra_db, "SELECT COUNT(*) FROM ordens_do_bordo")[0]
+        st, jl = pedir("POST", base_terra_local + "/api/cameras/ligar", {"camera_id": "cam-01"}, cookie=tok)
+        n_ordens_depois = um(terra_db, "SELECT COUNT(*) FROM ordens_do_bordo")[0]
+        exigir(st == 422 and n_ordens_depois == n_ordens_antes and "nao e' a de captura" in str(jl.get("erro") or ""),
+               f"pedido local no lado terra nao cria ordem e explica ({st}, ordens {n_ordens_antes}->{n_ordens_depois}, "
+               f"{str(jl.get('erro'))[:80]!r})")
+
         # --- 5) no BORDO o clique continua sendo captura local
-        print(f"     (para o log) portas: terra={p_terra} bordo={p_bordo}")
+        print(f"     (para o log) bordo em {base_bordo}")
         st, jb = pedir("POST", base_bordo + "/api/cameras/ligar", {"camera_id": "cam-01"}, cookie=tok)
         ordem_no_bordo = um(bordo_db, "SELECT COUNT(*) FROM ordens_do_bordo")[0]
         ordem_no_terra = um(terra_db, "SELECT COUNT(*) FROM ordens_do_bordo")[0]
