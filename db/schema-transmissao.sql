@@ -154,7 +154,28 @@ CREATE INDEX IF NOT EXISTS ix_gravacoes_do_cliente ON gravacoes(usuario_email, a
 -- Esta tabela e' a PONTE: no Supabase a embarcacao e' uuid, aqui e' texto (`'bancada'`). Sem a ponte o
 -- upsert da camera falharia por chave estrangeira (a camera aponta para a embarcacao).
 -- ---------------------------------------------------------------------------------------------
--- CONFIGURACAO PUBLICADA POR TERRA (dono, 19/11/2026 — aprovado 0.8.0). O computador de captura nao
+-- SAUDE DO COMPUTADOR DE CAPTURA (dono, 19/11/2026 — aprovado 0.8.0, Fase 5). O bordo ENVIA o retrato
+-- dele (mesmo caminho de saida de sempre: nenhuma porta aberta no bordo) e terra guarda a ULTIMA e a SERIE.
+-- Nada de segredo no retrato. Retencao de 30 dias, aplicada a cada gravacao; o corte fica registrado para
+-- que "nada sumir sem explicacao" continue valendo.
+CREATE TABLE IF NOT EXISTS saude_bordo (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  embarcacao_id TEXT NOT NULL,
+  recebido_em   TEXT NOT NULL,
+  maquina       TEXT DEFAULT '',
+  versao_app    TEXT DEFAULT '',
+  estado        TEXT DEFAULT '',            -- pior sinal do retrato: ok | atencao | problema
+  retrato       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_saude_bordo_emb ON saude_bordo(embarcacao_id, recebido_em DESC);
+CREATE TABLE IF NOT EXISTS saude_bordo_corte (
+  cortado_em    TEXT PRIMARY KEY,
+  quantos       INTEGER NOT NULL DEFAULT 0,
+  regra         TEXT DEFAULT ''
+);
+
+-- ---------------------------------------------------------------------------------------------
+-- CONFIGURACAO PUBLICADA POR TERRA (dono, 19/11/2026 — aprovado 0.8.0).
 -- recebe conexao: ele OLHA. A `desejo_camera` ja' dizia liga/para (estado transitorio); a configuracao
 -- e' DECLARACAO (muda raramente) e vive aqui: chave->valor, com `versao` que sobe a cada publicacao —
 -- o bordo age SO' na diferenca e CONFIRMA o que aplicou (config_aplicada_bordo).

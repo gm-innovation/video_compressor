@@ -74,10 +74,14 @@ def main() -> int:
     env["LECSOR_BIND"] = "127.0.0.1"
     env["LECSOR_TOKEN_INGESTAO"] = TOKEN
     env["LECSOR_SENHA_DEMO"] = SENHA
+    # Esta maquina E' o lado terra, e o `ambiente.json` real do lado terra aponta para ele mesmo
+    # (medido na VPS: `LECSOR_LADO_TERRA_API=http://187.127.60.250:8085`). Sem isto a bancada ficava
+    # diferente da producao e o cadastro local daqui se dizia "nao publicado" — falso e assustador.
     env["PYTHONIOENCODING"] = "utf-8"
     # sem Supabase: o login aqui e' o hash local (bancada sem rede), que e' o que queremos provar
     for k in ("LECSOR_SUPABASE_URL", "LECSOR_SUPABASE_ANON_KEY", "LECSOR_SUPABASE_SERVICE_KEY"):
         env.pop(k, None)
+    env["LECSOR_LADO_TERRA_API"] = f"http://127.0.0.1:{porta}"
     log = (tmp / "api.log").open("wb")
     proc = subprocess.Popen([sys.executable, str(RAIZ / "ground" / "api.py"), str(porta), "--semear-demo"],
                             cwd=str(RAIZ), env=env, stdout=log, stderr=subprocess.STDOUT)
@@ -173,6 +177,10 @@ def main() -> int:
             exigir(s == 201 and (j.get("lado_terra") or {}).get("ok"),
                    "cadastrar cam-01 no PC de captura publica no lado terra (http %s, lado_terra=%s)"
                    % (s, (j.get("lado_terra") or {}).get("motivo") or (j.get("lado_terra") or {}).get("ok")))
+            # PENDENCIA CONHECIDA (medida aqui, 19/11/2026): com duas maquinas de verdade, `POST
+            # /api/cameras` e' encaminhado para terra e o BORDO fica sem a camera cadastrada; ligar a
+            # rota como local esbarra em `/api/entrar` (a sessao do usuario de captura tambem mora em
+            # terra). O conserto e' de desenho e esta' registrado no plano da 0.8.0 para aprovacao.
 
             s, j = cliente.pedir("/api/cameras")
             cam01 = next((c for c in j.get("cameras", []) if c["id"] == "cam-01"), None)

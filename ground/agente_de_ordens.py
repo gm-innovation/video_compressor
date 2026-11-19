@@ -530,7 +530,68 @@ def intervalo_da_flag() -> float:
     return min(30.0, max(0.5, v))
 
 
+# ---------------------------------------------------------------------------------------------
+# SAUDE DO BORDO (0.8.0, Fase 5). O bordo CONTA como ele esta' (mesmo caminho de saida de sempre) e
+# escreve o proprio "estive aqui" — e' a idade desse arquivo que o retrato usa para dizer se o laco
+# esta' vivo. Terra so' guarda e classifica.
+# ---------------------------------------------------------------------------------------------
+ULTIMA_SAUDE = 0.0
+RODADAS = 0
+
+
+def intervalo_da_saude() -> float:
+    """De quanto em quanto tempo o bordo reporta a saude (env `LECSOR_ESPERA_DA_SAUDE`, padrao 60 s)."""
+    try:
+        v = float(os.environ.get("LECSOR_ESPERA_DA_SAUDE") or 60.0)
+    except Exception:  # noqa: BLE001
+        v = 60.0
+    return min(3600.0, max(10.0, v))
+
+
+def caminho_do_vivo() -> Path:
+    trocado = (os.environ.get("LECSOR_AGENTE_ESTADO") or "").strip()
+    return Path(trocado) if trocado else (LOG_DIR.parent / "agente-vivo.json")
+
+
+def marcar_vivo() -> None:
+    global RODADAS
+    RODADAS += 1
+    try:
+        caminho_do_vivo().parent.mkdir(parents=True, exist_ok=True)
+        caminho_do_vivo().write_text(json.dumps({"em": time.strftime("%Y-%m-%dT%H:%M:%S"), "rodadas": RODADAS}),
+                                     encoding="utf-8")
+    except Exception:  # noqa: BLE001  (nao poder escrever aqui nao pode derrubar a rodada)
+        pass
+
+
+def retrato_de_saude() -> dict:
+    """O retrato montado NO BORDO. Sem segredo nenhum; import tardio para o agente nao pesar no boot."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import saude_do_bordo
+        return saude_do_bordo.retrato()
+    except Exception as e:  # noqa: BLE001
+        return {"gerado_em": time.strftime("%Y-%m-%dT%H:%M:%S"), "nao_medido": {"retrato": f"{type(e).__name__}: {e}"}}
+
+
+def enviar_saude(base: str, token: str, emb: str) -> dict:
+    """Manda o retrato para o admin. Falha aqui NAO derruba nada: a captura continua."""
+    global ULTIMA_SAUDE
+    ULTIMA_SAUDE = time.time()
+    retrato = retrato_de_saude()
+    try:
+        s, r = _http("POST", f"{base}/api/saude-do-bordo", {"embarcacao_id": emb, "retrato": retrato},
+                     token=token, timeout=60)
+        if s != 200:
+            _log(f"aviso: o lado terra recusou a saude do bordo ({s} {r.get('erro')})")
+        return r if isinstance(r, dict) else {}
+    except Exception as e:  # noqa: BLE001
+        _log(f"aviso: nao consegui enviar a saude do bordo ({type(e).__name__}: {e})")
+        return {}
+
+
 def uma_rodada(base: str, local: str, token: str, emb: str, espera: float) -> int:
+    marcar_vivo()
     # A FLAG VEM PRIMEIRO (dono, 19/11/2026): o computador de captura nao recebe conexao nenhuma — ele
     # olha para terra. A fila de ordens continua sendo atendida quando existir (lado terra mais velho).
     flag = ler_flag(base, token, emb)
@@ -540,6 +601,8 @@ def uma_rodada(base: str, local: str, token: str, emb: str, espera: float) -> in
         publicar_catalogo(base, token, emb)
         if time.time() - ULTIMA_CONFIG >= intervalo_da_config():
             aplicar_config(ler_config(base, token, emb), local, base, token, emb)
+        if time.time() - ULTIMA_SAUDE >= intervalo_da_saude():
+            enviar_saude(base, token, emb)
         vigiar_teto(local)
         time.sleep(intervalo_da_flag())   # olhar de novo em instantes, sem martelar o lado terra
         return 0
@@ -549,6 +612,8 @@ def uma_rodada(base: str, local: str, token: str, emb: str, espera: float) -> in
         _log(f"aviso: o lado terra recusou a pergunta das ordens ({s} {j.get('erro')})")
         return 0
     ordens = j.get("ordens") or []
+    if time.time() - ULTIMA_SAUDE >= intervalo_da_saude():
+        enviar_saude(base, token, emb)
     if ordens:
         _log(f"recebi {len(ordens)} ordem(ns) do lado terra")
     for ordem in ordens:

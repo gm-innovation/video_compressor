@@ -253,6 +253,7 @@ const SUBS = {
   marcas: ['Marcas e zonas', 'A linha de contagem e as zonas de risco que o agente de bordo usa, desenhadas aqui.'],
   envios: ['Enviar vídeo', 'Escolhe a fonte (arquivo, link ou câmera desta máquina) e a qualidade por câmera: o sistema codifica, publica em SRT e mede o corte de banda.'],
   saude: ['Saúde do sistema', 'Estado da API, do lado terra e das contagens do banco.'],
+  saude_bordo: ['Saúde do bordo', 'O computador de captura reporta sozinho: CPU, memória, disco (e o anel do HD do radar), ffmpeg, captura viva, mediamtx, erros. Semáforo com o limiar e o que fazer.'],
   config_bordo: ['Configuração do bordo', 'Você publica aqui e o computador de captura busca: alvo de banda por câmera e teto de tempo da embarcação. O bordo confirma o que aplicou — ou o motivo da recusa.']
 };
 
@@ -284,7 +285,8 @@ function desenhar(forcado) {
   const despacho = { painel: telaPainel, fases: telaFases, medicoes: telaMedicoes, decisoes: telaDecisoes,
     evidencias: telaEvidencias, documentos: telaDocumentos, clientes: telaClientes, embarcacoes: telaEmbarcacoes,
     cameras: telaCameras, usuarios: telaUsuarios, tempo: telaTempoReal, producao: telaProducao, analises: telaAnalises, marcas: telaMarcas, envios: telaEnvios,
-    auditoria: telaAuditoria, saude: telaSaude, config_bordo: telaConfigDoBordo };
+    auditoria: telaAuditoria, saude: telaSaude, config_bordo: telaConfigDoBordo,
+    saude_bordo: telaSaudeDoBordo };
   (despacho[A.tela] || telaPainel)(tela);
 }
 
@@ -1913,6 +1915,49 @@ async function telaConfigDoBordo(t) {
     { rotulo: 'Valor', campo: 'desejada' }, { rotulo: 'Publicado', campo: 'versao' },
     { rotulo: 'Quando', campo: 'quando' }, { rotulo: 'No bordo', campo: 'estado' }], linhas,
     'nada publicado para esta embarcação ainda'));
+}
+
+
+/* --------------------------------------------------- saude do bordo (0.8.0, Fase 5)
+   O bordo ENVIA o retrato; terra guarda e classifica. A tela nao sabe regra nenhuma: mostra o estado e o
+   "o que fazer" que vieram prontos — e trata o SILENCIO como problema, nunca como "ok". */
+const CORES_DE_SAUDE = { ok: '#22c55e', atencao: '#eab308', problema: '#ef4444' };
+
+function seloDeSaude(estado) {
+  const s = document.createElement('span');
+  s.className = 'pill';
+  s.textContent = ({ ok: 'tudo ok', atencao: 'atenção', problema: 'problema' })[estado] || estado;
+  s.style.background = (CORES_DE_SAUDE[estado] || '#64748b') + '22';
+  s.style.borderColor = CORES_DE_SAUDE[estado] || '#64748b';
+  s.style.color = CORES_DE_SAUDE[estado] || '#94a3b8';
+  return s;
+}
+
+async function telaSaudeDoBordo(t) {
+  const r = await api('/api/saude-do-bordo');
+  if (!r.ok) { t.appendChild(recado('não consegui ler a saúde do bordo: ' + JSON.stringify(r.corpo), true)); return; }
+  const lista = (r.corpo && r.corpo.embarcacoes) || [];
+  if (!lista.length) { t.appendChild(recado('nenhuma embarcação cadastrada ainda', true)); return; }
+  lista.forEach((e) => {
+    const atual = e.atual || {};
+    const caixa = document.createElement('div'); caixa.className = 'caixa-form';
+    const h = document.createElement('h2');
+    h.appendChild(document.createTextNode((e.nome || e.embarcacao_id) + '  '));
+    h.appendChild(seloDeSaude(atual.estado || 'problema'));
+    caixa.appendChild(h);
+    const sub = document.createElement('p'); sub.className = 'sub';
+    sub.textContent = atual.recebido_em
+      ? ('último retrato: ' + atual.recebido_em + (atual.maquina ? ' · máquina ' + atual.maquina : '')
+         + (atual.versao_app ? ' · versão ' + atual.versao_app : ''))
+      : 'este computador de captura nunca reportou';
+    caixa.appendChild(sub);
+    caixa.appendChild(tabela([{ rotulo: 'Sinal', campo: 'sinal' },
+      { rotulo: 'Estado', valor: (l) => seloDeSaude(l.estado) },
+      { rotulo: 'Valor', campo: 'valor' }, { rotulo: 'Limiar', campo: 'limiar' },
+      { rotulo: 'O que fazer', campo: 'o_que_fazer' }], atual.sinais || [], 'sem sinais'));
+    caixa.appendChild(botao('Atualizar agora', 'mini', () => { desenhar(true); }));
+    t.appendChild(caixa);
+  });
 }
 
 /* --------------------------------------------------------- interface */

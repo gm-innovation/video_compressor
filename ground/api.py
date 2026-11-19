@@ -588,6 +588,209 @@ def guardar_config_aplicada(embarcacao_id: str, versao, aplicadas: list, recusad
     return {"ok": True, "gravadas": gravadas, "versao": v}
 
 
+# ---------------------------------------------------------------------------------------------
+# SAUDE DO BORDO NO PAINEL (0.8.0, Fase 5). O bordo ENVIA; terra guarda e classifica. Cada sinal tem
+# LIMIAR DECLARADO e o "o que fazer" — o painel nao precisa saber regra nenhuma e o teste prova a regra
+# pelo mesmo caminho que a tela ve. Sem dado recente NAO e' "ok": bordo mudo e' PROBLEMA (silencio nao
+# pode parecer saude).
+# ---------------------------------------------------------------------------------------------
+LIMIARES_DE_SAUDE = {
+    "cpu_pct": {"atencao": 75.0, "problema": 90.0, "unidade": "%"},
+    "memoria_pct": {"atencao": 80.0, "problema": 92.0, "unidade": "%"},
+    "disco_pct": {"atencao": 88.0, "problema": 95.0, "unidade": "% usado"},
+    "mudo_s": {"atencao": 180.0, "problema": 600.0, "unidade": "s sem reportar"},
+    "erros_24h": {"atencao": 20.0, "problema": 100.0, "unidade": "erros nas ultimas 24 h"},
+}
+
+
+def _sinal(nome: str, valor, estado: str, o_que_fazer: str) -> dict:
+    lim = LIMIARES_DE_SAUDE.get(nome, {})
+    regra = (f"atenção a partir de {lim['atencao']:g} / problema a partir de {lim['problema']:g} "
+             f"{lim.get('unidade', '')}".strip() if lim else "sinal binário: precisa estar ativo")
+    return {"sinal": nome, "valor": valor, "estado": estado, "limiar": regra, "o_que_fazer": o_que_fazer}
+
+
+def classificar_saude(retrato: dict | None, idade_s: float | None) -> dict:
+    """Semáforo por sinal: verde=ok, amarelo=atencao, vermelho=problema. O pior manda no retrato.
+
+    `idade_s` e' a idade do ULTIMO retrato recebido: sem dado fresco a resposta e' "problema" — o
+    silencio do computador de captura e' exatamente o que o admin precisa ver.
+    """
+    sinais: list[dict] = []
+    if not retrato:
+        sinais.append(_sinal("mudo_s", None, "problema",
+                             "este computador de captura nunca reportou: verifique se o app está aberto "
+                             "e se ele alcança o lado terra (rede/VPN)"))
+        return {"estado": "problema", "sinais": sinais, "pior": "problema"}
+
+    def numero(*caminho, padrao=None):
+        atual = retrato
+        for p in caminho:
+            if not isinstance(atual, dict):
+                return padrao
+            atual = atual.get(p)
+        return atual if isinstance(atual, (int, float)) else padrao
+
+    # 1) o bordo esta' reportando?
+    if idade_s is None:
+        sinais.append(_sinal("mudo_s", None, "problema", "sem hora de recebimento registrada"))
+    else:
+        lim = LIMIARES_DE_SAUDE["mudo_s"]
+        estado = "ok" if idade_s < lim["atencao"] else ("atencao" if idade_s < lim["problema"] else "problema")
+        sinais.append(_sinal("mudo_s", round(idade_s), estado,
+                             "ok" if estado == "ok" else
+                             "o computador de captura parou de reportar: confira o app aberto, a energia e a "
+                             "conexão; nada de sair da sala sem olhar isso"))
+
+    # 2) CPU e memoria (quando o bordo conseguiu medir)
+    for nome, caminho, fazer in (("cpu_pct", ("cpu_pct",), "CPU no limite: reduza o alvo de banda de alguma "
+                                                      "câmera na tela Configuração do bordo ou feche programas"),
+                                 ("memoria_pct", ("memoria_pct",), "memória cheia: reinicie o app de captura "
+                                                                   "no fim do dia de operação")):
+        v = numero(*caminho)
+        if v is None:
+            sinais.append(_sinal(nome, None, "atencao",
+                                 "não medido pelo bordo (instalar psutil no computador de captura)"))
+            continue
+        lim = LIMIARES_DE_SAUDE[nome]
+        estado = "ok" if v < lim["atencao"] else ("atencao" if v < lim["problema"] else "problema")
+        sinais.append(_sinal(nome, round(float(v), 1), estado, "ok" if estado == "ok" else fazer))
+
+    # 3) disco (por volume; o HD do radar mostra o anel)
+    for d in (retrato.get("discos") or []):
+        nome = str(d.get("nome") or "disco")
+        pct = d.get("usado_pct")
+        if pct is None:
+            sinais.append(_sinal("disco_pct", None, "atencao",
+                                 f"{nome}: não consegui medir ({d.get('erro') or 'sem número'})"))
+            continue
+        lim = LIMIARES_DE_SAUDE["disco_pct"]
+        estado = "ok" if pct < lim["atencao"] else ("atencao" if pct < lim["problema"] else "problema")
+        anel = f" · anel: {d.get('blocos')} bloco(s), mais antigo em {d.get('mais_antigo') or '—'}" if "blocos" in d else ""
+        sinais.append(_sinal("disco_pct", pct, estado,
+                             f"{nome}: livre {d.get('livre_gb')} GB{anel}" if estado == "ok" else
+                             f"{nome} com {pct}% usado ({d.get('livre_gb')} GB livres): o anel começa a gravar "
+                             f"por cima do mais antigo — libere espaço{anel}"))
+
+    # 4) captura viva: ffmpeg presente e o laco do agente vivo
+    if not (retrato.get("ffmpeg") or {}).get("presente"):
+        sinais.append(_sinal("ffmpeg", False, "problema",
+                             "o ffmpeg não foi encontrado no computador de captura: sem ele não há captura — "
+                             "reinstale o app"))
+    else:
+        sinais.append(_sinal("ffmpeg", True, "ok",
+                             (retrato.get("ffmpeg") or {}).get("versao", "")[:60]))
+    ag = retrato.get("agente") or {}
+    if ag.get("laco_vivo"):
+        sinais.append(_sinal("agente", True, "ok", f"última rodada há {ag.get('idade_s')} s"))
+    else:
+        sinais.append(_sinal("agente", False, "problema",
+                             f"o laço de captura não está rodando ({ag.get('motivo') or ag.get('erro') or 'sem sinal'}"
+                             f"): abra o app de captura nesta máquina"))
+    if "producao" in retrato.get("nao_medido", {}):
+        pass
+
+    # 5) mediamtx (o que entrega o vídeo para terra)
+    mt = retrato.get("mediamtx") or {}
+    sinais.append(_sinal("mediamtx", bool(mt.get("ativo")), "ok" if mt.get("ativo") else "atencao",
+                         f"{mt.get('caminhos', 0)} caminho(s) publicado(s)" if mt.get("ativo") else
+                         "o mediamtx não respondeu: sem ele o vídeo não sai do bordo — reinicie o serviço"))
+    if "mediamtx" in (retrato.get("nao_medido") or {}):
+        pass
+
+    # 6) o trabalho do bordo: erros de 24 h e pedidos pendentes
+    b = retrato.get("banco") or {}
+    erros = b.get("erros_24h")
+    if erros is None:
+        sinais.append(_sinal("erros_24h", None, "atencao", "não consegui ler o banco do bordo"))
+    else:
+        lim = LIMIARES_DE_SAUDE["erros_24h"]
+        estado = "ok" if erros < lim["atencao"] else ("atencao" if erros < lim["problema"] else "problema")
+        sinais.append(_sinal("erros_24h", erros, estado,
+                             "sem erros nas últimas 24 h" if estado == "ok" else
+                             f"{erros} erro(s) de envio nas últimas 24 h: abra o app de captura e veja quais "
+                             f"câmeras falharam"))
+    pend = b.get("pedidos_pendentes")
+    if pend:
+        sinais.append(_sinal("pedidos", pend, "atencao",
+                             f"{pend} pedido(s) de trecho do HD ainda não enviados: o bordo envia sozinho na "
+                             f"próxima rodada — se persistir, veja o disco"))
+
+    ordem = {"ok": 0, "atencao": 1, "problema": 2}
+    pior = max((s["estado"] for s in sinais), key=lambda e: ordem.get(e, 0), default="ok")
+    return {"estado": pior, "pior": pior, "sinais": sinais}
+
+
+def receber_saude_do_bordo(embarcacao_id: str, retrato: dict) -> dict:
+    """Grava o retrato do bordo (ultima + serie) e aplica a retencao de 30 dias."""
+    emb = (embarcacao_id or "").strip()
+    if not emb:
+        return {"erro": "informe a embarcacao"}
+    if not isinstance(retrato, dict) or not retrato:
+        return {"erro": "retrato vazio"}
+    # nada de segredo: o retrato sobe como veio, mas nunca com token/senha (defesa em profundidade)
+    sujo = [k for k in ("token", "senha", "password", "key", "authorization") if k in retrato]
+    for k in sujo:
+        retrato.pop(k, None)
+    # o estado que fica gravado e' o MESMO que o painel mostra: classificacao do proprio terra, feita
+    # agora (acabou de chegar, logo nao esta' mudo). Assim a serie tem semaforo para comparar depois.
+    estado = classificar_saude(retrato, 0.0).get("estado", "")
+    agora = em_iso()
+    with conexao() as c:
+        ant = c.execute("SELECT estado FROM saude_bordo WHERE embarcacao_id=? ORDER BY id DESC LIMIT 1",
+                        (emb,)).fetchone()
+        anterior = str(ant[0] or "") if ant else ""
+        c.execute("""INSERT INTO saude_bordo (embarcacao_id,recebido_em,maquina,versao_app,estado,retrato)
+                     VALUES (?,?,?,?,?,?)""",
+                  (emb, agora, str(retrato.get("maquina") or ""), str(retrato.get("versao_app") or ""),
+                   estado, json.dumps(retrato, ensure_ascii=False)))
+        # retencao: a serie guarda 30 dias; o corte fica registrado (nada some sem explicacao)
+        corte = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30)).isoformat(timespec="seconds")
+        cur = c.execute("DELETE FROM saude_bordo WHERE recebido_em < ?", (corte,))
+        if cur.rowcount:
+            c.execute("INSERT OR REPLACE INTO saude_bordo_corte (cortado_em,quantos,regra) VALUES (?,?,?)",
+                      (agora, int(cur.rowcount), "serie de saude: 30 dias"))
+    if anterior != estado:
+        # P2: a trilha guarda a VIRADA (ficou vermelho / voltou ao normal), que e' o que o admin precisa
+        # acompanhar depois — o numero cru ele ve' na hora, a historia ele so' ve' aqui.
+        auditar(None, "saude_do_bordo_mudou", f"{emb}: {anterior or 'sem leitura'} -> {estado}",
+                "computador de captura")
+    return {"ok": True, "embarcacao_id": emb, "recebido_em": agora, "estado": estado, "estado_anterior": anterior}
+
+
+def saude_de(embarcacao_id: str, pontos: int = 60) -> dict:
+    """O que o painel mostra: a ULTIMA saude (classificada) e a serie recente, por embarcacao."""
+    emb = (embarcacao_id or "").strip()
+    with conexao() as c:
+        linhas = [dict(x) for x in c.execute(
+            """SELECT recebido_em,maquina,versao_app,retrato FROM saude_bordo
+               WHERE embarcacao_id=? ORDER BY recebido_em DESC LIMIT ?""", (emb, max(1, int(pontos)))).fetchall()]
+        cortes = [dict(x) for x in c.execute(
+            "SELECT cortado_em,quantos,regra FROM saude_bordo_corte ORDER BY cortado_em DESC LIMIT 5").fetchall()]
+    serie = []
+    for i, linha in enumerate(linhas):
+        try:
+            retrato = json.loads(linha["retrato"] or "{}")
+        except Exception:  # noqa: BLE001
+            retrato = {}
+        idade = None
+        if i == 0 and linha["recebido_em"]:
+            try:
+                quando = dt.datetime.fromisoformat(linha["recebido_em"])
+                if quando.tzinfo is None:
+                    quando = quando.replace(tzinfo=dt.timezone.utc)
+                idade = max(0.0, (dt.datetime.now(dt.timezone.utc) - quando).total_seconds())
+            except Exception:  # noqa: BLE001
+                idade = None
+        if i == 0:
+            atual = classificar_saude(retrato, idade)
+            atual.update({"recebido_em": linha["recebido_em"], "maquina": linha["maquina"],
+                          "versao_app": linha["versao_app"], "retrato": retrato})
+        serie.append({"recebido_em": linha["recebido_em"], "maquina": linha["maquina"]})
+    return {"embarcacao_id": emb, "atual": (atual if linhas else classificar_saude(None, None)),
+            "serie": serie, "cortes": cortes}
+
+
 def guardar_trecho_do_hd(pid: str, caminho: Path, bytes_recebidos: int, motivo: str = "") -> dict:
     """O bordo enviou o trecho: marca o pedido como pronto (o cliente baixa) ou registra o erro."""
     with conexao() as c:
@@ -2115,6 +2318,25 @@ class Handler(SimpleHTTPRequestHandler):
                                   {"Cache-Control": "no-store"})
             except Exception as e:  # noqa: BLE001
                 return self._json(500, {"erro": f"nao consegui ler a configuracao ({type(e).__name__}: {e})"})
+        if rota == "/api/saude-do-bordo":
+            # A LEITURA da saude do bordo (o bordo so' ESCREVE, no ramo de escrita). Quem ve' e' a operacao;
+            # `_local()` NAO entra: aqui nao ha' bordo pedindo, e' dado de operacao.
+            # Duas portas, de proposito: a operacao (admin) ve' pelo painel; e o PROPRIO computador de
+            # captura le' a sua saude pela rota local (o app a bordo se mostra). Cliente nao entra por
+            # nenhuma delas.
+            if u is None and not self._local():
+                return self._json(401, {"erro": "entre para ver a saude do bordo"})
+            if u is not None and not self._pode_operar(u):
+                return self._json(403, {"erro": "so a operacao e o administrador veem a saude do bordo"})
+            q = parse_qs(urlparse(self.path).query)
+            emb = (q.get("embarcacao_id", [""])[0] or "").strip()
+            if emb:
+                return self._json(200, saude_de(emb), {"Cache-Control": "no-store"})
+            with conexao() as c:
+                embs = [dict(x) for x in c.execute("SELECT id,nome FROM embarcacoes ORDER BY nome").fetchall()]
+            return self._json(200, {"embarcacoes": [
+                dict(saude_de(e["id"], pontos=1), nome=e["nome"]) for e in embs]},
+                {"Cache-Control": "no-store"})
         if rota == "/api/config":
             # A tela do admin publica e ve a configuracao (desejada x aplicada) por embarcacao.
             q = parse_qs(urlparse(self.path).query)
@@ -2443,6 +2665,13 @@ class Handler(SimpleHTTPRequestHandler):
         rota = urlparse(self.path).path
         # POST de captura (ingestao, compressao, medicao, trecho) e' desta maquina; o resto
         # (entrar, cadastro, usuarios, gravacoes, transmissao pedida) e' do lado terra.
+        #
+        # ACHADO (19/11/2026, medido em bancada com duas APIs): o cadastro feito pelo usuario de captura
+        # (`POST /api/cameras`) e' ENCAMINHADO para terra, e o bordo fica SEM a camera que ele acabou de
+        # cadastrar. Ligar isto como rota local NAO resolve sozinho: `/api/entrar` tambem vai para terra,
+        # entao a sessao do usuario de captura nao existe no banco do bordo e a rota local responde 401.
+        # O conserto e' de desenho (autenticacao/sessao local no bordo + espelho dos usuarios que podem
+        # capturar) e esta' registrado no plano da 0.8.0 como pendencia para aprovacao do dono.
         if self._base_do_lado_terra() and not eh_rota_de_captura(rota):
             return self._encaminhar("POST")
         u = self._sessao()
@@ -3616,6 +3845,23 @@ class Handler(SimpleHTTPRequestHandler):
             if not r.get("ok"):
                 return self._json(422, r)
             return self._json(200, r)
+        if rota == "/api/saude-do-bordo":
+            # O BORDO ENVIA a propria saude (mesmo caminho de saida de sempre — nada de porta aberta no
+            # bordo). Quem LE e' a operacao: e' o painel "como esta' o computador de captura".
+            # (so' POST chega aqui: e' o bordo entregando o retrato)
+            if not self._token_do_bordo():
+                return self._json(401, {"erro": "token de ingestao invalido"})
+            d = self._corpo()
+            emb = str(d.get("embarcacao_id") or os.environ.get("LECSOR_EMBARCACAO_BORDO") or "").strip()
+            retrato = d.get("retrato") if isinstance(d.get("retrato"), dict) else {
+                k: v for k, v in d.items() if k not in ("embarcacao_id", "retrato")}
+            r = receber_saude_do_bordo(emb, retrato)
+            if r.get("erro"):
+                return self._json(422, r)
+            maq = str(retrato.get("maquina") or "")
+            ver = str(retrato.get("versao_app") or "")
+            auditar(None, "saude_do_bordo_recebida", f"{emb} {maq} v{ver}", self.client_address[0])
+            return self._json(200, r, {"Cache-Control": "no-store"})
         if rota == "/api/estado-real":
             if not self._token_do_bordo():
                 return self._json(401, {"erro": "token de ingestao invalido"})

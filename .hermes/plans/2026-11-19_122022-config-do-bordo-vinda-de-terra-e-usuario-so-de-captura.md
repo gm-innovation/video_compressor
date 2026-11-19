@@ -24,7 +24,21 @@ embarcação, e "nada publicado"/"aguardando o bordo"/"RECUSADO: motivo" por cha
 `docs/matriz-de-permissoes-0.8.0.md` declara a fronteira. Provado por `tests/test-papeis-de-config.py`
 (**20/20, rc=0**, matriz por HTTP) e `tests/e2e-tela-do-captura-so-cadastra.py` (**24/24, rc=0**, Chromium:
 técnico só cadastra e o cadastro chega ao banco; admin tem a tela nova; nenhum erro de javascript).
-Fases 4–6 pendentes.
+**Fase 4 implementada e provada** — `transmitir` passou a ser aplicado pelo agente (`_aplicar_transmitir()`,
+ligando/desligando pelo mesmo caminho local da flag, com guarda de estado, confirmação a terra e motivo
+quando não dá), e `ground/ingestao.py` passou a usar `_dispositivo_cadastrado()` para o admin conseguir
+ligar câmera nova em terra; `admin/admin.js` ganhou o botão Ligar/Desligar com o estado no bordo. Provado
+por `tests/e2e-admin-configura-e-bordo-obedece.py` (duas APIs reais, terra + bordo). **Fase 5 implementada,
+provada e publicada** — `ground/saude_do_bordo.py` monta o retrato **sem segredo nenhum** (CPU, memória,
+disco por volume com o anel do HD do radar, uptime, versão, ffmpeg, dispositivos vistos, laço do agente
+vivo, mediamtx, última saída, pedidos pendentes, erros de 24 h) e o agente o envia a cada
+`LECSOR_ESPERA_DA_SAUDE` (60 s) e no boot; terra classifica com **limiar declarado** em `LIMIARES_DE_SAUDE`
+(disco > 95% = problema; além dos numéricos, sinal binário também declara a regra), grava em `saude_bordo`,
+registra a **virada do semáforo** em `auditoria_acesso` e corta a série em **30 dias**, deixando o corte
+registrado em `saude_bordo_corte`; a tela **Saúde do bordo** mostra verde/amarelo/vermelho com o **o que
+fazer**, e bordo que nunca reportou aparece como **PROBLEMA** — silêncio não é saúde. Provado por
+`tests/e2e-saude-do-bordo-no-admin.py` **rc=0 (20/20)**, com o agente de verdade enviando e o painel aberto
+em Chromium. Fase 6 pendente.
 **Data:** 19/11/2026 · **Base:** 0.7.0 (`9ca021d` + plano `2d94e25`)
 **Alvo:** 0.8.0 — o cadastro de câmera passa a ser salvo no banco (hoje só existe no SQLite local), o bordo
 deixa de ter tela de configuração, passa a **buscar** o que terra publica e passa a **reportar a própria saúde**
@@ -269,6 +283,31 @@ conferir `/api/saude` 200, `/app/` 200, `/api/config-desejada` 401 sem token do 
 
 **Critério de aceite (por comando):** release listada na API do GitHub com o sha256 do `.exe`; VPS com
 `pipeline-api` ativa e as três respostas acima.
+
+---
+
+## Pendência medida em 19/11/2026 (precisa de decisão do dono — não implementada)
+
+Rodando a suíte inteira com **duas máquinas de verdade** (um lado terra falso em `127.0.0.1:<porta>` e o
+bordo em outra porta), apareceu o que a bancada de uma máquina só não mostrava:
+
+1. `POST /api/cameras` feito pelo **usuário de captura** é **encaminhado para o lado terra** (não está em
+   `ROTAS_CAPTURA`), então a câmera cadastrada no bordo **fica só no banco de terra** — o computador de
+   captura fica **sem a câmera que ele acabou de cadastrar** e não tem o que capturar. Medido: com
+   `cam-nova` cadastrada no bordo, `bordo.db` não ganhou a linha e `pipeline.db` (terra) ganhou.
+2. Ligar a rota como **local** não resolve sozinho: `POST /api/entrar` também vai para terra, então a
+   **sessão do usuário de captura não existe no banco do bordo** e a rota local responde **401** (medido).
+
+O conserto é de **desenho** (autenticação/sessão local no bordo + espelho dos usuários que podem capturar,
+ou `/api/cameras` e `/api/entrar` como rotas locais com o bordo autenticando o próprio usuário) e **muda o
+escopo**: fica aqui para o dono decidir se entra na 0.8.0 ou na rodada seguinte. Até então, o que está
+provado é o contrato antigo: **o cadastro feito no PC de captura chega ao lado terra e o cliente vê a
+câmera** (`tests/test-fluxo-no-lado-terra.py` **rc=0**).
+
+Também nesta rodada: a bancada de `tests/test-fluxo-no-lado-terra.py` passou a declarar
+`LECSOR_LADO_TERRA_API` apontando para si mesma, como o `ambiente.json` real do lado terra (medido na VPS:
+`http://187.127.60.250:8085`) — sem isso a bancada dizia "cadastro não publicado" para o cadastro local do
+próprio lado terra, falso e assustador.
 
 ---
 
