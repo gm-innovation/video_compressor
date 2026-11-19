@@ -1587,8 +1587,16 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:  # noqa: BLE001
                 anuncio = {"de_pe": False, "faltando": [f"modulo de repasse indisponivel ({type(e).__name__})"],
                            "tentativas": {}}
+            # `supabase` diz, sem segredo, se esta instalacao consegue gravar o cadastro no banco
+            # (o dono via a tabela `cameras` da nuvem parada e nada na tela explicava por que).
+            try:
+                import supabase_escrita
+                banco_nuvem = supabase_escrita.diagnostico()
+            except Exception as e:  # noqa: BLE001
+                banco_nuvem = {"configurado": False, "motivo": f"{type(e).__name__}: {e}"}
             return self._json(200, {"ok": True, "banco": str(BANCO), "python": sys.version.split()[0],
-                                    "anuncio": anuncio}, {"Cache-Control": "no-store"})
+                                    "anuncio": anuncio, "supabase": banco_nuvem},
+                              {"Cache-Control": "no-store"})
         if rota == "/api/publicacao":
             # "por que minha camera nao apareceu no lado terra?": estado do anuncio + o resultado por
             # camera desta maquina, e o botao da tela republica tudo com esta rota (POST).
@@ -2901,7 +2909,20 @@ class Handler(SimpleHTTPRequestHandler):
                           (d["id"], d["embarcacao_id"], d["rotulo"], d["fluxo_id"], d.get("local", ""),
                            ip, porta, str(d.get("protocolo") or "rtsp"), str(d.get("canal") or ""),
                            str(d.get("alvo") or "")))
-            auditar(u, "criar_camera", (d["id"] + " " + ip + ":" + porta).strip(": "), self.client_address[0])
+            # ESPELHO NO BANCO (Fase 1, 0.8.0): o cadastro TAMBEM vai para o Supabase, que e' a base de
+            # verdade do dono. So' o lado terra tem a chave de servico; falha aqui NAO impede cadastrar
+            # nesta maquina (o SQLite e' o banco de operacao), mas aparece na resposta e em /api/saude.
+            try:
+                import supabase_escrita
+                with conexao() as c:
+                    nome_emb = c.execute("SELECT nome FROM embarcacoes WHERE id=?",
+                                         (d["embarcacao_id"],)).fetchone()
+                espelho = supabase_escrita.espelhar(dict(d, ativo=1,
+                                                         embarcacao_nome=(nome_emb["nome"] if nome_emb else "")))
+            except Exception as e:  # noqa: BLE001
+                espelho = {"ok": False, "motivo": f"{type(e).__name__}: {e}"}
+            auditar(u, "criar_camera", (d["id"] + " " + ip + ":" + porta).strip(": ")
+                    + ("" if espelho.get("ok") else " [banco: NAO]"), self.client_address[0])
             # Publica o CADASTRO no lado terra na hora: a tela do cliente vive no lado terra, e ate'
             # aqui a camera so' chegava la' quando o fluxo subia ("cadastrei cam-01 aqui e o cliente
             # nao mostra nada"). Vai so' id/rotulo/fluxo/ativo — sem endereco nem credencial.
@@ -2914,7 +2935,7 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:
                 lado = {"ok": False, "motivo": f"{type(e).__name__}: {e}"}
             return self._json(201, {"id": d["id"], "ip": ip, "porta": porta,
-                                    "lado_terra": lado})
+                                    "lado_terra": lado, "supabase": espelho})
         if rota == "/api/cameras/publicar":
             # Forca a publicacao do cadastro das cameras DESTA maquina no lado terra. E' o que a tela
             # usa quando a camera ja' existia aqui antes (registrada quando a publicacao automatica
@@ -2928,9 +2949,20 @@ class Handler(SimpleHTTPRequestHandler):
             for cam in cams:
                 r = repasse.publicar_cadastro(cam)
                 (enviadas if r.get("ok") else falhas).append(cam["id"])
+            # E o mesmo botao tambem POE O CADASTRO NO BANCO (Supabase) — e' o que faz a tabela do
+            # dono sair de 1 linha para o cadastro real, sem ele rodar script nenhum.
+            no_banco, sem_banco = [], []
+            try:
+                import supabase_escrita
+                for cam in cams:
+                    r = supabase_escrita.espelhar(cam)
+                    (no_banco if r.get("ok") else sem_banco).append(cam["id"])
+            except Exception as e:  # noqa: BLE001
+                sem_banco = [f"modulo indisponivel ({type(e).__name__}: {e})"]
             auditar(u, "publicar_cadastro_cameras", f"{len(enviadas)} ok / {len(falhas)} falha",
                     self.client_address[0])
-            return self._json(200, {"ok": not falhas, "publicadas": enviadas, "falharam": falhas})
+            return self._json(200, {"ok": not falhas, "publicadas": enviadas, "falharam": falhas,
+                                    "no_banco": no_banco, "fora_do_banco": sem_banco})
         if rota.startswith("/api/cameras/") and rota.endswith("/remover"):
             # Tirar da operacao a camera que nao e' mais usada: para o envio dela, apaga o cadastro
             # AQUI e publica a remocao no lado terra — senao a camera fica para sempre no app do
@@ -2945,6 +2977,12 @@ class Handler(SimpleHTTPRequestHandler):
             parado = ing_desligar_camera(cid)
             with conexao() as c:
                 c.execute("DELETE FROM cameras WHERE id=?", (cid,))
+            # o cadastro sai do Supabase junto (senao a camera fica no banco depois de sumir da tela)
+            try:
+                import supabase_escrita
+                banco = supabase_escrita.espelhar({"id": cid}, remover=True)
+            except Exception as e:  # noqa: BLE001
+                banco = {"ok": False, "motivo": f"{type(e).__name__}: {e}"}
             lado = {"ok": False, "motivo": "nao tentei"}
             try:
                 import repasse
@@ -2956,7 +2994,7 @@ class Handler(SimpleHTTPRequestHandler):
             auditar(u, "remover_camera", f"{cid} ({cam['fluxo_id']})", self.client_address[0])
             return self._json(200, {"ok": True, "id": cid, "fluxo_id": cam["fluxo_id"],
                                     "envio_parado": bool((parado or {}).get("ok")),
-                                    "lado_terra": lado, "trechos_preservados": True})
+                                    "lado_terra": lado, "supabase": banco, "trechos_preservados": True})
         if rota.startswith("/api/cameras/") and rota.endswith("/editar"):
             # Editar a camera EM OPERACAO, campo a campo. `POST /api/cameras` e' INSERT OR REPLACE
             # (recria a linha e zera `ativo`): serve para criar, nao para editar. Aqui muda SO' o que
@@ -3543,8 +3581,14 @@ class Handler(SimpleHTTPRequestHandler):
         if str(d.get("remover", "")).strip().lower() in ("1", "true", "sim", "s"):
             with conexao() as c:
                 c.execute("DELETE FROM cameras WHERE id=? OR fluxo_id=?", (cid, fluxo))
+            try:
+                import supabase_escrita
+                banco = supabase_escrita.espelhar({"id": cid}, remover=True)
+            except Exception as e:  # noqa: BLE001
+                banco = {"ok": False, "motivo": f"{type(e).__name__}: {e}"}
             auditar(None, "camera_removida_pelo_bordo", f"{cid} ({fluxo})", self.client_address[0])
-            return self._json(200, {"ok": True, "id": cid, "fluxo_id": fluxo, "removido": True})
+            return self._json(200, {"ok": True, "id": cid, "fluxo_id": fluxo, "removido": True,
+                                    "supabase": banco})
         emb = str(d.get("embarcacao_id") or os.environ.get("LECSOR_EMBARCACAO_BORDO") or "").strip()
         with conexao() as c:
             if not emb:
@@ -3562,9 +3606,22 @@ class Handler(SimpleHTTPRequestHandler):
                              embarcacao_id=excluded.embarcacao_id, fluxo_id=excluded.fluxo_id,
                              ativo=excluded.ativo, local='bordo'""",
                       (cid, emb, rotulo, fluxo, "bordo", ativo))
-        auditar(None, "anuncio_bordo", f"{cid} ({fluxo}) -> {emb}", self.client_address[0])
+        # ESPELHO: o lado terra e' quem tem a chave de servico — e' aqui que o cadastro do bordo
+        # tambem entra no Supabase (o anexo do dono: a tabela `cameras` da nuvem parada em 1 linha).
+        try:
+            import supabase_escrita
+            with conexao() as c:
+                nome_emb = c.execute("SELECT nome FROM embarcacoes WHERE id=?", (emb,)).fetchone()
+            banco = supabase_escrita.espelhar({"id": cid, "fluxo_id": fluxo, "rotulo": rotulo,
+                                               "embarcacao_id": emb, "ativo": ativo,
+                                               "embarcacao_nome": (nome_emb["nome"] if nome_emb else "")})
+        except Exception as e:  # noqa: BLE001
+            banco = {"ok": False, "motivo": f"{type(e).__name__}: {e}"}
+        auditar(None, "anuncio_bordo", f"{cid} ({fluxo}) -> {emb}"
+                + ("" if banco.get("ok") else " [banco: NAO]"), self.client_address[0])
         return self._json(201, {"ok": True, "id": cid, "fluxo_id": fluxo,
-                                "embarcacao_id": emb, "rotulo": rotulo, "ativo": bool(ativo)})
+                                "embarcacao_id": emb, "rotulo": rotulo, "ativo": bool(ativo),
+                                "supabase": banco})
 
     def _anuncio_qualidade(self) -> None:
         """O PC de captura manda o SSIM que ele mediu na fonte (o lado terra nao consegue medir).

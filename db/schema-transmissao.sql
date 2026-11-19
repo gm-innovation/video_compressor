@@ -145,3 +145,17 @@ CREATE TABLE IF NOT EXISTS gravacoes (
   apagada_em     TEXT DEFAULT ''               -- quando o ARQUIVO foi apagado (a linha fica)
 );
 CREATE INDEX IF NOT EXISTS ix_gravacoes_do_cliente ON gravacoes(usuario_email, apagada_em);
+
+-- ---------------------------------------------------------------------------------------------
+-- ESPELHO DO CADASTRO NO SUPABASE (dono, 19/11/2026). O dono abriu a tabela `cameras` da nuvem e viu
+-- 1 linha enquanto a VPS tinha 16: o cadastro so' era gravado aqui. O lado terra (unico com a chave de
+-- servico) passa a fazer upsert em `public.cameras`; o SQLite continua sendo o banco de OPERACAO (o ao
+-- vivo nao depende da nuvem) e o Supabase a base de verdade do cadastro.
+-- Esta tabela e' a PONTE: no Supabase a embarcacao e' uuid, aqui e' texto (`'bancada'`). Sem a ponte o
+-- upsert da camera falharia por chave estrangeira (a camera aponta para a embarcacao).
+CREATE TABLE IF NOT EXISTS embarcacoes_supabase (
+  slug           TEXT PRIMARY KEY,      -- a embarcacao como esta' aqui (ex.: 'bancada')
+  uuid           TEXT NOT NULL,         -- o id dela no Supabase
+  nome           TEXT DEFAULT '',
+  atualizado_em  TEXT NOT NULL
+);
