@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LECSOR · Chave de licença</title>
+<!--
+  TELA DA CHAVE DE LICENÇA DO PC DE CAPTURA (dono, 19/11/2026).
+
+  "quero apenas instalar o app no computador de captura, inserir a chave da licença e assim fazer a
+  conexão com a empresa e embarcação cadastradas, e a licença pode ser configurável por tempo ou
+  indeterminado".
+
+  Esta página é servida PELO PRÓPRIO BORDO (`GET /licenca`), de propósito: ela abre e diz a verdade
+  mesmo sem internet. Ela fala com o servidor local desta máquina, que é quem pergunta ao lado terra
+  e guarda o vínculo (`<dados>/licenca.json`) — o bordo nunca aceita comando de fora.
+-->
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+         background: #0b1220; color: #e8eefc; font: 15px/1.5 system-ui, "Segoe UI", Roboto, sans-serif; }
+  .carta { width: min(560px, 92vw); background: #111a2e; border: 1px solid #22304d; border-radius: 14px;
+           padding: 26px 26px 22px; box-shadow: 0 18px 50px rgba(0,0,0,.45); }
+  h1 { margin: 0 0 4px; font-size: 20px; letter-spacing: .2px; }
+  p.sub { margin: 0 0 18px; color: #9fb0d0; font-size: 13.5px; }
+  label { display: block; font-size: 12.5px; color: #9fb0d0; margin: 14px 0 6px; text-transform: uppercase;
+          letter-spacing: .6px; }
+  input { width: 100%; padding: 13px 14px; font: 600 20px/1 ui-monospace, Consolas, monospace;
+          letter-spacing: 2px; text-align: center; color: #f2f6ff; background: #0a1424;
+          border: 1px solid #2b3c5e; border-radius: 10px; outline: none; }
+  input:focus { border-color: #4d8bff; box-shadow: 0 0 0 3px rgba(77,139,255,.18); }
+  button { width: 100%; margin-top: 16px; padding: 12px 14px; font: 600 15px/1 inherit; color: #04122b;
+           background: #6ba6ff; border: 0; border-radius: 10px; cursor: pointer; }
+  button.secundario { background: transparent; color: #9fb0d0; border: 1px solid #2b3c5e; font-weight: 500;
+                      font-size: 13px; margin-top: 10px; }
+  button:disabled { opacity: .5; cursor: default; }
+  .aviso { margin-top: 14px; padding: 11px 13px; border-radius: 10px; font-size: 13.5px; display: none; }
+  .aviso.erro { display: block; background: #2a1620; border: 1px solid #6d2c3f; color: #ffc9d6; }
+  .aviso.ok { display: block; background: #10261c; border: 1px solid #2c6d4c; color: #c8f2dc; }
+  .aviso.info { display: block; background: #131f36; border: 1px solid #2b3c5e; color: #bcd0f2; }
+  .ficha { margin-top: 6px; border-top: 1px solid #22304d; padding-top: 14px; font-size: 14px; }
+  .ficha dl { display: grid; grid-template-columns: 148px 1fr; gap: 6px 12px; margin: 0; }
+  .ficha dt { color: #9fb0d0; font-size: 12.5px; text-transform: uppercase; letter-spacing: .5px; padding-top: 2px; }
+  .ficha dd { margin: 0; color: #f2f6ff; font-weight: 600; }
+  .pe { margin-top: 16px; color: #7d8cab; font-size: 12px; text-align: center; }
+  code { background: #0a1424; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+</style>
+</head>
+<body>
+<div class="carta">
+  <h1>Chave de licença</h1>
+  <p class="sub">Digite a chave desta embarcação para este computador de captura entrar no sistema.</p>
+
+  <div id="ativada" style="display:none">
+    <div class="aviso ok" id="ok-msg">Esta máquina já está ativada.</div>
+    <div class="ficha"><dl id="ficha"></dl></div>
+    <button id="continuar">Continuar</button>
+    <button class="secundario" id="trocar">Trocar a chave desta máquina</button>
+  </div>
+
+  <form id="form" autocomplete="off">
+    <label for="chave">Chave da licença</label>
+    <input id="chave" name="chave" inputmode="text" autocapitalize="characters" spellcheck="false"
+           placeholder="XXXX-XXXX-XXXX-XXXX" maxlength="19" aria-describedby="dica">
+    <button id="ativar" type="submit">Ativar este computador</button>
+    <div class="pe" id="dica">Formato <code>XXXX-XXXX-XXXX-XXXX</code> · quem gera é o administrador
+      no painel da LECSOR</div>
+  </form>
+
+  <div class="aviso" id="aviso"></div>
+  <div class="pe"><a href="/entrada" style="color:#7d8cab">voltar para a entrada</a> ·
+    versão da licença: ativação pelo lado terra</div>
+</div>
+
+<script>
+(() => {
+  const ALFABETO = '0123456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const TROCA = { I: '1', O: '0', L: '1' };
+  const $ = (id) => document.getElementById(id);
+  const aviso = $('aviso');
+
+  // Mesma normalização do servidor: maiúsculas, sem parecidas (O->0, I/L->1) e em 4 grupos.
+  function formatar(txt) {
+    let limpo = '';
+    for (const c of String(txt || '').toUpperCase()) {
+      const t = TROCA[c] || c;
+      if (ALFABETO.includes(t)) limpo += t;
+    }
+    limpo = limpo.slice(0, 16);
+    return limpo.replace(/(.{4})(?=.)/g, '$1-');
+  }
+
+  function dizer(tipo, texto) {
+    aviso.className = 'aviso ' + tipo;
+    aviso.textContent = texto || '';
+    if (!texto) aviso.className = 'aviso';
+  }
+
+  function ficha(lic) {
+    const linhas = [
+      ['Empresa', lic.cliente_nome || lic.cliente_id || '—'],
+      ['Embarcação', lic.embarcacao_nome || lic.embarcacao_id || '—'],
+      ['Validade', lic.validade_tipo === 'ate'
+        ? ('até ' + (lic.validade_em || '').split('-').reverse().join('/'))
+        : 'indeterminada (sem prazo)'],
+      ['Estado', lic.texto || lic.estado || '—'],
+    ];
+    $('ficha').innerHTML = linhas
+      .map(([k, v]) => '<dt>' + k + '</dt><dd>' + String(v).replace(/[<>&]/g, '') + '</dd>').join('');
+  }
+
+  async function estado() {
+    try {
+      const r = await fetch('/api/licenca', { cache: 'no-store' });
+      const j = await r.json();
+      if (j.tem) {
+        $('form').style.display = 'none';
+        $('ativada').style.display = 'block';
+        ficha(j);
+        $('ok-msg').textContent = j.nota ? ('Esta máquina está ativada — ' + j.nota)
+          : (j.bloqueada ? j.texto : 'Esta máquina está ativada.');
+        $('ok-msg').className = 'aviso ' + (j.bloqueada ? 'erro' : 'ok');
+      }
+    } catch (e) {
+      dizer('info', 'Não consegui ler a licença desta máquina agora (' + e + ').');
+    }
+  }
+
+  $('chave').addEventListener('input', (e) => {
+    const fim = e.target.selectionStart === e.target.value.length;
+    e.target.value = formatar(e.target.value);
+    if (!fim) e.target.setSelectionRange(e.target.value.length, e.target.value.length);
+  });
+
+  $('form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const chave = formatar($('chave').value);
+    if (chave.replace(/-/g, '').length !== 16) {
+      dizer('erro', 'A chave tem 16 caracteres em 4 grupos (XXXX-XXXX-XXXX-XXXX). Confira se copiou tudo.');
+      return;
+    }
+    $('ativar').disabled = true;
+    dizer('info', 'Falando com o lado terra…');
+    try {
+      const r = await fetch('/api/licenca/ativar', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chave }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && j.ok) {
+        dizer('ok', 'Pronto: ' + ((j.licenca || {}).embarcacao_nome || 'embarcação')
+          + ' ligada a esta máquina.');
+        setTimeout(() => { window.location.href = '/entrada'; }, 1200);
+        return;
+      }
+      const texto = j.erro || j.motivo || (j.licenca && j.licenca.texto) || 'não foi possível ativar';
+      dizer('erro', j.sem_rede
+        ? ('Sem conexão com o lado terra agora: ' + texto
+           + ' — a captura já ativada continua funcionando; tente de novo quando a internet voltar.')
+        : texto);
+    } catch (err) {
+      dizer('erro', 'Sem conexão com o servidor desta máquina (' + err + ').');
+    } finally {
+      $('ativar').disabled = false;
+    }
+  });
+
+  $('continuar').addEventListener('click', () => { window.location.href = '/entrada'; });
+
+  $('trocar').addEventListener('click', async () => {
+    if (!confirm('Apagar a licença desta máquina? A captura para até digitar outra chave.')) return;
+    try {
+      const r = await fetch('/api/licenca/esquecer', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      });
+      const j = await r.json().catch(() => ({}));
+      if (j.ok) { window.location.reload(); return; }
+      dizer('erro', j.erro || 'não consegui apagar a licença desta máquina');
+    } catch (err) {
+      dizer('erro', 'Sem conexão com o servidor desta máquina (' + err + ').');
+    }
+  });
+
+  estado();
+})();
+</script>
+</body>
+</html>

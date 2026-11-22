@@ -55,6 +55,8 @@ ground/medicoes-hd/
 # dados de execucao das transmissao a pedido do cliente (gravacoes do lado terra e ordens do bordo): nao versionar
 ground/gravacoes/
 ground/ordens/
+# estado do agente de ordens (0.10.0: passou a viver na RAIZ, ao lado do `ground/` — ver saude_do_bordo.py)
+ordens/
 
 # ambiente do pacote (Supabase/token de ingestao/embarcacao do PC de captura): segredo, nunca no git
 ground/ambiente.json

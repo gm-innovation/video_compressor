@@ -270,6 +270,24 @@ def main() -> int:
                    "a tela mostra o semáforo")
             exigir("O que fazer" in texto, "e a coluna 'O que fazer' (o admin nao fica sem próximo passo)")
             exigir(not erros, "sem erro de javascript na tela de saude do bordo: " + "; ".join(erros[:2]))
+            # 7) FONTE UNICA do caminho do estado do agente: a saude TEM de ler onde o agente escreve.
+            #    Havia dois padroes (saude: ground/agente-vivo.json; agente: ordens/agente-vivo.json) e a
+            #    saude dizia "o agente nunca escreveu o estado" numa maquina que estava trabalhando.
+            guardado = os.environ.pop("LECSOR_AGENTE_ESTADO", None)
+            sys.path.insert(0, str(RAIZ / "ground"))
+            import agente_de_ordens as mod_agente
+            import saude_do_bordo as mod_saude
+            padrao = mod_agente.caminho_do_vivo()
+            padrao.parent.mkdir(parents=True, exist_ok=True)
+            padrao.write_text(json.dumps({"em": time.strftime("%Y-%m-%dT%H:%M:%S"), "rodadas": 1}),
+                              encoding="utf-8")
+            try:
+                vivo = mod_saude._agente()
+            finally:
+                if guardado is not None:
+                    os.environ["LECSOR_AGENTE_ESTADO"] = guardado
+            exigir(vivo.get("laco_vivo") is True,
+                   f"a saude le onde o AGENTE escreve ({padrao}) e ve o laco vivo: {vivo}")
             nav.close()
     finally:
         for p in procs:

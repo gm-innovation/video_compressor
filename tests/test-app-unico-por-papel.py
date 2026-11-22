@@ -188,8 +188,13 @@ checar(re.search(r"entrada:\s*\{[^}]*rota:\s*'/entrada'", main) is not None,
        "main.js: existe a superficie 'entrada' na rota /entrada")
 checar("function baseDaEntrada()" in main and "config.capturaLocal" in main,
        "main.js: com a captura liberada nesta maquina a entrada vem do servidor LOCAL (bordo sem internet)")
-checar("const permitidos = [config.base, baseDaEntrada(), 'data:']" in main,
-       "main.js: a navegacao permite o redirecionamento do login (senao a entrada ficava presa)")
+# A navegacao tem de aceitar: a base do lado terra, a entrada do bordo e o LOOPBACK do servidor local
+# (0.10.0: a tela da chave vive ali e dali vai para `/entrada`, na mesma origem).
+checar(re.search(r"const permitidos = \[config\.base, baseDaEntrada\(\)", main) is not None
+       and "'http://127.0.0.1:' + portaLocal" in main,
+       "main.js: a navegacao permite o redirecionamento do login e da tela da chave (senao a entrada ficava presa)")
+checar("precisaDeLicenca" in main and "/api/licenca" in main and "replace(/\\/$/, '') + '/licenca'" in main,
+       "main.js: sem licenca, a entrada e' a TELA DA CHAVE servida pelo bordo (dono, 19/11/2026)")
 checar("atalhos = { entrada: '0'" in main, "main.js: o menu de superficies nao roubou o atalho das telas")
 
 # ---------------------------------------------------------------- 5) o admin nao convida a cadastrar

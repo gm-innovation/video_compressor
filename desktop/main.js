@@ -173,6 +173,12 @@ let enderecoEntrada = null;
 // 127.0.0.1 (medido no Chromium do app: "Failed to fetch"; dono, 18/11/2026). Vazio = sem captura
 // local: as telas abrem direto no lado terra, como sempre foi.
 let baseLocalDaCaptura = '';
+// CHAVE DE LICENCA (dono, 19/11/2026): "quero apenas instalar o app no computador de captura, inserir
+// a chave da licenca e assim fazer a conexao com a empresa e embarcacao cadastradas". Quando o
+// servidor local desta maquina responde que NAO tem licenca, a entrada que abre e' a tela da chave
+// (`/licenca`, servida pelo proprio bordo) — e nao o login. Depois de ativada, a entrada volta a ser
+// a de sempre, sem reinstalar nada.
+let precisaDeLicenca = false;
 async function definirEnderecoDaEntrada() {
   const porta = (config.servidorLocal || {}).portaApi || 8765;
   const local = 'http://127.0.0.1:' + porta;
@@ -187,6 +193,9 @@ async function definirEnderecoDaEntrada() {
     }
     const saude = await buscarJson(config.base + '/api/saude', 2500);
     ladoTerraResponde = saude.status === 200;
+    // "ja' foi ativada com a chave?" — a resposta decide a ENTRADA (tela da chave x login)
+    const lic = await buscarJson(local + '/api/licenca', 2500);
+    precisaDeLicenca = !!(lic.status === 200 && lic.json && lic.json.tem === false);
   }
   enderecoEntrada = enderecoDaEntrada(config, { temUsuarios, ladoTerraResponde });
   return enderecoEntrada;
@@ -223,6 +232,11 @@ function urlDe(nome) {
   // rotas de captura (dono, 18/11/2026). O servidor local encaminha ao lado terra tudo o que nao e'
   // captura: a pagina do Admin, o css, o login e o cadastro continuam sendo os do lado terra.
   const raiz = baseLocalDaCaptura || (nome === 'entrada' ? baseDaEntrada() : config.base);
+  // Maquina de captura ainda NAO ativada: a entrada e' a TELA DA CHAVE (mesma origem, servida pelo
+  // bordo). Ver `precisaDeLicenca` acima.
+  if (nome === 'entrada' && precisaDeLicenca && baseLocalDaCaptura) {
+    return baseLocalDaCaptura.replace(/\/$/, '') + '/licenca';
+  }
   return raiz.replace(/\/$/, '') + SUPERFICIES[nome].rota;
 }
 
@@ -274,7 +288,11 @@ function abrir(nome) {
   janela.webContents.on('will-navigate', (evento, url) => {
     // A entrada redireciona para a tela do papel: com a captura liberada nesta maquina a pagina vem
     // do loopback e vai para o mesmo loopback (ou para o lado terra) — os dois enderecos sao legitimos.
-    const permitidos = [config.base, baseDaEntrada(), 'data:'];
+    const portaLocal = (config.servidorLocal || {}).portaApi || 8765;
+    // A tela da chave vive no loopback (`/licenca`) e dali vai para `/entrada`, os dois na MESMA
+    // origem local — por isso a raiz do loopback tambem e' navegacao legitima.
+    const permitidos = [config.base, baseDaEntrada(), 'http://127.0.0.1:' + portaLocal,
+                        'http://localhost:' + portaLocal, 'data:'];
     if (!permitidos.some((b) => url.startsWith(b))) { evento.preventDefault(); shell.openExternal(url); }
   });
   // Se o lado terra nao responde (API parada, endereco errado, sem rede), a janela NAO pode ficar

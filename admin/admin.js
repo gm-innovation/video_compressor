@@ -1,6 +1,6 @@
 /* Admin do projeto e do sistema: acompanhamento (§6) + administracao (clientes, embarcacoes,
    cameras, usuarios, analises, auditoria, saude). Le e escreve tudo pela API do produto. */
-const A = { usuario: null, resumo: null, clientes: [], usuarios: [], verificarCredencial: false, sistema: null, cameras: [], embarcacoes: [], tela: 'painel', timer: null, marca: null, radarForm: null, radarAviso: null, prontidao: null, config: null };
+const A = { usuario: null, resumo: null, clientes: [], usuarios: [], verificarCredencial: false, sistema: null, cameras: [], embarcacoes: [], licencas: [], tela: 'painel', timer: null, marca: null, radarForm: null, radarAviso: null, prontidao: null, config: null };
 const $ = (id) => document.getElementById(id);
 const limpar = (el) => { while (el.firstChild) el.removeChild(el.firstChild); };
 const esc = (s) => String(s === null || s === undefined ? '' : s);
@@ -143,6 +143,8 @@ async function atualizar() {
     const us = await api('/api/usuarios' + (A.verificarCredencial ? '?credencial=1' : ''));
     A.usuarios = (us.corpo && us.corpo.usuarios) || [];
     const si = await api('/api/sistema'); if (si.ok) A.sistema = si.corpo.sistema;
+    // LICENCAS do PC de captura (dono, 19/11/2026): a chave que se digita no app de captura.
+    const lc = await api('/api/licencas'); A.licencas = (lc.corpo && lc.corpo.licencas) || [];
   } else {
     const cl = await api('/api/clientes'); A.clientes = (cl.corpo && cl.corpo.clientes) || [];
   }
@@ -167,7 +169,7 @@ const RUIDO_TELA = { gerado_em: 1, uptime_s: 1, idade_s: 1, atualizado_em: 1, li
 function assinaturaTelas() {
   try {
     return JSON.stringify([A.resumo, A.embarcacoes, A.cameras, A.clientes, A.usuarios, A.sistema, A.camerasInterno,
-      A.prontidao],
+      A.prontidao, A.licencas],
       (k, v) => (RUIDO_TELA[k] ? undefined : v));
   } catch (e) { return 'erro:' + Math.random(); }
 }
@@ -254,7 +256,8 @@ const SUBS = {
   envios: ['Enviar vídeo', 'Escolhe a fonte (arquivo, link ou câmera desta máquina) e a qualidade por câmera: o sistema codifica, publica em SRT e mede o corte de banda.'],
   saude: ['Saúde do sistema', 'Estado da API, do lado terra e das contagens do banco.'],
   saude_bordo: ['Saúde do bordo', 'O computador de captura reporta sozinho: CPU, memória, disco (e o anel do HD do radar), ffmpeg, captura viva, mediamtx, erros. Semáforo com o limiar e o que fazer.'],
-  config_bordo: ['Configuração do bordo', 'Você publica aqui e o computador de captura busca: alvo de banda por câmera e teto de tempo da embarcação. O bordo confirma o que aplicou — ou o motivo da recusa.']
+  config_bordo: ['Configuração do bordo', 'Você publica aqui e o computador de captura busca: alvo de banda por câmera e teto de tempo da embarcação. O bordo confirma o que aplicou — ou o motivo da recusa.'],
+  licencas: ['Licenças do PC de captura', 'A chave que se digita no app de captura: ela liga aquela máquina à empresa e à embarcação. Vale por tempo ou sem prazo, e quantos PCs usam a mesma licença é ajustável.']
 };
 
 /* --------------------------------------------------------- telas */
@@ -286,7 +289,7 @@ function desenhar(forcado) {
     evidencias: telaEvidencias, documentos: telaDocumentos, clientes: telaClientes, embarcacoes: telaEmbarcacoes,
     cameras: telaCameras, usuarios: telaUsuarios, tempo: telaTempoReal, producao: telaProducao, analises: telaAnalises, marcas: telaMarcas, envios: telaEnvios,
     auditoria: telaAuditoria, saude: telaSaude, config_bordo: telaConfigDoBordo,
-    saude_bordo: telaSaudeDoBordo };
+    saude_bordo: telaSaudeDoBordo, licencas: telaLicencas };
   (despacho[A.tela] || telaPainel)(tela);
 }
 
@@ -416,6 +419,146 @@ function telaEmbarcacoes(t) {
   t.appendChild(tabela([{ rotulo: 'Embarcação', campo: 'nome' }, { rotulo: 'Identificador', campo: 'id' },
     { rotulo: 'Cliente', campo: 'cliente_id' }, { rotulo: 'IMO', campo: 'imo' }, { rotulo: 'Estado', campo: 'estado' }],
     A.embarcacoes, 'nenhuma embarcação'));
+}
+
+/* ------------------------------------------- LICENÇAS DO PC DE CAPTURA (dono, 19/11/2026)
+   "quero apenas instalar o app no computador de captura, inserir a chave da licença e assim fazer a
+   conexão com a empresa e embarcação cadastradas, e a licença pode ser configurável por tempo ou
+   indeterminado". Aqui o admin gera a chave de UMA embarcação, vê e copia de novo (pedido do dono),
+   muda o prazo e o número de PCs (ajustável) e revoga. O computador de captura só digita a chave. */
+function telaLicencas(t) {
+  const nota = document.createElement('p'); nota.className = 'nota';
+  nota.appendChild(Object.assign(document.createElement('b'), { textContent: 'Como funciona: ' }));
+  nota.appendChild(document.createTextNode('no computador de captura, abra o app e digite a chave — '
+    + 'ele passa a capturar as câmeras daquela embarcação, sem gerar instalador próprio. A licença vale '
+    + 'por tempo (com data) ou sem prazo (indeterminada). Quantos PCs podem usar a mesma licença é '
+    + 'ajustável. Sem internet por dias o bordo continua funcionando normalmente: o corte é só por '
+    + 'vencimento ou revogação.'));
+  t.appendChild(nota);
+
+  // A CHAVE e' do admin (dono, 19/11/2026): quem nao e' admin nao gera, nao ve' e nao copia — a rota
+  // tambem recusa, esta tela so' nao mente para o operador.
+  if (A.usuario.papel !== 'admin') {
+    t.appendChild(recado('Somente o administrador do sistema gera e vê as licenças do PC de captura.', true));
+    return;
+  }
+
+  {
+    const caixa = document.createElement('div'); caixa.className = 'caixa-form';
+    caixa.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Nova licença' }));
+    const linha = document.createElement('div'); linha.className = 'linha-form'; caixa.appendChild(linha);
+
+    const dEmb = document.createElement('div');
+    const lEmb = document.createElement('label'); lEmb.textContent = 'Embarcação';
+    const sel = document.createElement('select');
+    for (const e of A.embarcacoes) {
+      const o = document.createElement('option'); o.value = e.id;
+      o.textContent = (e.nome || e.id) + ' — ' + e.id; sel.appendChild(o);
+    }
+    dEmb.appendChild(lEmb); dEmb.appendChild(sel); linha.appendChild(dEmb);
+
+    const dTipo = document.createElement('div');
+    const lTipo = document.createElement('label'); lTipo.textContent = 'Validade';
+    const tipo = document.createElement('select');
+    for (const [v, txt] of [['indeterminada', 'sem prazo (indeterminada)'], ['ate', 'até uma data']]) {
+      const o = document.createElement('option'); o.value = v; o.textContent = txt; tipo.appendChild(o);
+    }
+    dTipo.appendChild(lTipo); dTipo.appendChild(tipo); linha.appendChild(dTipo);
+
+    const dData = document.createElement('div');
+    const lData = document.createElement('label'); lData.textContent = 'Vence em';
+    const data = document.createElement('input'); data.type = 'date'; data.disabled = true;
+    dData.appendChild(lData); dData.appendChild(data); linha.appendChild(dData);
+    tipo.addEventListener('change', () => { data.disabled = tipo.value !== 'ate'; });
+
+    const maquinas = campo(linha, 'lic-maquinas', 'Quantos PCs usam esta licença', '1');
+    maquinas.type = 'number'; maquinas.min = '1';
+
+    caixa.appendChild(botao('Gerar chave', 'marca', async () => {
+      const corpo = { embarcacao_id: sel.value, validade_tipo: tipo.value,
+        validade_em: tipo.value === 'ate' ? data.value : '', maquinas_max: Number(maquinas.value || 1) };
+      const r = await api('/api/licencas', { method: 'POST', body: JSON.stringify(corpo) });
+      await atualizar();
+      if (r.ok) mostrarRecado('licença criada para ' + r.corpo.embarcacao_id + ' — chave: ' + r.corpo.chave
+        + ' (digite esta chave no computador de captura)', false);
+      else mostrarRecado('recusado: ' + ((r.corpo && r.corpo.erro) || JSON.stringify(r.corpo)), true);
+    }));
+    t.appendChild(caixa);
+  }
+
+  if (!A.licencas.length) {
+    const vazio = document.createElement('p'); vazio.className = 'nota';
+    vazio.textContent = 'Nenhuma licença gerada ainda. O computador de captura só entra no sistema depois de digitar uma chave daqui.';
+    t.appendChild(vazio);
+    return;
+  }
+  for (const l of A.licencas) t.appendChild(cartaoLicenca(l));
+}
+
+function cartaoLicenca(l) {
+  const caixa = document.createElement('div'); caixa.className = 'caixa-form';
+  const h = document.createElement('h2');
+  h.textContent = (l.embarcacao_nome || l.embarcacao_id) + (l.cliente_nome ? ' · ' + l.cliente_nome : '')
+    + ' — ' + l.embarcacao_id;
+  caixa.appendChild(h);
+
+  const linha = document.createElement('div'); linha.className = 'linha-form';
+  const codigo = document.createElement('code');
+  codigo.textContent = l.chave; codigo.style.cssText = 'font-size:15px;letter-spacing:1px;user-select:all';
+  linha.appendChild(codigo);
+  linha.appendChild(botao('copiar chave', 'mini', async () => {
+    try { await navigator.clipboard.writeText(l.chave); mostrarRecado('chave copiada: ' + l.chave, false); }
+    catch (e) { mostrarRecado('não consegui copiar — selecione a chave e copie na mão', true); }
+  }));
+  caixa.appendChild(linha);
+
+  const ficha = document.createElement('p'); ficha.className = 'nota';
+  ficha.textContent = 'Validade: ' + (l.validade_tipo === 'ate' ? 'até ' + l.validade_em : 'indeterminada (sem prazo)')
+    + ' · estado: ' + (l.texto || l.estado) + ' · PCs: ' + l.maquinas_em_uso + '/' + l.maquinas_max + ' usados'
+    + (l.maquinas_usadas.length ? ' (' + l.maquinas_usadas.map((m) => m.maquina).join(', ') + ')' : '')
+    + (l.ultimo_uso_em ? ' · último uso em ' + l.ultimo_uso_em : ' · ainda não foi usada')
+    + (l.criada_por ? ' · criada por ' + l.criada_por : '');
+  caixa.appendChild(ficha);
+
+  const acoes = document.createElement('div'); acoes.className = 'linha-form';
+  acoes.appendChild(botao('prazo e nº de PCs', 'mini', () => editarLicenca(caixa, l)));
+  if (l.status === 'revogada') acoes.appendChild(botao('reativar', 'mini', () => agirLicenca('reativar', l, {})));
+  else acoes.appendChild(botao('revogar', 'mini', () => agirLicenca('revogar', l, { motivo: 'revogada pelo admin' })));
+  acoes.appendChild(botao('gerar outra chave', 'mini', () => agirLicenca('reemitir', l, {})));
+  caixa.appendChild(acoes);
+  return caixa;
+}
+
+async function agirLicenca(acao, l, corpo) {
+  const r = await api('/api/licencas/' + l.id + '/' + acao, { method: 'POST', body: JSON.stringify(corpo || {}) });
+  await atualizar();
+  const nova = (r.corpo && r.corpo.chave) ? (' — chave nova: ' + r.corpo.chave) : '';
+  mostrarRecado(acao + ': ' + (r.ok ? 'ok' + nova : ((r.corpo && r.corpo.erro) || JSON.stringify(r.corpo))), !r.ok);
+}
+
+function editarLicenca(caixa, l) {
+  const antigo = caixa.querySelector('.form-licenca'); if (antigo) antigo.remove();
+  const f = document.createElement('div'); f.className = 'form-licenca';
+  const linha = document.createElement('div'); linha.className = 'linha-form'; f.appendChild(linha);
+  const tipo = document.createElement('select');
+  for (const [v, txt] of [['indeterminada', 'sem prazo (indeterminada)'], ['ate', 'até uma data']]) {
+    const o = document.createElement('option'); o.value = v; o.textContent = txt;
+    if ((l.validade_tipo || 'indeterminada') === v) o.selected = true; tipo.appendChild(o);
+  }
+  linha.appendChild(tipo);
+  const data = document.createElement('input'); data.type = 'date'; data.value = l.validade_em || '';
+  data.disabled = tipo.value !== 'ate'; linha.appendChild(data);
+  tipo.addEventListener('change', () => { data.disabled = tipo.value !== 'ate'; });
+  const n = document.createElement('input'); n.type = 'number'; n.min = '1'; n.value = String(l.maquinas_max || 1);
+  n.title = 'quantos PCs podem usar esta licença'; linha.appendChild(n);
+  f.appendChild(botao('salvar', 'mini', async () => {
+    const r = await api('/api/licencas/' + l.id + '/atualizar', { method: 'POST',
+      body: JSON.stringify({ validade_tipo: tipo.value, validade_em: data.value, maquinas_max: Number(n.value || 1) }) });
+    await atualizar();
+    mostrarRecado(r.ok ? 'licença atualizada (prazo: ' + tipo.value + ' ' + data.value + ', PCs: ' + n.value + ')'
+      : 'recusado: ' + ((r.corpo && r.corpo.erro) || JSON.stringify(r.corpo)), !r.ok);
+  }));
+  caixa.appendChild(f);
 }
 
 function telaCameras(t) {

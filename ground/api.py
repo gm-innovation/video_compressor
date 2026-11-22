@@ -61,7 +61,12 @@ ROTAS_CAPTURA = ("/api/dispositivos", "/api/envios", "/api/ingestao", "/api/inge
 # no sistema AQUI. O plano de 19/11/2026 (Fase 3) mediu que, sem isto, o bordo encaminhava `/api/entrar`
 # para terra: a pessoa entrava, mas a sessao so' existia do outro lado e o cadastro local respondia 401 —
 # o bordo ficava sem a camera que ele mesmo acabou de cadastrar.
-ROTAS_CAPTURA_LOCAIS = ("/api/entrar", "/api/eu", "/api/sair", "/api/cameras")
+ROTAS_CAPTURA_LOCAIS = ("/api/entrar", "/api/eu", "/api/sair", "/api/cameras",
+                        # CHAVE DE LICENCA (dono, 19/11/2026): a tela da chave roda NA PROPRIA maquina
+                        # de captura e quem fala com o lado terra e' o bordo — mesmo desenho das rotas
+                        # de captura acima. `/api/licencas` (plural) e' do painel do lado terra e NAO
+                        # entra aqui: essa e' encaminhada como qualquer rota de administracao.
+                        "/api/licenca", "/api/licenca/ativar", "/api/licenca/esquecer", "/licenca")
 ORIGENS_CAPTURA_PADRAO = ("http://187.127.60.250:8085", "http://127.0.0.1:8085",
                           "http://127.0.0.1:8765", "http://localhost:8765")
 
@@ -89,6 +94,7 @@ import etapas as etapas_pipeline  # noqa: E402
 import gravacao as gravacao_modulo  # noqa: E402
 import trecho as trecho_modulo  # noqa: E402
 import producao as producao_pipeline  # noqa: E402
+import licenca as licenca_modulo  # noqa: E402
 from urllib.parse import parse_qs, unquote, urlparse
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -152,6 +158,81 @@ def auditar(usuario, acao: str, alvo: str, ip: str = "") -> None:
     with conexao() as c:
         c.execute("INSERT INTO auditoria_acesso (usuario_id,email,acao,alvo,ip) VALUES (?,?,?,?,?)",
                   (usuario["id"] if usuario else None, usuario["email"] if usuario else "", acao, alvo, ip))
+
+
+def licenca_bloqueio(embarcacao_id: str) -> str:
+    """Motivo pelo qual a captura desta embarcacao esta' BLOQUEADA pela licenca ("" = liberada).
+
+    Regra do dono (19/11/2026): sem internet o bordo MANTE'M TUDO NORMALMENTE — o corte acontece por
+    VENCIMENTO ou REVOGACAO, nunca por falta de rede. Instalacao ANTIGA, sem nenhuma licenca no banco
+    para aquela embarcacao, continua liberada: a licenca e' ADICIONAL, nada e' apagado.
+    """
+    emb = str(embarcacao_id or "").strip()
+    if not emb:
+        return ""
+    try:
+        with conexao() as c:
+            linhas = c.execute("SELECT * FROM licencas WHERE embarcacao_id=?", (emb,)).fetchall()
+    except Exception:  # noqa: BLE001  (banco antigo, sem a tabela: nao bloqueia nada)
+        return ""
+    if not linhas:
+        return ""
+    for linha in linhas:
+        st = licenca_modulo.estado(linha["validade_tipo"], linha["validade_em"],
+                                   linha["status"], linha["motivo"])
+        if not st["bloqueada"]:
+            return ""
+    return licenca_modulo.estado(linhas[0]["validade_tipo"], linhas[0]["validade_em"],
+                                 linhas[0]["status"], linhas[0]["motivo"])["texto"]
+
+
+def licenca_do_terra(dados: dict, contar: bool = True) -> tuple[int, dict]:
+    """(codigo, corpo) do LADO TERRA para ativar/validar uma chave de licenca.
+
+    `contar=True` e' a ATIVACAO (a maquina passa a constar no uso da licenca); `contar=False` e' a
+    REVALIDACAO periodica do bordo (nao soma maquina nova so' por perguntar de novo).
+
+    Sem sessao e sem token de ingestao, de proposito: quem esta' ativando um PC de captura recem
+    instalado nao tem usuario nem token ainda — a CHAVE e' a credencial (~2^81 de espaco, e chave
+    invalida responde igual a chave inexistente, sem revelar se existe).
+    """
+    chave = licenca_modulo.normalizar(dados.get("chave", ""))
+    if not chave:
+        return 422, {"erro": "chave incompleta", "formato": "XXXX-XXXX-XXXX-XXXX",
+                     "dica": "são 16 caracteres em 4 grupos — confira se copiou tudo"}
+    nome_maquina = re.sub(r"[^a-zA-Z0-9_.\-]", "-", str(dados.get("maquina") or "").strip())[:80]
+    with conexao() as c:
+        linha = c.execute("SELECT * FROM licencas WHERE chave=?", (chave,)).fetchone()
+    if not linha:
+        return 404, {"erro": "chave não encontrada",
+                     "dica": "confira a chave com quem gerou; ela vale para uma embarcação específica"}
+    st = licenca_modulo.estado(linha["validade_tipo"], linha["validade_em"], linha["status"], linha["motivo"])
+    licenca = {"chave": chave, "id": linha["id"], "embarcacao_id": linha["embarcacao_id"],
+               "validade_tipo": linha["validade_tipo"], "validade_em": linha["validade_em"],
+               "status": linha["status"], "motivo": linha["motivo"],
+               "maquinas_max": int(linha["maquinas_max"] or 1), **{k: st[k] for k in ("estado", "bloqueada", "texto")}}
+    if st.get("bloqueada"):
+        return 403, {"ok": False, "erro": "licença não libera esta captura", "licenca": licenca}
+    with conexao() as c:
+        emb = c.execute("""SELECT e.id, e.nome, e.cliente_id, c.nome AS cliente_nome
+                           FROM embarcacoes e LEFT JOIN clientes c ON c.id = e.cliente_id
+                           WHERE e.id=?""", (linha["embarcacao_id"],)).fetchone()
+        usadas = [r["maquina"] for r in c.execute("SELECT maquina FROM licenca_usos WHERE licenca_id=?",
+                                                  (linha["id"],)).fetchall()]
+        if contar and nome_maquina and nome_maquina not in usadas and len(usadas) >= int(linha["maquinas_max"] or 1):
+            return 409, {"ok": False, "erro": "esta licença já está no limite de computadores",
+                         "maquinas_max": int(linha["maquinas_max"] or 1), "maquinas": usadas,
+                         "dica": "peça ao admin para aumentar o limite desta licença, ou use outra chave"}
+        if nome_maquina and (contar or nome_maquina in usadas):
+            c.execute("""INSERT INTO licenca_usos (licenca_id,maquina) VALUES (?,?)
+                         ON CONFLICT(licenca_id,maquina) DO UPDATE SET ultimo_em=datetime('now')""",
+                      (linha["id"], nome_maquina))
+        c.execute("UPDATE licencas SET ultimo_uso_em=? WHERE id=?", (em_iso(), linha["id"]))
+    licenca.update({"embarcacao_nome": (emb["nome"] if emb else ""),
+                    "cliente_id": (emb["cliente_id"] if emb else ""),
+                    "cliente_nome": (emb["cliente_nome"] if emb else "") or "",
+                    "maquinas": len(set(usadas) | ({nome_maquina} if nome_maquina else set()))})
+    return 200, {"ok": True, "licenca": licenca}
 
 
 def pode_ver_embarcacao(usuario, embarcacao_id: str) -> bool:
@@ -2240,6 +2321,17 @@ class Handler(SimpleHTTPRequestHandler):
                         linhas = c.execute("SELECT * FROM embarcacoes WHERE cliente_id=? ORDER BY nome",
                                            (u["cliente_id"],)).fetchall()
             return self._json(200, {"embarcacoes": [dict(x) for x in linhas]})
+        if rota == "/licenca":
+            return self._pagina_da_licenca()
+        if rota == "/api/licenca":
+            return self._estado_da_licenca()
+        if rota == "/api/licencas":
+            # PAINEL DO ADMIN (dono, 19/11/2026): gerar, ver/copiar a chave inteira, ver o uso e
+            # revogar. Cliente e observador nao entram aqui.
+            if not (u and u["papel"] in PAPEL_ADMIN):
+                return self._json(403, {"erro": "esta lista e' do admin"})
+            return self._json(200, {"licencas": self._licencas_do_painel()},
+                              {"Cache-Control": "no-store"})
         if rota == "/api/transmissao/pedidos":
             # A OPERACAO ve os pedidos ABERTOS de todas as embarcacoes e cancela o que quiser (plano,
             # Fase 2 P1: "a operacao ve e pode cancelar o pedido"). O cliente nunca ve esta lista.
@@ -2819,6 +2911,23 @@ class Handler(SimpleHTTPRequestHandler):
         if self._base_do_lado_terra() and not eh_rota_de_captura(rota):
             return self._encaminhar("POST")
         u = self._sessao()
+        if rota == "/api/licencas":
+            # GERAR licenca: so' o admin (dono, 19/11/2026: quem cadastra e configura e' o admin).
+            if not (u and u["papel"] in PAPEL_ADMIN):
+                return self._json(403, {"erro": "so' o admin gera licenca"})
+            return self._criar_licenca(u)
+        if rota.startswith("/api/licencas/"):
+            if not (u and u["papel"] in PAPEL_ADMIN):
+                return self._json(403, {"erro": "so' o admin mexe em licenca"})
+            return self._licenca_acao(u)
+        if rota == "/api/licenca/ativar":
+            # sem sessao de proposito: o PC de captura recem-instalado ainda nao tem usuario; a CHAVE
+            # e' a credencial dele.
+            return self._licenca_atender(contar=True)
+        if rota == "/api/licenca/validar":
+            return self._licenca_atender(contar=False)
+        if rota == "/api/licenca/esquecer":
+            return self._esquecer_licenca(u)
         if rota == "/api/publicacao":
             # "publicar agora": manda o cadastro de TODAS as cameras desta maquina ao lado terra e
             # devolve o resultado por camera. E' o botao que faltava quando o anuncio falhava em
@@ -4267,6 +4376,17 @@ class Handler(SimpleHTTPRequestHandler):
                 emb = linha["id"]
             elif not c.execute("SELECT 1 FROM embarcacoes WHERE id=?", (emb,)).fetchone():
                 return self._json(422, {"erro": "embarcacao_id inexistente"})
+            # LICENCA (dono, 19/11/2026): o lado terra e' a AUTORIDADE. Licenca REVOGADA ou VENCIDA
+            # corta a captura deste barco AQUI, antes de qualquer cadastro — e o bordo recebe o motivo
+            # na resposta (a tela mostra, em vez de ficar muda). Embarcacao SEM licenca nenhuma
+            # (instalacao antiga) segue liberada: a licenca e' ADICIONAL, nada e' apagado.
+            _bloqueio = licenca_bloqueio(emb)
+            if _bloqueio:
+                auditar(None, "captura_recusada_por_licenca",
+                        f"{cid} ({fluxo}) -> {emb}: {_bloqueio}", self.client_address[0])
+                return self._json(403, {"erro": "licenca desta embarcacao nao libera a captura",
+                                        "licenca": _bloqueio, "embarcacao_id": emb,
+                                        "dica": "fale com o admin: a licenca pode ser reemitida ou prorrogada"})
             c.execute("""INSERT INTO cameras (id,embarcacao_id,rotulo,fluxo_id,local,ativo)
                          VALUES (?,?,?,?,?,?)
                          ON CONFLICT(id) DO UPDATE SET rotulo=excluded.rotulo,
@@ -4517,6 +4637,279 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(b)
 
 
+    # ---- CHAVE DE LICENCA do PC de captura (dono, 19/11/2026) ------------------------------------
+    #
+    # "quero apenas instalar o app no computador de captura, inserir a chave da licenca e assim fazer
+    # a conexao com a empresa e embarcacao cadastradas, e a licenca pode ser configuravel por tempo ou
+    # indeterminado". O LADO TERRA e' a autoridade (gera, valida, revoga); o BORDO guarda o vinculo em
+    # `<dados>/licenca.json` e revalida de tempos em tempos, sempre por pedido de SAIDA.
+    #
+    # Decisoes do dono que estao nestes metodos:
+    #   * quantos PCs por licenca -> `maquinas_max` ajustavel (`licencas`/`licenca_usos`);
+    #   * sem internet por dias   -> NADA para: nao existe corte por falta de rede, so' por
+    #     vencimento/revogacao, e so' quando a maquina consegue falar com o lado terra;
+    #   * o admin ve e copia a CHAVE INTEIRA no painel (`_licencas_do_painel`);
+    #   * a chave nunca entra em log nem na auditoria — a auditoria guarda a PEGADA (`licenca_modulo`).
+
+    def _pagina_da_licenca(self) -> None:
+        """A tela da chave, servida PELO PROPRIO BORDO.
+
+        Nao vem do lado terra de proposito: assim ela abre (e diz a verdade) mesmo sem internet —
+        "nao consegui falar com o lado terra agora", em vez de tela em branco.
+        """
+        pagina = RAIZ / "licenca" / "index.html"
+        try:
+            corpo = pagina.read_bytes()
+        except Exception:  # noqa: BLE001
+            corpo = ("<!doctype html><meta charset=\"utf-8\"><title>Chave de licença</title>"
+                     "<h1>Chave de licença</h1><p>A tela da licença não veio neste pacote.</p>"
+                     ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(corpo)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(corpo)
+
+    def _estado_da_licenca(self) -> None:
+        """O que ESTA maquina tem guardado. A tela abre offline e diz a verdade.
+
+        Com rede, confere com o lado terra: e' assim que uma REVOGACAO feita depois da ativacao chega
+        nesta maquina. Quando o lado terra diz que a licenca caiu, a transmissao PARA aqui (as cameras
+        sao desligadas) e o motivo vai junto na resposta — corte visivel, nunca mudo.
+        """
+        r = licenca_modulo.resumo()
+        if r.get("tem"):
+            resp = licenca_modulo.pedir_ao_terra("/api/licenca/validar",
+                                                  {"chave": r["chave"], "maquina": licenca_modulo.maquina()},
+                                                  segundos=8)
+            nova = dict(resp.get("licenca") or {}) if isinstance(resp.get("licenca"), dict) else {}
+            if nova:
+                guardado = licenca_modulo.ler()
+                for campo in ("validade_tipo", "validade_em", "status", "motivo",
+                              "embarcacao_id", "embarcacao_nome", "cliente_id", "cliente_nome"):
+                    if str(nova.get(campo, "")).strip() or campo in ("validade_em", "motivo"):
+                        guardado[campo] = nova.get(campo, guardado.get(campo, ""))
+                guardado["conferida_em"] = em_iso()
+                licenca_modulo.gravar(guardado)
+                r = licenca_modulo.resumo()
+                r["conferida_em"] = guardado["conferida_em"]
+            else:
+                r["sem_rede"] = bool(resp.get("sem_rede"))
+                r["nota"] = ("sem falar com o lado terra agora — a captura segue normal (quem corta é "
+                             "vencimento ou revogação, não a falta de rede)"
+                             if resp.get("sem_rede") else (resp.get("motivo") or "não conferi agora"))
+            if r.get("bloqueada"):
+                r["paradas"] = self._parar_por_licenca()
+        return self._json(200, r, {"Cache-Control": "no-store"})
+
+    def _parar_por_licenca(self) -> list:
+        """Licenca vencida/revogada: PARA DE TRANSMITIR (desliga as cameras) e conta o que fez."""
+        try:
+            with conexao() as c:
+                ligadas = [x["id"] for x in c.execute("SELECT id FROM cameras WHERE ativo=1")]
+        except Exception:  # noqa: BLE001
+            return []
+        paradas = []
+        for cam in ligadas:
+            try:
+                if not (ing_desligar_camera(cam) or {}).get("erro"):
+                    paradas.append(cam)
+            except Exception:  # noqa: BLE001
+                continue
+        if paradas:
+            auditar(None, "captura_parada_por_licenca", ", ".join(paradas), self.client_address[0])
+        return paradas
+
+    def _licenca_atender(self, contar: bool) -> None:
+        """Ativar (`contar=True`) ou revalidar (`contar=False`) — a MESMA rota, dois papeis.
+
+        No LADO TERRA ele valida/registra; no BORDO ele pergunta ao lado terra e, se liberar, guarda o
+        vinculo local. Sem rede, o bordo NAO perde o que ja' tinha: "mantém tudo normalmente".
+        """
+        d = self._corpo()
+        chave = licenca_modulo.normalizar(d.get("chave", ""))
+        if not chave:
+            return self._json(422, {"erro": "chave incompleta", "formato": "XXXX-XXXX-XXXX-XXXX",
+                                    "dica": "são 16 caracteres em 4 grupos — confira se copiou tudo"})
+        if not self._base_do_lado_terra():
+            codigo, corpo = licenca_do_terra({"chave": chave, "maquina": d.get("maquina")}, contar=contar)
+            if corpo.get("ok"):
+                lic = corpo.get("licenca") or {}
+                auditar(None, "licenca_ativada" if contar else "licenca_conferida",
+                        f"{lic.get('id','')} -> {lic.get('embarcacao_id','')} "
+                        f"({licenca_modulo.pegada(chave)})", self.client_address[0])
+            return self._json(codigo, corpo)
+        r = licenca_modulo.pedir_ao_terra("/api/licenca/ativar" if contar else "/api/licenca/validar",
+                                          {"chave": chave, "maquina": licenca_modulo.maquina()})
+        nova = r.get("licenca") if isinstance(r.get("licenca"), dict) else None
+        if not r.get("ok"):
+            if contar:
+                return self._json(502 if r.get("sem_rede") else 403,
+                                  {"erro": r.get("erro") or r.get("motivo") or "não foi possível ativar",
+                                   "sem_rede": bool(r.get("sem_rede")), "licenca": nova})
+            # revalidacao que nao passou: o que ja' esta' guardado continua valendo (nao paro por rede)
+            return self._json(200, {"ok": False, "sem_rede": bool(r.get("sem_rede")),
+                                    "motivo": r.get("motivo") or r.get("erro") or "não conferi agora",
+                                    "licenca": licenca_modulo.resumo(), "guardado": bool(licenca_modulo.ler())})
+        lic = dict(nova or {})
+        guardado = licenca_modulo.gravar({
+            "chave": chave, "licenca_id": lic.get("id", ""),
+            "embarcacao_id": lic.get("embarcacao_id", ""), "embarcacao_nome": lic.get("embarcacao_nome", ""),
+            "cliente_id": lic.get("cliente_id", ""), "cliente_nome": lic.get("cliente_nome", ""),
+            "validade_tipo": lic.get("validade_tipo", "indeterminada"),
+            "validade_em": lic.get("validade_em", ""), "status": lic.get("status", "ativa"),
+            "motivo": lic.get("motivo", ""), "maquina": licenca_modulo.maquina(),
+            "ativada_em": em_iso(), "conferida_em": em_iso(), "origem": "terra"})
+        auditar(None, "licenca_guardada_no_bordo",
+                f"{guardado.get('licenca_id','')} -> {guardado.get('embarcacao_id','')} "
+                f"({licenca_modulo.pegada(chave)})", self.client_address[0])
+        return self._json(200, {"ok": True, "guardado": True, "licenca": licenca_modulo.resumo()})
+
+    def _esquecer_licenca(self, u) -> None:
+        """Desvincula ESTA maquina (trocar de barco). Nao e' o cliente quem decide.
+
+        Quem pode: o admin (de qualquer lugar) ou quem esta' NA PROPRIA maquina — o usuario de captura
+        logado, ou o pedido vindo de `127.0.0.1` (a tela da chave e' servida por este servidor e e'
+        exatamente quem esta' sentado no PC; sem isto, "trocar a chave desta maquina" dava 403 numa
+        instalacao nova, em que ninguem esta' logado ainda). Pedido de fora continua exigindo sessao."""
+        if not ((u and u["papel"] in PAPEL_ADMIN) or self._local()):
+            return self._json(403, {"erro": "só o admin (ou o usuário de captura nesta máquina)"})
+        tinha = bool(licenca_modulo.ler())
+        apagado = licenca_modulo.apagar()
+        auditar(u, "licenca_esquecida", f"tinha={tinha} apagado={apagado}", self.client_address[0])
+        return self._json(200, {"ok": True, "apagado": apagado, "tinha": tinha})
+
+    def _licencas_do_painel(self) -> list:
+        """A lista do painel do admin. Traz a CHAVE INTEIRA (decisao do dono de 19/11/2026: "sim, o
+        admin pode ver e copiar") — por isso ela e' recuperavel no banco, e nunca vai para log."""
+        with conexao() as c:
+            linhas = c.execute("""SELECT l.*, e.nome AS embarcacao_nome, e.cliente_id AS cliente_id,
+                                         cl.nome AS cliente_nome
+                                  FROM licencas l
+                                  LEFT JOIN embarcacoes e ON e.id = l.embarcacao_id
+                                  LEFT JOIN clientes cl ON cl.id = e.cliente_id
+                                  ORDER BY l.criada_em DESC""").fetchall()
+            usos: dict = {}
+            for r in c.execute("SELECT * FROM licenca_usos ORDER BY ultimo_em DESC"):
+                usos.setdefault(r["licenca_id"], []).append(
+                    {"maquina": r["maquina"], "primeiro_em": r["primeiro_em"], "ultimo_em": r["ultimo_em"]})
+        saida = []
+        for linha in linhas:
+            st = licenca_modulo.estado(linha["validade_tipo"], linha["validade_em"],
+                                       linha["status"], linha["motivo"])
+            item = dict(linha)
+            item.update(st)
+            item["chave_ultimos4"] = licenca_modulo.ultimos4(linha["chave"])
+            item["pega"] = licenca_modulo.pegada(linha["chave"])
+            item["maquinas_usadas"] = usos.get(linha["id"], [])
+            item["maquinas_em_uso"] = len(item["maquinas_usadas"])
+            item["maquinas_livres"] = max(0, int(linha["maquinas_max"] or 1) - item["maquinas_em_uso"])
+            saida.append(item)
+        return saida
+
+    def _criar_licenca(self, u) -> None:
+        """Gera a chave para UMA embarcacao. Tempo: `indeterminada` ou `ate <AAAA-MM-DD>`."""
+        d = self._corpo()
+        emb = str(d.get("embarcacao_id") or "").strip()
+        if not emb:
+            return self._json(422, {"erro": "informe a embarcação", "campos_faltando": ["embarcacao_id"]})
+        tipo = str(d.get("validade_tipo") or "indeterminada").strip().lower()
+        if tipo not in ("indeterminada", "ate"):
+            return self._json(422, {"erro": "validade_tipo tem que ser 'indeterminada' ou 'ate'"})
+        quando = str(d.get("validade_em") or "").strip()[:10]
+        if tipo == "ate":
+            if not re.match(r"^\d{4}-\d{2}-\d{2}$", quando):
+                return self._json(422, {"erro": "licença com prazo precisa de validade_em = AAAA-MM-DD"})
+            if licenca_modulo.vencida(tipo, quando):
+                return self._json(422, {"erro": "essa data já passou", "validade_em": quando})
+        else:
+            quando = ""
+        try:
+            maquinas = max(1, int(d.get("maquinas_max") or 1))
+        except (TypeError, ValueError):
+            return self._json(422, {"erro": "maquinas_max tem que ser um número (quantos PCs usam)"})
+        with conexao() as c:
+            if not c.execute("SELECT 1 FROM embarcacoes WHERE id=?", (emb,)).fetchone():
+                return self._json(422, {"erro": "embarcacao_id inexistente",
+                                        "dica": "cadastre a embarcação antes de gerar a licença"})
+            chave = licenca_modulo.gerar()
+            while c.execute("SELECT 1 FROM licencas WHERE chave=?", (chave,)).fetchone():
+                chave = licenca_modulo.gerar()
+            ident = "lic-" + secrets.token_hex(6)
+            c.execute("""INSERT INTO licencas (id,chave,embarcacao_id,validade_tipo,validade_em,
+                                               maquinas_max,status,motivo,criada_por,criada_em)
+                         VALUES (?,?,?,?,?,?,'ativa',?,?,?)""",
+                      (ident, chave, emb, tipo, quando, maquinas, str(d.get("motivo") or ""),
+                       (u["email"] if u else ""), em_iso()))
+        auditar(u, "criar_licenca", f"{ident} -> {emb} ({licenca_modulo.pegada(chave)})",
+                self.client_address[0])
+        return self._json(201, {"id": ident, "chave": chave, "embarcacao_id": emb,
+                                "validade_tipo": tipo, "validade_em": quando, "maquinas_max": maquinas,
+                                "formato": "XXXX-XXXX-XXXX-XXXX"})
+
+    def _licenca_acao(self, u) -> None:
+        """revogar / reativar / reemitir (chave nova) / atualizar (prazo e nº de PCs)."""
+        partes = [p for p in urlparse(self.path).path.split("/") if p]
+        if len(partes) < 4:
+            return self._json(404, {"erro": "rota de licença desconhecida"})
+        ident, acao = partes[2], partes[3]
+        d = self._corpo()
+        with conexao() as c:
+            linha = c.execute("SELECT * FROM licencas WHERE id=?", (ident,)).fetchone()
+        if not linha:
+            return self._json(404, {"erro": "licença não encontrada"})
+        if acao == "revogar":
+            motivo = str(d.get("motivo") or "revogada pelo admin").strip()
+            with conexao() as c:
+                c.execute("""UPDATE licencas SET status='revogada', motivo=?, revogada_em=?, alterada_em=?
+                             WHERE id=?""", (motivo, em_iso(), em_iso(), ident))
+            auditar(u, "revogar_licenca", f"{ident} -> {linha['embarcacao_id']}: {motivo}",
+                    self.client_address[0])
+            return self._json(200, {"ok": True, "id": ident, "status": "revogada", "motivo": motivo})
+        if acao == "reativar":
+            with conexao() as c:
+                c.execute("""UPDATE licencas SET status='ativa', motivo='', revogada_em='', alterada_em=?
+                             WHERE id=?""", (em_iso(), ident))
+            auditar(u, "reativar_licenca", f"{ident} -> {linha['embarcacao_id']}", self.client_address[0])
+            return self._json(200, {"ok": True, "id": ident, "status": "ativa"})
+        if acao == "reemitir":
+            with conexao() as c:
+                chave = licenca_modulo.gerar()
+                while c.execute("SELECT 1 FROM licencas WHERE chave=?", (chave,)).fetchone():
+                    chave = licenca_modulo.gerar()
+                c.execute("""UPDATE licencas SET chave=?, status='ativa', motivo='', revogada_em='',
+                             alterada_em=? WHERE id=?""", (chave, em_iso(), ident))
+                c.execute("DELETE FROM licenca_usos WHERE licenca_id=?", (ident,))
+            auditar(u, "reemitir_licenca", f"{ident} -> {linha['embarcacao_id']} "
+                    f"(pegada nova {licenca_modulo.pegada(chave)})", self.client_address[0])
+            return self._json(200, {"ok": True, "id": ident, "chave": chave, "status": "ativa",
+                                    "dica": "a chave antiga parou de funcionar; digite esta no PC de captura"})
+        if acao == "atualizar":
+            tipo = str(d.get("validade_tipo") or linha["validade_tipo"]).strip().lower()
+            if tipo not in ("indeterminada", "ate"):
+                return self._json(422, {"erro": "validade_tipo tem que ser 'indeterminada' ou 'ate'"})
+            quando = str(d.get("validade_em", linha["validade_em"]) or "").strip()[:10]
+            if tipo == "ate" and not re.match(r"^\d{4}-\d{2}-\d{2}$", quando):
+                return self._json(422, {"erro": "licença com prazo precisa de validade_em = AAAA-MM-DD"})
+            if tipo == "indeterminada":
+                quando = ""
+            try:
+                maquinas = max(1, int(d.get("maquinas_max", linha["maquinas_max"]) or 1))
+            except (TypeError, ValueError):
+                return self._json(422, {"erro": "maquinas_max tem que ser um número"})
+            with conexao() as c:
+                c.execute("""UPDATE licencas SET validade_tipo=?, validade_em=?, maquinas_max=?,
+                             alterada_em=? WHERE id=?""", (tipo, quando, maquinas, em_iso(), ident))
+            auditar(u, "atualizar_licenca",
+                    f"{ident} -> {linha['embarcacao_id']}: {tipo} {quando} / {maquinas} PC(s)",
+                    self.client_address[0])
+            return self._json(200, {"ok": True, "id": ident, "validade_tipo": tipo,
+                                    "validade_em": quando, "maquinas_max": maquinas})
+        return self._json(404, {"erro": f"ação desconhecida: {acao}",
+                                "acoes": ["revogar", "reativar", "reemitir", "atualizar"]})
+
+
 def _fechar_minutos_em_loop() -> None:
     """Fecha o historico de producao a cada minuto (card de 30 dias depende disso rodando)."""
     while True:
@@ -4535,9 +4928,9 @@ def _varredura_em_loop() -> None:
     inicio (a API precisa estar de pe' e o banco criado), depois usa o intervalo do ambiente
     (`LECSOR_ESPERA_DA_VARREDURA`, padrao 300 s). Falha vira aviso no log: a tela e a saude mostram.
     """
-    if not (os.environ.get("LECSOR_EMBARCACAO") or "").strip():
-        print("[api] varredura do bordo: nao rodo aqui (esta maquina nao tem embarcacao no pacote: "
-              "nao e' um computador de captura)", flush=True)
+    if not licenca_modulo.embarcacao():
+        print("[api] varredura do bordo: nao rodo aqui (esta maquina nao tem embarcacao: nao foi "
+              "ativada com a chave de licenca e nao e' um computador de captura)", flush=True)
         return
     time.sleep(5)
     while True:

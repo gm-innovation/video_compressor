@@ -66,6 +66,31 @@ function ambienteDoPacote(repo) {
   return Object.assign({}, deGround, daRaiz);
 }
 
+// CHAVE DE LICENCA (dono, 19/11/2026): quando o PC foi ATIVADO com a chave, a embarcacao desta
+// maquina vem do vinculo guardado (`<pasta de dados>\licenca.json`) e NAO do pacote — e' o que faz um
+// instalador so' servir para qualquer barco. Instalacao antiga (sem licenca) segue pelo
+// `ambiente.json`, sem quebrar nada. Nenhum valor de chave vai para log: aqui so' se le o arquivo.
+function caminhoDaLicenca(env) {
+  const direto = String((env || {}).LECSOR_LICENCA || '').trim();
+  if (direto) return direto;
+  const banco = String((env || {}).LECSOR_BANCO || '').trim();
+  if (!banco) return '';
+  return path.join(path.dirname(banco), 'licenca.json');
+}
+
+function licencaDaMaquina(env) {
+  const arquivo = caminhoDaLicenca(env);
+  if (!arquivo) return {};
+  try {
+    if (!fs.existsSync(arquivo)) return {};
+    const d = JSON.parse(fs.readFileSync(arquivo, 'utf8'));
+    if (!d || typeof d !== 'object' || !String(d.chave || '').trim()) return {};
+    return Object.assign({}, d, { arquivo });
+  } catch (e) {
+    return {};
+  }
+}
+
 // Ambiente dos processos filhos: destino do repasse, ffmpeg e python embutidos (o mediamtx chama
 // `python ground/repasse.py`, então a pasta do python precisa estar no PATH dele também).
 function amb(env, config, python) {
@@ -80,6 +105,12 @@ function amb(env, config, python) {
   const base = String(((config || {}).base) || '').trim();
   if (base) saida.LECSOR_LADO_TERRA_API = base;
   else delete saida.LECSOR_LADO_TERRA_API;
+  // A LICENCA manda sobre o pacote: e' ela que diz de que embarcacao e' esta maquina.
+  const lic = licencaDaMaquina(saida);
+  if (lic.embarcacao_id) {
+    saida.LECSOR_EMBARCACAO = String(lic.embarcacao_id);
+    saida.LECSOR_LICENCA = lic.arquivo;
+  }
   const sep = process.platform === 'win32' ? ';' : ':';
   const ff = ffmpegDe();
   if (ff) {

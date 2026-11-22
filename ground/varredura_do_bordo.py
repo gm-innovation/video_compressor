@@ -27,6 +27,8 @@ import os
 import re
 import unicodedata
 
+import licenca  # a embarcacao vem da LICENCA quando existe (senao, do ambiente do pacote)
+
 # Nomes que, no Windows, aparecem em placa de captura/HDMI — o radar de oleo chega assim (dono,
 # 19/11/2026: "receberemos as imagens ja' compiladas via hdmi"). E' so' PALPITE de relato: nada e'
 # cadastrado a partir disto.
@@ -63,7 +65,9 @@ def _id_da_camera(dispositivo: dict, existentes: set) -> str:
 
 
 def _embarcacao_do_pacote(embarcacao_id: str | None) -> str:
-    return str(embarcacao_id or os.environ.get("LECSOR_EMBARCACAO") or "").strip()
+    """A embarcacao DESTA maquina: a da LICENCA (dono, 19/11/2026: "inserir a chave da licenca e assim
+    fazer a conexao com a empresa e embarcacao cadastradas"), senao a do pacote (instalacao antiga)."""
+    return str(embarcacao_id or licenca.embarcacao() or "").strip()
 
 
 def _parece_radar(nome: str) -> bool:
@@ -100,8 +104,9 @@ def varrer(embarcacao_id: str | None = None, aplicar: bool = True) -> dict:
         _ULTIMA.update(r)
         return r
     if not emb:
-        r["motivo"] = ("esta maquina nao tem embarcacao definida (LECSOR_EMBARCACAO no ambiente.json "
-                       "do pacote): o cadastro automatico nao tem onde pendurar as cameras")
+        r["motivo"] = ("esta maquina nao tem embarcacao definida: ative a CHAVE DE LICENCA (tela do "
+                       "app) ou ponha LECSOR_EMBARCACAO — sem isso o cadastro automatico nao tem onde "
+                       "pendurar as cameras")
         _ULTIMA.clear()
         _ULTIMA.update(r)
         return r

@@ -21,6 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import producao  # noqa: E402
+import licenca  # noqa: E402
 
 FUSO = timezone(timedelta(hours=-3))
 
@@ -36,7 +37,7 @@ def _montar(desde_dias: int = 1) -> dict:
     link = producao.link_srt()
     net = producao.latencia_internet()
     return {
-        "embarcacao": os.environ.get("LECSOR_EMBARCACAO") or _embarcacao_do_banco(),
+        "embarcacao": licenca.embarcacao() or _embarcacao_do_banco(),
         "fluxos": linhas,
         "link": {
             "fluxo_id": link.get("fluxo"), "rtt_ms": link.get("rtt_ms"),

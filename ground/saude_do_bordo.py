@@ -155,8 +155,18 @@ def _dispositivos() -> dict:
 
 
 def _agente() -> dict:
-    """O laco do agente esta' vivo? O sinal e' a idade do arquivo de estado dele (o ultimo 'estive aqui')."""
-    caminho = pathlib.Path(os.environ.get("LECSOR_AGENTE_ESTADO") or (RAIZ / "ground" / "agente-vivo.json"))
+    """O laco do agente esta' vivo? O sinal e' a idade do arquivo de estado dele (o ultimo 'estive aqui').
+
+    O caminho e' do PROPRIO agente (`caminho_do_vivo()`): quem escreve decide onde. Havia dois padroes
+    diferentes (aqui `ground/agente-vivo.json`, no agente `ordens/agente-vivo.json`) e a saude passava a
+    dizer "o agente nunca escreveu o estado" numa maquina que estava trabalhando — fonte unica, sempre.
+    """
+    try:
+        from agente_de_ordens import caminho_do_vivo
+        padrao = caminho_do_vivo()
+    except Exception:  # noqa: BLE001
+        padrao = RAIZ / "ordens" / "agente-vivo.json"
+    caminho = pathlib.Path(os.environ.get("LECSOR_AGENTE_ESTADO") or padrao)
     try:
         if not caminho.exists():
             return {"laco_vivo": False, "ultima_rodada_em": "", "motivo": "o agente nunca escreveu o estado"}

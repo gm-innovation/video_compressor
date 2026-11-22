@@ -26,6 +26,7 @@ from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RAIZ / "ground"))
+import licenca  # noqa: E402  (a embarcacao vem da LICENCA quando existe; senao, do ambiente)
 
 LOG_DIR = RAIZ / "ground" / "envios" / "log"
 TRAVA_DIR = RAIZ / "ground" / ".repasse"
@@ -216,7 +217,7 @@ def anunciar(fluxo: str, destino: str, rotulo: str | None = None) -> dict:
         _log(fluxo, "sem lado terra/token de ingestao — nao anunciei o fluxo (ninguem vera' na tela)")
         return {"ok": False, "motivo": "sem lado terra ou sem LECSOR_TOKEN_INGESTAO"}
     corpo = {"fluxo_id": fluxo, "rotulo": (rotulo or os.environ.get("LECSOR_ROTULO") or fluxo)}
-    emb = (os.environ.get("LECSOR_EMBARCACAO") or "").strip()
+    emb = licenca.embarcacao()   # LICENCA deste PC de captura (dono, 19/11/2026); senao o ambiente
     if emb:
         corpo["embarcacao_id"] = emb
     dados = json.dumps(corpo).encode("utf-8")
@@ -255,7 +256,7 @@ def publicar_cadastro(camera: dict, destino: str | None = None, remover: bool = 
     if remover:
         # avisa o lado terra que a camera saiu de operacao: ele APAGA o cadastro (nao e' desativar)
         corpo["remover"] = True
-    emb = str(camera.get("embarcacao_id") or os.environ.get("LECSOR_EMBARCACAO") or "").strip()
+    emb = str(camera.get("embarcacao_id") or licenca.embarcacao() or "").strip()
     if emb:
         corpo["embarcacao_id"] = emb
     req = urllib.request.Request(f"{base}/api/cameras/anuncio", data=json.dumps(corpo).encode("utf-8"),

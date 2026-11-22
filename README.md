@@ -19,6 +19,33 @@ sistema comprime na máquina e o vídeo comprimido sobe para o lado terra (`dest
 ## Instaladores prontos (Windows x64) — PLUG & PLAY desde a 0.2.0
 Na página de releases: https://github.com/gm-innovation/video_compressor/releases
 
+### 0.10.0 — **a chave de licença: instalar o app no PC de captura e digitar a chave** (dono, 19/11/2026)
+- **O que o dono pediu:** *"quero apenas instalar o app no computador de captura, inserir a chave da licença e
+  assim fazer a conexão com a empresa e embarcação cadastradas, e a licença pode ser configurável por tempo ou
+  indeterminado"*. Antes disso o PC ficava preso pelo `ambiente.json` copiado no build (um instalador por barco).
+- **A chave:** `XXXX-XXXX-XXXX-XXXX` (Crockford base32, ~80 bits, **sem `I` nem `O`** para não confundir com
+  `1`/`0`) — o formato vive num módulo só, `ground/licenca.py`. Ela **decide o barco**: ativando, a máquina
+  passa a capturar as câmeras daquela embarcação e daquela empresa. O **token de ingestão continua único** e a
+  licença vale para **uma embarcação** (dono, via `clarify`).
+- **Quem gera é o admin** e ele **vê e copia a chave inteira sempre** (dono, via `clarify`): a chave é
+  recuperável no banco (`db/schema-fase7.sql`), só o admin lê, e ela **nunca** entra em log nem na auditoria —
+  a trilha guarda a **pegada** (sha256 curto). Revogar é **estado** (`status`), nunca `DELETE`; reemitir troca a
+  chave na hora e zera a contagem de PCs.
+- **Quantos PCs por licença é ajustável** (`maquinas_max`), com a lista de quais PCs usaram; licença pode ser
+  **indeterminada** ou **até uma data**.
+- **Sem internet o bordo mantém tudo normalmente** (dono, via `clarify`): nada de tolerância de dias nem corte
+  por falta de rede. O corte é só **vencimento** ou **revogação** — e chega ao bordo porque **é o bordo que
+  pergunta** (a arquitetura de comando de 19/11/2026: *"a única certeza é de que ele poderá enviar"*); ao
+  perceber a revogação, ele **para a transmissão** das câmeras daquela máquina e diz o motivo na tela.
+- **Telas:** no PC de captura o app abre a **tela da chave** (`GET /licenca`, servida pelo **próprio bordo**,
+  abre sem internet); no painel, o menu **Licenças** gera, mostra/copia a chave de novo, muda prazo e nº de PCs,
+  revoga, reativa e reemite — e **só o admin** vê isso (o operador recebe o aviso e nenhuma rota entrega chave).
+- **Provas novas (4):** `tests/test-licenca-de-ativacao.py` (lado terra: gerar, ler/copiar, prazo,
+  nº de PCs ajustável, vencida/revogada cortam, nada de chave em log/auditoria), `tests/test-licenca-do-bordo.py`
+  (lado bordo: ativar, `licenca.embarcacao()` passa a valer na varredura/repasse, **sem rede nada para**,
+  revogação para a transmissão), `tests/e2e-licenca-no-admin.py` e `tests/e2e-app-ativado-por-licenca.py`
+  (as duas telas em Chromium). Regressão curada: `tools/regressao-0100.py`.
+
 ### 0.9.1 — **o aplicativo instalado abre** (correção que veio do campo)
 - **Sintoma:** instalado em dois computadores, **nenhum** abria. **Causa medida no pacote:** em
   `desktop/servidor.js` a função que sobe o servidor local devolvia `hd` (a gravação contínua do radar) mas

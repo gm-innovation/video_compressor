@@ -89,10 +89,18 @@ def caminhos_do_ambiente() -> list[Path]:
 
 
 def carregar_ambiente() -> dict:
-    """Le o `ambiente.json` do pacote para o ambiente do processo. Devolve o que FALTOU, para a tela."""
+    """Le o `ambiente.json` do pacote para o ambiente do processo. Devolve o que FALTOU, para a tela.
+
+    `LECSOR_SEM_AMBIENTE=1` desliga a leitura. Serve para as PROVAS: sem isto, toda prova que sobe um
+    servidor proprio herda o lado terra (VPS), o token e o Supabase do `ambiente.json` que esta' no
+    repositorio, e passa a falar com a producao em vez de responder em casa — foi medido em 19/11/2026
+    (`tests/test-escopos-de-acesso.py` com 17 falhas por isso: as listas vinham vazias, do lado terra).
+    """
     import json
 
     faltando: dict = {}
+    if os.environ.get("LECSOR_SEM_AMBIENTE", "").strip() == "1":
+        return faltando
     for arquivo in caminhos_do_ambiente():
         try:
             dados = json.loads(arquivo.read_text(encoding="utf-8"))

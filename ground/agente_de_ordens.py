@@ -44,7 +44,10 @@ import urllib.request
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
-LOG_DIR = RAIZ / "ground" / "ordens" / "log"
+sys.path.insert(0, str(RAIZ / "ground"))
+import licenca  # noqa: E402  (a embarcacao vem da LICENCA quando existe; senao, do ambiente)
+
+LOG_DIR = RAIZ / "ordens" / "log"
 ESPERA_PADRAO = 20.0
 TETO_DO_BORDO_PADRAO = 7200.0      # 2 h: o maior tempo que o produto oferece ao cliente
 
@@ -637,9 +640,9 @@ def principal() -> int:
     base = base_do_lado_terra()
     local = base_local()
     token = (os.environ.get("LECSOR_TOKEN_INGESTAO") or "").strip()
-    emb = (os.environ.get("LECSOR_EMBARCACAO") or "").strip()
+    emb = licenca.embarcacao()   # LICENCA deste PC de captura (dono, 19/11/2026); senao o ambiente
     if not base or not token or not emb:
-        _log("sem lado terra, sem LECSOR_TOKEN_INGESTAO ou sem LECSOR_EMBARCACAO: o agente nao pergunta "
+        _log("sem lado terra, sem LECSOR_TOKEN_INGESTAO ou sem embarcacao (LICENCA/ambiente): o agente nao pergunta "
              "nada (a ordem do cliente nao chega nesta maquina). Configure o mesmo ambiente do envio.")
         return 2
     LIGADOS.clear()
