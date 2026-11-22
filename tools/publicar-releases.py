@@ -6,6 +6,7 @@ O token sai do arquivo normalizado (~/.hermes/vps-deploy/gh-token.txt.norm) e NU
 import json
 import os
 import pathlib
+import re
 import sys
 import time
 import urllib.error
@@ -33,11 +34,52 @@ def instaladores(versao: str) -> list:
     papel `unico` e a tela que abre e' a do papel de quem entra (dono, 17/11/2026). As versoes antigas
     seguem com um instalador por papel, que e' como elas foram publicadas.
     """
-    if versao >= "0.6.0":
+    # Comparacao por NUMERO, nao por texto: "0.10.0" >= "0.6.0" e' FALSO em texto ("1" < "6") e a 0.10.0
+    # caiu no ramo antigo — a release foi criada VAZIA (4 instaladores por papel que nao existem mais).
+    def _numeros(v: str) -> tuple:
+        return tuple(int(p) for p in re.findall(r"\d+", v)[:3]) or (0,)
+
+    if _numeros(versao) >= (0, 6, 0):
         return [a for a in sorted((DIST / "unico").glob(f"*{versao}*.exe")) if "ninstaller" not in a.name]
     return [DIST / papel.lower() / f"LECSOR-{papel}-{versao}-x64.exe" for papel in PAPEIS]
 
 NOTAS = {
+    "0.10.0": (
+        "**A chave de licenca: instalar o app no PC de captura e digitar a chave.**\n\n"
+        "Pedido do dono (19/11/2026): \"quero apenas instalar o app no computador de captura, inserir a chave "
+        "da licenca e assim fazer a conexao com a empresa e embarcacao cadastradas, e a licenca pode ser "
+        "configuravel por tempo ou indeterminado\".\n\n"
+        "**1. Como fica no campo (PC de captura novo):** instale o app. Na primeira abertura ele nao pede "
+        "login: abre a **tela da chave**. Digite a chave `XXXX-XXXX-XXXX-XXXX` (pode digitar em minusculas e "
+        "sem os tracos — o campo arruma) e o app passa a ser daquele **barco**, daquela **empresa**. Da "
+        "segunda abertura em diante ele abre normal, com as cameras do barco. Nao existe mais build por "
+        "barco nem arquivo de ambiente para o cliente editar.\n"
+        "**2. Quem gera a chave:** o **admin**, no painel, na tela **Licencas**: escolhe a embarcacao, se a "
+        "licenca vale por **tempo** ou e' **indeterminada**, e quantos PCs a licenca cobre. Ele **ve e copia "
+        "a chave inteira** quantas vezes quiser (a chave fica guardada para isso).\n"
+        "**3. O que a licenca decide (e o que NAO decide):** ela decide **o barco**. O **token de ingestao "
+        "continua unico**, como sempre foi — a licenca nao substitui o token.\n"
+        "**4. Revogar/reemitir:** revogar corta na hora o que aquele PC estava transmitindo; \"gerar outra "
+        "chave\" troca a chave e a antiga morre.\n"
+        "**5. Sem internet:** o PC de captura **continua capturando, gravando e enviando** normalmente. Nao "
+        "existe prazo de tolerancia nem corte por falta de rede: o corte e' so' por **vencimento** ou "
+        "**revogacao**, e so' acontece quando o PC consegue falar com o lado terra.\n"
+        "**6. Quem pode ver a chave:** so' o **admin**. Operador/cliente nem veem a tela (a rota responde "
+        "que e' so' do admin). A chave **nunca** vai para log nem para a trilha de auditoria — a auditoria "
+        "guarda so' a **pegada** (um resumo) da chave, para se saber o que aconteceu sem guardar o segredo.\n"
+        "**7. Instalacao antiga continua funcionando:** quem ja' tem o `ambiente.json` do barco segue "
+        "capturando sem ativar nada (nada e' apagado).\n\n"
+        "**Correcao que entrou junto:** o agente de ordens escreve o estado dele em `<raiz>\\ordens\\` e o "
+        "modulo de saude do bordo lia `<raiz>\\ground\\agente-vivo.json` — a tela \"Saude do bordo\" do admin "
+        "podia dizer \"o agente nunca escreveu o estado\" numa maquina que estava trabalhando. Agora a saude "
+        "pergunta o caminho ao proprio agente.\n\n"
+        "**Provas:** `tests/test-licenca-de-ativacao.py` (lado terra por HTTP), `tests/test-licenca-do-bordo.py` "
+        "(2 servidores: digitar a chave e o vinculo), `tests/test-licenca-nao-vaza.py` (a chave nao aparece em "
+        "log nem na auditoria), `tests/test-licenca-isola-embarcacao.py` (a licenca do barco A nao enxerga "
+        "camera do barco B), `tests/e2e-licenca-no-admin.py` e `tests/e2e-app-ativado-por-licenca.py` (telas "
+        "em Chromium de verdade), `tests/prova-viva-licenca-no-terra.py` (roda na VPS, contra o lado terra de "
+        "producao) e a regressao `tools/regressao-0100.py`.\n"
+    ),
     "0.9.1": (
         "**Correcao que faz o aplicativo ABRIR.**\n\n"
         "* **O que estava acontecendo:** o aplicativo instalado nao abria janela nenhuma. Causa medida no "
