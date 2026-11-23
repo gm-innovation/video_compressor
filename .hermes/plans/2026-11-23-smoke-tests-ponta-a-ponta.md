@@ -4,9 +4,9 @@ adotado (b), (a) e (a): o smoke convive com a lista curada por rodada, pode cria
 roda nesta máquina, com o número de campo ficando para o PC de captura real.
 
 **Progresso (23/11/2026):** **Fase 1 fechada** (medidor, ambiente, atendedor de bancada, relatório, comando
-único, J1–J4, `docs/smoke.md` — ver §9) e **Fase 2 com P0 (J3, J4) e P2 (J6) fechados**: o HD do radar
-grava full time e o cliente vê/pede/baixa o trecho na tela (ver §10). **P1 da Fase 2 (J5 — gravação,
-download e apagamento) e as Fases 3–5 não iniciadas.**
+único, J1–J4, `docs/smoke.md` — ver §9) e **Fase 2 FECHADA** (J3, J4, J5 e J6): a gravação do cliente
+(baixa e some quando ele sai) e o HD do radar de óleo (vê, pede e baixa) medidos na tela — ver §10.
+**Fases 3–5 não iniciadas.**
 
 # Smoke tests de ponta a ponta do pipeline bordo → terra → tela
 
@@ -231,10 +231,17 @@ decodificada com o tempo andando (0,56 → 6,56 s) · arranque 12,7 s do clique 
 
 ## 10. Diário da implementação (Fase 2, 23/11/2026)
 
-**Fase 2 P0 (J3, J4) e P2 (J6) fechados com número.** `python tools/regressao-smoke.py` → **RC=0**:
-medidor (11 checagens) + **J1–J4 e J6 → `SMOKE: 5/5 OK`** (J1 0,5 s · J2 21,9 s · J3 16,6 s · J4 23,6 s ·
-J6 18,9 s). **Falta o P1 da Fase 2 (J5 — gravação, download e apagamento)**, que tem motor em
-`tests/e2e-gravacao-baixar-e-sair.py`.
+**Fase 2 FECHADA (P0, P1 e P2) com número.** `python tools/regressao-smoke.py` → **RC=0**: medidor
+(11 checagens) + **J1–J6 → `SMOKE: 6/6 OK`** em 108 s (J1 · J2 24,2 s · J3 · J4 · **J5 18,2 s** ·
+**J6 16,8 s**).
+
+**Medida de J5 (a gravação, regra do dono "só até o cliente sair"):** o cliente põe a transmissão no ar
+(fluxo real do bordo), clica em GRAVAR → a tela diz *Parar gravação* → **2.358.516 B em 7,0 s** de
+gravação → o aviso *"gravação pronta — baixe agora / o arquivo é apagado quando você sair da tela ou
+desligar o computador"* → **o cliente baixa os mesmos 2.358.516 B, e o ffprobe confirma `h264 1920x1080`
+(vídeo de verdade)** → ao sair, **o arquivo é apagado em 0,5 s** e **a linha + as 15 ações de auditoria
+ficam** (`gravacao_iniciada`, `gravacao_parada`, `gravacao_avisada`, `gravacao_baixada`,
+`gravacoes_apagadas`).
 
 Medida de J6 (o radar de óleo, o caminho inteiro): **o HD gravou 1 bloco sem ninguém pedir (0,7 s)** →
 **o agente publicou o catálogo no terra (3 blocos em 4,3 s)** → **o cliente viu 5 trechos na tela** →
@@ -253,11 +260,14 @@ que só existe com o radar de verdade no HDMI.
 | I | O agente **só publica o catálogo** se o ambiente do HD estiver nele (`LECSOR_GRAVACAO_CONTINUA=1`) e, na bancada, ele sobe **antes** do HD | `tools/smoke/ambiente.py` | `reiniciar_agente()`: a J6 sobe o agente **com o ambiente do HD** (defeito da bancada, não do produto) |
 | J | A tabela do HD nasce com uma linha de **"carregando"**: contar linha **não provava nada** (a primeira rodada deu *5 linhas* de cabeçalho e 1 linha falsa de dado) | `jornadas/j6_radar_hd.py` | a checagem exige o resumo do app (`N trecho(s)`) — ele só é escrito **depois** de o catálogo chegar |
 | K | A tela do HD **não se atualiza sozinha**: com o trecho já `enviado`, o botão continuava `pedir` | `jornadas/j6_radar_hd.py` | a J6 **reabre a tela** (o gesto que o cliente faria) até aparecer o BAIXAR |
+| L | O botão de gravar passa por **"gravando…"** antes de virar **"Parar gravação"**: esperar o primeiro texto não-vazio lia o **meio do caminho** e reprovava a jornada certa | `jornadas/j5_gravacao_baixa_e_apaga.py` | a espera passou a aguardar o texto **"parar"** no botão |
+| M | **Uma leitura da tela derrubava a jornada inteira:** `tela_do_cliente` faz `pagina.evaluate(...)` e numa rodada a leitura voltou **string** → `AttributeError: 'str' object has no attribute 'get'` **matou a J2** (13 checagens OK e o resto perdido) | `tools/smoke/medidor.py` | a leitura virou **tolerante**: leitura que não é dicionário vira `erro` na medida e o veredito diz "sem imagem" com o motivo, em vez de explodir |
+| N | O laço do smoke **engolia a pilha** da jornada que explodia (`ERRO AttributeError: ...` sem o lugar) — meia-prova na hora de consertar | `tools/smoke/ponta-a-ponta.py` | o `except` imprime o **traceback** no log |
 
 ### O que a Fase 2 ainda não mede
 
 - **O conteúdo de imagem do HD do radar:** depende do radar de verdade entrando por HDMI. Nesta bancada o
-  anel de blocos é provado (gravou, girou, catalogou, entregou, baixou), o **quadro** não.
-- **A GRAVAÇÃO do vídeo ao vivo (J5):** quem grava o fluxo ao vivo é o lado terra, e o apagamento ao sair
-  é o que o dono pediu ("quando ele desligar o sistema ou sair da tela os arquivos serão apagados") — é o
-  P1 da Fase 2, com motor pronto em `tests/e2e-gravacao-baixar-e-sair.py`.
+  anel de blocos é provado (gravou, girou, catalogou, entregou, baixou), o **quadro** não. (Na J5, que usa
+  a fonte sintética, o vídeo gravado/baixado **é** imagem de verdade — `h264 1920x1080` lido pelo ffprobe.)
+- **O apagamento com o cliente DESLIGANDO o computador** (o batimento de 10 s): a J5 prova a saída pela
+  tela (`pagehide`, 0,5 s); a queda do computador é coberta pelo batimento e fica para a Fase 3.

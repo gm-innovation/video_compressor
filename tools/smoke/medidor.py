@@ -158,20 +158,28 @@ def tela_do_cliente(pagina, segundos: float = 4.0) -> dict:
     avanca — a prova de que o cliente esta' vendo imagem, e nao um retangulo preto.
     """
     def _ler() -> dict:
-        return pagina.evaluate("""() => {
-            const vs = [...document.querySelectorAll('video')];
-            const v = vs.map(x => ({largura: x.videoWidth, altura: x.videoHeight,
-                                    tempo: x.currentTime, travado: x.paused, pronto: x.readyState,
-                                    src: (x.currentSrc || x.src || '').slice(0, 90)})).find(x => x.largura > 0) || vs[0] || {};
-            return {quantidade: vs.length, video: v || {}};
-        }""")
+        # A leitura NAO pode derrubar a jornada: a tela do cliente se redesenha sozinha e uma leitura
+        # pode pegar o instante da troca. Se nao vier um dicionario, e' leitura perdida — o veredito
+        # sai "sem imagem" (com o motivo), nunca um AttributeError que esconde o estado do video.
+        # (Medido em 23/11/2026: numa rodada do smoke a leitura voltou string e a J2 caiu inteira.)
+        try:
+            r = pagina.evaluate("""() => {
+                const vs = [...document.querySelectorAll('video')];
+                const v = vs.map(x => ({largura: x.videoWidth, altura: x.videoHeight,
+                                        tempo: x.currentTime, travado: x.paused, pronto: x.readyState,
+                                        src: (x.currentSrc || x.src || '').slice(0, 90)})).find(x => x.largura > 0) || vs[0] || {};
+                return {quantidade: vs.length, video: v || {}};
+            }""")
+        except Exception as e:  # noqa: BLE001
+            return {"quantidade": 0, "video": {}, "erro": f"{type(e).__name__}: {e}"}
+        return r if isinstance(r, dict) else {"quantidade": 0, "video": {}, "erro": f"leitura inesperada: {type(r).__name__}"}
 
     antes = _ler()
     time.sleep(segundos)
     depois = _ler()
     t_antes = float((antes.get("video") or {}).get("tempo") or 0)
     t_depois = float((depois.get("video") or {}).get("tempo") or 0)
-    return {"quantidade": antes.get("quantidade", 0),
+    return {"quantidade": antes.get("quantidade", 0), "erro": antes.get("erro") or depois.get("erro") or "",
             "largura": (depois.get("video") or {}).get("largura") or 0,
             "altura": (depois.get("video") or {}).get("altura") or 0,
             "tempo_antes_s": round(t_antes, 2), "tempo_depois_s": round(t_depois, 2),

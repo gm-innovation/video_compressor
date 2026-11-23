@@ -47,7 +47,7 @@ def main() -> int:
                        [sys.executable, "tests/smoke-medidor-detecta-falha.py"], 420))
     # J6 (o HD do radar) entra na rodada completa: ela leva mais tempo e, sem dispositivo de video na
     # maquina, ela mesma se marca NAO MEDIDA em vez de mentir "OK".
-    jornadas = "1,2" if args.rapido else "1,2,3,4,6"
+    jornadas = "1,2" if args.rapido else "1,2,3,4,5,6"
     provas.append((f"smoke de ponta a ponta (jornadas {jornadas})",
                    [sys.executable, "tools/smoke/ponta-a-ponta.py", "--jornadas", jornadas], 1500))
 

@@ -36,6 +36,7 @@ MODULOS = {
     2: "jornadas.j2_ao_vivo",
     3: "jornadas.j3_sai_e_para",
     4: "jornadas.j4_dois_clientes",
+    5: "jornadas.j5_gravacao_baixa_e_apaga",
     6: "jornadas.j6_radar_hd",
 }
 
@@ -83,13 +84,13 @@ def principal() -> int:
     resultados: list[dict] = []
     ctx: dict = {"camera": args.camera, "navegador": None}
     try:
-        pronto = amb.subir(com_agente=bool({1, 2, 3, 4, 6} & set(pedidas)))
+        pronto = amb.subir(com_agente=bool({1, 2, 3, 4, 5, 6} & set(pedidas)))
         print(f"ambiente: {pronto}", flush=True)
         if not pronto.get("terra"):
             print("!! o lado terra nao subiu — nada a medir", flush=True)
             print(f"   (cauda do log: {amb.log_de('terra', 300)!r})")
             return 2
-        if 2 in pedidas or 4 in pedidas:
+        if {2, 4, 5} & set(pedidas):
             if not pronto.get("mediamtx"):
                 print("!! sem mediamtx nao ha' midia para medir", flush=True)
                 return 2
@@ -98,7 +99,7 @@ def principal() -> int:
                 print(f"!! o agente do bordo nao subiu (cauda: {amb.log_de('agente', 300)!r})", flush=True)
 
         pw = None
-        if not args.sem_navegador and ({2, 3, 4, 6} & set(pedidas)):
+        if not args.sem_navegador and ({2, 3, 4, 5, 6} & set(pedidas)):
             from playwright.sync_api import sync_playwright
             pw = sync_playwright().start()
             ctx["navegador"] = pw.chromium.launch(executable_path=chromium())
@@ -110,10 +111,13 @@ def principal() -> int:
             try:
                 jornada = mod.rodar(amb, ctx)
             except Exception as e:  # noqa: BLE001 — jornada que explode nao derruba o smoke
+                import traceback
                 from relatorio import Jornada
                 jornada = Jornada(numero, MODULOS[numero])
                 jornada.erro = f"{type(e).__name__}: {e}"
                 print(f"    ERRO {jornada.erro}", flush=True)
+                # a jornada que explode precisa deixar a PILHA no log: "deu erro" sem o lugar e' meia-prova
+                print("    " + traceback.format_exc().replace("\n", "\n    "), flush=True)
             dados = jornada.gravar(raiz_saida, dia, extratos={"cauda do bordo": amb.log_de("agente", 1500),
                                                               "cauda do terra": amb.log_de("terra", 800)})
             dados["segundos"] = round(time.time() - t0, 1)

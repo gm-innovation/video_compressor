@@ -298,17 +298,19 @@ Saída da medição de banda/VMAF: `bench/saida/resultado-fase0.json` e `medicoe
 ```bash
 export LECSOR_SENHA_DEMO=...                    # senha dos usuários de demonstração do lado terra
 python tools/regressao-smoke.py --rapido        # medidor + J1+J2 (~2 min) — antes de commitar
-python tools/regressao-smoke.py                 # medidor + J1..J4 + J6 (o HD do radar) (~7 min)
+python tools/regressao-smoke.py                 # medidor + J1..J6 (a bancada inteira) (~8 min)
 ```
 
 Cada jornada tem **ação de usuário em navegador real**, **comando real de mídia** (ffmpeg/SRT/mediamtx)
 e **medida com número**; o relatório sai em `smoke/saida/<data>/`. Regra dura: **sem medida, a jornada
 não é "OK"** — é "NÃO MEDIDA". Detalhes, vereditos e limites em [`docs/smoke.md`](docs/smoke.md).
 
-Rodada de 23/11/2026 (bancada, fluxo `cam-01`): **30,0 fps · 3,176 Mbps · latência 0,199 s · imagem
-1920×1080 decodificada no cliente · arranque 12,7 s**; **J1–J4 e J6 → `SMOKE: 5/5 OK`** (o HD do radar:
-gravou sozinho → catálogo no terra → o cliente viu os trechos → PEDIR 201 → **o bordo enviou** → o cliente
-baixou o arquivo).
+Rodada de 23/11/2026 (bancada, fluxo `cam-01`): **`SMOKE: 6/6 OK`** (J1–J6).
+**J2**: 30,0 fps · 3,182 Mbps · latência 0,217 s · imagem 1920×1080 decodificada no cliente · arranque 15,3 s.
+**J5** (gravação): **2.358.516 B em 7,0 s** de gravação, baixados iguais (**h264 1920×1080**, lido pelo
+ffprobe), **o arquivo apagado 0,5 s depois de o cliente sair** e a linha + as 15 ações de auditoria
+preservadas. **J6** (radar de óleo): o HD gravou sozinho → catálogo no terra → o cliente viu os trechos →
+PEDIR 201 → **o bordo enviou** → o cliente baixou.
 
 ## Medições feitas na bancada (nada digitado à mão)
 
