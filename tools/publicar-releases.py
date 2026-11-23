@@ -24,7 +24,7 @@ PAPEIS = ("Captura", "Terra", "Admin", "Cliente")
 # Ordem de publicacao: o PRIMEIRO e' o `latest` do GitHub. Nova versao entra na frente.
 # A 0.8.0 nunca chegou a virar release: o que ela trazia (config do bordo vinda de terra e saude do
 # bordo no admin) entrou inteiro na 0.9.0, que e' quem publica. A nota dela fica em NOTAS abaixo.
-VERSOES_PUBLICADAS = ("0.10.0", "0.9.1", "0.9.0", "0.7.0", "0.6.10", "0.6.9", "0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
+VERSOES_PUBLICADAS = ("0.10.1", "0.10.0", "0.9.1", "0.9.0", "0.7.0", "0.6.10", "0.6.9", "0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
 
 
 def instaladores(versao: str) -> list:
@@ -44,6 +44,32 @@ def instaladores(versao: str) -> list:
     return [DIST / papel.lower() / f"LECSOR-{papel}-{versao}-x64.exe" for papel in PAPEIS]
 
 NOTAS = {
+    "0.10.1": (
+        "**Os consertos que os testes de ponta a ponta acharam DENTRO do produto.**\n\n"
+        "Depois dos testes de ponta a ponta da bancada (10 jornadas, J1 a J10, com acao de usuario de verdade e "
+        "medida de verdade), dois defeitos de verdade do produto apareceram e vao corrigidos nesta versao — os "
+        "dois estavam no caminho do PC de captura.\n\n"
+        "**1. O alvo de banda que o admin publica chegava ao ffmpeg com a unidade errada.** O campo `alvo` das "
+        "cameras e' o valor cru do `-b:v` e a convencao do produto e' `NNNNk` (milhares de bits): o admin "
+        "publicava `800` e o **ffmpeg lia 800 BITS/s** (0,0 Mbps, 0 quadro) — a camera nao subia. Agora o valor "
+        "publicado carrega o `k` e a validacao aceita `800` ou `800k` (os testes antigos exigiam \"800\" e deixavam "
+        "o defeito passar; foram atualizados).\n\n"
+        "**2. A licenca revogada nao cortava sozinha.** O agente de ordens so' conferia a licenca quando alguem "
+        "abria a tela no barco, e a memoria do agente dizia que a camera estava no ar — revogar nao cortava. "
+        "Agora o agente confere a licenca **antes** de ler a flag, a pergunta \"esta ligado?\" e' respondida pelo "
+        "**estado gravado** (nao pela memoria) e a unica porta que liga camera (`ligar_camera`) respeita "
+        "`licenca_bloqueia_captura()` — o pedido do cliente nao desfaz o que a licenca proibiu. **Medido: a "
+        "transmissao morre em 2,3 s**, sem ninguem abrir tela no barco.\n\n"
+        "**Correcao que entrou junto:** a trilha de auditoria escrevia a mesma linha `captura_parada_por_licenca` "
+        "8 vezes em ~40 s (o corte era auditado a cada ciclo). Agora a auditoria e' escrita **na transicao** — a "
+        "trilha registra o que aconteceu.\n\n"
+        "**Provas:** `python tools/smoke/ponta-a-ponta.py --jornadas 7,8,9,10` (J8 = o admin manda e o bordo "
+        "obedece; J10 = a licenca revogada corta o que esta' no ar) e `--jornadas 9` (o defeito de verdade no "
+        "bordo e a saude que o denuncia), `tools/regressao-smoke.py --completo` (J1 a J10), "
+        "`tests/test-licenca-do-bordo.py`, `tools/regressao-0100.py` (20 provas) e os e2e "
+        "`tests/e2e-admin-configura-e-bordo-obedece.py` / `tests/e2e-config-do-bordo-vinda-de-terra.py` "
+        "(atualizados para o `800k`).\n"
+    ),
     "0.10.0": (
         "**A chave de licenca: instalar o app no PC de captura e digitar a chave.**\n\n"
         "Pedido do dono (19/11/2026): \"quero apenas instalar o app no computador de captura, inserir a chave "

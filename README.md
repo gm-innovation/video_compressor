@@ -19,6 +19,23 @@ sistema comprime na máquina e o vídeo comprimido sobe para o lado terra (`dest
 ## Instaladores prontos (Windows x64) — PLUG & PLAY desde a 0.2.0
 Na página de releases: https://github.com/gm-innovation/video_compressor/releases
 
+### 0.10.1 — **os consertos que os testes de ponta a ponta acharam dentro do produto** (23/11/2026)
+- **O alvo de banda que o admin publica chegava ao ffmpeg com a unidade errada:** o campo `alvo` é o valor cru
+  do `-b:v` e a convenção do produto é `NNNNk` (milhares de bits) — o admin publicava `800` e o ffmpeg lia
+  **800 bits/s** (0,0 Mbps, 0 quadro), ou seja a câmera não subia. Agora o valor publicado carrega o `k` e a
+  validação aceita `800` ou `800k` (os testes antigos exigiam `"800"` e deixavam o defeito passar: foram
+  atualizados).
+- **A licença revogada não cortava sozinha:** o agente de ordens só conferia a licença quando alguém abria a
+  tela no barco, e a memória do agente dizia que a câmera estava no ar. Agora o agente confere a licença
+  **antes** de ler a flag, o "está ligado?" é respondido pelo **estado gravado** (não pela memória) e a única
+  porta que liga câmera (`ligar_camera`) respeita `licenca_bloqueia_captura()` — o pedido do cliente não
+  desfaz o que a licença proibiu. **Medido: a transmissão morre em 2,3 s**, sem ninguém abrir tela no barco.
+- **A auditoria do corte passou a ser escrita na transição:** antes ela repetia a mesma linha
+  `captura_parada_por_licenca` 8 vezes em ~40 s.
+- **Provas:** `python tools/smoke/ponta-a-ponta.py --jornadas 7,8,9,10` → `SMOKE: 4/4 OK` (J7 3,9 s · J8 73,4 s
+  · J9 195,7 s · J10 58,7 s), `tools/regressao-smoke.py --completo` (J1 a J10), `tests/test-licenca-do-bordo.py`
+  e `tools/regressao-0100.py` (20 provas).
+
 ### 0.10.0 — **a chave de licença: instalar o app no PC de captura e digitar a chave** (dono, 19/11/2026)
 - **O que o dono pediu:** *"quero apenas instalar o app no computador de captura, inserir a chave da licença e
   assim fazer a conexão com a empresa e embarcação cadastradas, e a licença pode ser configurável por tempo ou
