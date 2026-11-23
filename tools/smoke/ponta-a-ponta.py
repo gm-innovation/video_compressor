@@ -29,7 +29,7 @@ RAIZ = AQUI.parents[1]
 sys.path.insert(0, str(AQUI))
 
 from ambiente import Ambiente, chromium  # noqa: E402
-from relatorio import resumo_geral  # noqa: E402
+from relatorio import qualidade, resumo_geral  # noqa: E402
 
 MODULOS = {
     1: "jornadas.j1_vinculo",
@@ -141,9 +141,18 @@ def principal() -> int:
                        "camera": args.camera, "terra": amb.terra, "bordo": amb.bordo,
                        "banco_do_terra": str(amb.banco_terra), "banco_do_bordo": str(amb.banco_bordo),
                        "mediamtx_proprio": amb.mediamtx_proprio}
-    texto = resumo_geral(resultados, ambiente_resumo, dia, commit=commit_atual())
+    # OS TRES NUMEROS DO PRODUTO (Fase 4 do plano): fps, latencia e reducao de banda num lugar so', com o
+    # comando e a maquina carimbados. Numero abaixo do alvo => "com ressalvas", nunca "OK".
+    q = qualidade(resultados, ambiente_resumo, dia, comando=" ".join(sys.argv), commit=commit_atual())
+    texto = resumo_geral(resultados, ambiente_resumo, dia, commit=commit_atual(), qualidade_do_dia=q)
     (raiz_saida / dia).mkdir(parents=True, exist_ok=True)
     (raiz_saida / dia / "RESUMO.md").write_text(texto, encoding="utf-8")
+    (raiz_saida / dia / "qualidade.json").write_text(json.dumps(q, ensure_ascii=False, indent=2),
+                                                     encoding="utf-8")
+    print(f"qualidade: {q['fps']} fps · {q['latencia_s']} s · {q['reducao_pct']}% de reducao "
+          f"(vs bruto teorico {q['bruto_teorico_kbps']} kbps) -> {q['veredito']}"
+          + (f" · fora do alvo: {', '.join(q['fora_do_alvo'])}" if q["fora_do_alvo"] else "")
+          + (f" · sem medida: {', '.join(q['sem_medida'])}" if q["sem_medida"] else ""), flush=True)
     (raiz_saida / dia / "resultado.json").write_text(
         json.dumps({"dia": dia, "commit": commit_atual(), "ambiente": ambiente_resumo,
                     "jornadas": resultados}, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -314,7 +314,10 @@ obedecendo (**a banda cai de 3,187 para 0,773 Mbps** com o vídeo de pé), o **f
 revogação que **não cortava sozinha**; detalhes em [`docs/smoke.md`](docs/smoke.md)).
 A rodada **completa** (J1–J10) nesta máquina dá **`9/10 OK`**: só a **J2** falha, medindo **26,4 fps**
 (piso 27) com o host ocupado — **isolada, a J2 mede 30,0 fps**, então o que falta é máquina ociosa, não
-produto (a J2 sob carga é um aviso de bancada; o número de campo é do PC de captura).
+produto (a J2 sob carga é um aviso de bancada; o número de campo é do PC de captura). Cada rodada escreve também `smoke/saida/<data>/qualidade.json` — os três
+números do produto (fps, latência e redução de banda) com o comando, o commit e a máquina carimbados:
+`--rapido` de 23/11/2026 = **30,0 fps · 0,201 s · 99,57 %** contra 746.496 kbps de bruto teórico (regra do
+`ground/entrada.py`).
 **J2**: 30,0 fps · 3,182 Mbps · latência 0,217 s · imagem 1920×1080 decodificada no cliente · arranque 15,3 s.
 **J5** (gravação): **2.358.516 B em 7,0 s** de gravação, baixados iguais (**h264 1920×1080**, lido pelo
 ffprobe), **o arquivo apagado 0,5 s depois de o cliente sair** e a linha + as 15 ações de auditoria

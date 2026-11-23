@@ -307,3 +307,25 @@ que só existe com o radar de verdade no HDMI.
 - **A rodada completa (J1–J10) num host ocioso:** na rodada completa desta máquina, com o app de trabalho
   aberto, a **J2 mediu 26,39 fps** (piso de 27) e falhou **por carga do host**, não pelo produto — isolada,
   a J2 mede **30,0 fps**. O número de campo é do PC de captura (declarado desde a Fase 1).
+
+## 12. Diário da implementação (Fase 4, 23/11/2026) — **P0 FEITA**
+
+**P0 — os três números do produto num lugar só.** `tools/smoke/relatorio.py::qualidade()` passou a escrever
+`smoke/saida/<data>/qualidade.json` a cada rodada, com os números, o **comando** de origem, o **commit**, a
+**máquina** (nome, sistema, processadores) e o **ambiente** (modo, terra, bordo, bancos):
+
+| número | medido (23/11/2026, `--rapido`) | alvo | veredito |
+|---|---|---|---|
+| **fps** | **30,0** | ≥ 30 | OK |
+| **latência** | **0,201 s** | ≤ 3 s | OK |
+| **redução de banda** | **99,57 %** (3,18 Mbps contra **746.496 kbps** de bruto teórico) | ≥ 80 % | OK |
+| **conjunto** | — | — | **OK** |
+
+A **redução** usa a regra do **próprio produto** (`ground/entrada.py`: `W × H × fps × 12 / 8` → 1080p30 =
+746,5 Mbps), nunca uma conta reescrita na bancada: a fonte da bancada é **crua** (`testsrc2`/webcam), então
+não existe fluxo comprimido de entrada para comparar — o que se mede é **quanto custaria mandar o vídeo cru**.
+O `qualidade.json` traz essa nota, e o `RESUMO.md` ganhou a seção “Os três números do produto”. Regra do
+plano aplicada no código: **número fora do alvo ou sem medida ⇒ `OK_COM_RESSALVAS`, nunca `OK`**.
+
+**P1 (4 câmeras + radar) e P2 (rodada longa de 2 h/8 h) continuam dependendo do PC de captura real** — sem
+ele, o teto de CPU/memória e a estabilidade medida seriam desta máquina de trabalho, não do bordo.

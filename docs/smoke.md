@@ -41,8 +41,9 @@ Regra dura: **sem medida, o veredito nunca é "OK"**. Um número ausente aparece
 
 ## Evidência
 
-`smoke/saida/<AAAA-MM-DD>/` — `RESUMO.md` (um veredito por jornada), `resultado.json` e, por jornada,
-`j<N>/qa.md` + `j<N>/resultado.json` com as checagens e as medidas.
+`smoke/saida/<AAAA-MM-DD>/` — `RESUMO.md` (um veredito por jornada + **os três números do produto**),
+`resultado.json`, `qualidade.json` (fps, latência e redução de banda com o comando, o commit, a máquina e o
+ambiente carimbados) e, por jornada, `j<N>/qa.md` + `j<N>/resultado.json` com as checagens e as medidas.
 
 ## O que o smoke **não** mede (declarado)
 
