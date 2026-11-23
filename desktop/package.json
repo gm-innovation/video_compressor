@@ -5,6 +5,10 @@
   "description": "Aplicativo Windows do pipeline de video bordo-terra: instalador PLUG & PLAY (leva o servidor, o ffmpeg, o mediamtx e o Python dentro do pacote).",
   "main": "main.js",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gm-innovation/video_compressor.git"
+  },
   "scripts": {
     "start": "electron .",
     "verificar": "electron . --verificar",
