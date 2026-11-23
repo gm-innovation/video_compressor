@@ -217,7 +217,10 @@ def main() -> int:
         log = rodar_agente(bordo_db, base_terra, p_bordo, tmp)
         nota("agente (1a rodada): " + " | ".join(l for l in log.splitlines() if "config" in l.lower())[:400])
         alvo_bordo = um(bordo_db, "SELECT alvo FROM cameras WHERE id='cam-01'")
-        exigir(alvo_bordo.get("alvo") == "300", f"o bordo APLICOU o alvo no banco dele (alvo={alvo_bordo.get('alvo')!r})")
+        # "300k": o campo `cameras.alvo` vai CRU para o `-b:v` do ffmpeg (a J8 do smoke mediu o defeito de
+        # gravar so' "300": 300 BITS/s, video morto).
+        exigir(alvo_bordo.get("alvo") == "300k",
+               f"o bordo APLICOU o alvo no banco dele, no formato do ffmpeg (alvo={alvo_bordo.get('alvo')!r})")
         teto_local = um(bordo_db, "SELECT valor FROM config_local WHERE camera_id='' AND chave='teto_s'")
         exigir(teto_local.get("valor") == "1800", f"o bordo guardou o teto local ({teto_local.get('valor')!r})")
 
@@ -243,8 +246,8 @@ def main() -> int:
         recusas = {x["chave"]: x for x in todos(terra_db, "SELECT * FROM config_aplicada_bordo WHERE motivo != ''")}
         exigir("gravacao_continua" in recusas and "nao aplica" in recusas["gravacao_continua"]["motivo"],
                f"a recusa chegou a terra com motivo: {recusas.get('gravacao_continua', {}).get('motivo')!r}")
-        exigir(um(bordo_db, "SELECT alvo FROM cameras WHERE id='cam-01'").get("alvo") == "300",
-               "a recusa NAO derrubou o que ja' estava aplicado (alvo segue 300)")
+        exigir(um(bordo_db, "SELECT alvo FROM cameras WHERE id='cam-01'").get("alvo") == "300k",
+               "a recusa NAO derrubou o que ja' estava aplicado (alvo segue 300k)")
 
         # 5) publicacao NOVA (versao nova) e' aplicada na proxima rodada
         st, r = pedir("POST", base_terra + "/api/config",

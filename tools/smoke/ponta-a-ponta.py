@@ -38,6 +38,10 @@ MODULOS = {
     4: "jornadas.j4_dois_clientes",
     5: "jornadas.j5_gravacao_baixa_e_apaga",
     6: "jornadas.j6_radar_hd",
+    7: "jornadas.j7_escopos",
+    8: "jornadas.j8_admin_manda",
+    9: "jornadas.j9_defeito_e_saude",
+    10: "jornadas.j10_licenca_revogada",
 }
 
 
@@ -84,13 +88,13 @@ def principal() -> int:
     resultados: list[dict] = []
     ctx: dict = {"camera": args.camera, "navegador": None}
     try:
-        pronto = amb.subir(com_agente=bool({1, 2, 3, 4, 5, 6} & set(pedidas)))
+        pronto = amb.subir(com_agente=bool({1, 2, 3, 4, 5, 6, 8} & set(pedidas)))
         print(f"ambiente: {pronto}", flush=True)
         if not pronto.get("terra"):
             print("!! o lado terra nao subiu — nada a medir", flush=True)
             print(f"   (cauda do log: {amb.log_de('terra', 300)!r})")
             return 2
-        if {2, 4, 5} & set(pedidas):
+        if {2, 4, 5, 8} & set(pedidas):
             if not pronto.get("mediamtx"):
                 print("!! sem mediamtx nao ha' midia para medir", flush=True)
                 return 2
@@ -99,7 +103,7 @@ def principal() -> int:
                 print(f"!! o agente do bordo nao subiu (cauda: {amb.log_de('agente', 300)!r})", flush=True)
 
         pw = None
-        if not args.sem_navegador and ({2, 3, 4, 5, 6} & set(pedidas)):
+        if not args.sem_navegador and ({2, 3, 4, 5, 6, 8, 10} & set(pedidas)):
             from playwright.sync_api import sync_playwright
             pw = sync_playwright().start()
             ctx["navegador"] = pw.chromium.launch(executable_path=chromium())

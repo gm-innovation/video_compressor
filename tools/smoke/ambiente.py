@@ -51,6 +51,48 @@ def senha_de_demo() -> str:
     return os.environ.get("LECSOR_SENHA_DEMO") or SENHA_PADRAO
 
 
+def _do_env_local(chave: str) -> str:
+    """Le' UMA chave do `ground/.env.local` (nunca imprime o valor). So' o smoke de producao usa isto:
+    a bancada tira de proposito o Supabase do ambiente dos filhos (`_env`)."""
+    if os.environ.get(chave):
+        return os.environ[chave]
+    try:
+        for linha in (RAIZ / "ground" / ".env.local").read_text(encoding="utf-8").splitlines():
+            linha = linha.strip()
+            if not linha or linha.startswith("#") or "=" not in linha:
+                continue
+            nome, _, valor = linha.partition("=")
+            if nome.strip() == chave:
+                os.environ[chave] = valor.strip().strip('"').strip("'")
+                return os.environ[chave]
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
+
+
+def apagar_usuario_do_supabase(email: str) -> bool:
+    """Apaga o usuario de SMOKE do Supabase Auth (o smoke cria, o smoke apaga — decisao S2 do plano).
+
+    Na bancada isto e' inerte de proposito: o `_env` tira `LECSOR_SUPABASE_*` do ambiente dos filhos,
+    entao o lado terra da bancada nem cria credencial no Supabase (`_provisionar_no_supabase` devolve
+    `sem_chave_servico`). No modo producao a credencial existe e a limpeza e' real. Sem chave/rede
+    devolve False e nao apaga nada — o relatorio diz o que sobrou.
+    """
+    for chave in ("LECSOR_SUPABASE_URL", "LECSOR_SUPABASE_SERVICE_KEY"):
+        _do_env_local(chave)
+    try:
+        sys.path.insert(0, str(RAIZ / "ground"))
+        import supabase_auth  # noqa: PLC0415 — so' existe o caminho `ground/` do produto
+        uid = supabase_auth.id_por_email(email)
+        if not uid:
+            return False
+        supabase_auth._pedido(f"/auth/v1/admin/users/{uid}", None, supabase_auth._servico(),  # noqa: SLF001
+                              metodo="DELETE")
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def token_do_bordo() -> str:
     return os.environ.get("LECSOR_TOKEN_INGESTAO") or TOKEN_PADRAO
 

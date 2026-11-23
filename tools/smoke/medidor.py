@@ -163,16 +163,26 @@ def tela_do_cliente(pagina, segundos: float = 4.0) -> dict:
         # sai "sem imagem" (com o motivo), nunca um AttributeError que esconde o estado do video.
         # (Medido em 23/11/2026: numa rodada do smoke a leitura voltou string e a J2 caiu inteira.)
         try:
+            # O `|| vs[0]` devolvia o ELEMENTO de video (nao um objeto simples) e o navegador nao o
+            # serializa: a leitura voltava string e a J2 caia com AttributeError. Agora todo caminho
+            # monta um objeto simples — e o Python ainda confere o formato antes de usar (medido em
+            # 23/11/2026 na rodada completa; o defeito ja' tinha aparecido uma vez na Fase 2).
             r = pagina.evaluate("""() => {
                 const vs = [...document.querySelectorAll('video')];
-                const v = vs.map(x => ({largura: x.videoWidth, altura: x.videoHeight,
-                                        tempo: x.currentTime, travado: x.paused, pronto: x.readyState,
-                                        src: (x.currentSrc || x.src || '').slice(0, 90)})).find(x => x.largura > 0) || vs[0] || {};
-                return {quantidade: vs.length, video: v || {}};
+                const campos = x => ({largura: x.videoWidth, altura: x.videoHeight,
+                                      tempo: x.currentTime, travado: x.paused, pronto: x.readyState,
+                                      src: (x.currentSrc || x.src || '').slice(0, 90)});
+                const v = vs.map(campos).find(x => x.largura > 0) || (vs[0] ? campos(vs[0]) : {});
+                return {quantidade: vs.length, video: v};
             }""")
         except Exception as e:  # noqa: BLE001
             return {"quantidade": 0, "video": {}, "erro": f"{type(e).__name__}: {e}"}
-        return r if isinstance(r, dict) else {"quantidade": 0, "video": {}, "erro": f"leitura inesperada: {type(r).__name__}"}
+        if not isinstance(r, dict):
+            return {"quantidade": 0, "video": {}, "erro": f"leitura inesperada: {type(r).__name__}"}
+        if not isinstance(r.get("video"), dict):
+            return {"quantidade": 0, "video": {},
+                    "erro": f"leitura inesperada do video: {type(r.get('video')).__name__}"}
+        return r
 
     antes = _ler()
     time.sleep(segundos)

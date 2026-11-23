@@ -228,8 +228,11 @@ def main() -> int:
         valor_t = str(conf.get("transmitir", {}).get("valor"))
         ligou = valor_t == "1" and (motivo in ("", "ja' estava no ar") or "no ar" in motivo)
         nota(f"transmissao: {'LIGOU' if ligou else 'nao ligou'} ({motivo or 'sem motivo'})")
-        exigir(um(bordo_db, "SELECT alvo FROM cameras WHERE id='cam-01'").get("alvo") == "800",
-               "o bordo APLICOU o alvo no banco dele")
+        # O campo `cameras.alvo` e' o que vai CRU para o `-b:v` do ffmpeg: a convencao do produto nele e'
+        # "NNNNk". Ate 23/11/2026 este teste exigia "800" (o numero publicado) e deixava passar um defeito
+        # medido pela J8 do smoke: com "800" o ffmpeg lia 800 BITS/s e o video morria (0,0 Mbps, 0 quadro).
+        exigir(um(bordo_db, "SELECT alvo FROM cameras WHERE id='cam-01'").get("alvo") == "800k",
+               "o bordo APLICOU o alvo no banco dele, no formato do ffmpeg (800k)")
         if ligou:
             medido = no_ar(base_bordo, "cam-01") or envio_vivo(base_bordo, "cam-01")
             nota("no bordo: " + ("no ar medido pelo mediamtx/ingestoes" if medido else
@@ -269,7 +272,7 @@ def main() -> int:
                       {"embarcacao_id": EMB, "camera_id": "cam-01", "chave": "alvo_kbps", "valor": "77"},
                       cookie=admin)
         exigir(st == 422, "alvo invalido nem sai de terra (nao chega ao bordo)")
-        exigir(um(bordo_db, "SELECT alvo FROM cameras WHERE id='cam-01'").get("alvo") == "800",
+        exigir(um(bordo_db, "SELECT alvo FROM cameras WHERE id='cam-01'").get("alvo") == "800k",
                "e o que estava aplicado no bordo segue igual (nada caiu)")
         quando = c2.get("transmitir", {}).get("atualizado_em", "")
         rodar_agente(bordo_db, base_terra, p_bordo, tmp)
@@ -283,8 +286,8 @@ def main() -> int:
                       cookie=admin)
         exigir(st == 201 and r.get("versao") == 2, f"alvo republicado sobe a versao (v{r.get('versao')})")
         rodar_agente(bordo_db, base_terra, p_bordo, tmp)
-        exigir(um(bordo_db, "SELECT alvo FROM cameras WHERE id='cam-01'").get("alvo") == "500",
-               "o bordo aplicou a versao nova do alvo")
+        exigir(um(bordo_db, "SELECT alvo FROM cameras WHERE id='cam-01'").get("alvo") == "500k",
+               "o bordo aplicou a versao nova do alvo (500k)")
     finally:
         for p in procs:
             try:

@@ -591,11 +591,35 @@ def _dispositivo_cadastrado(camera_id: str) -> str:
         return ""
 
 
+def licenca_bloqueia_captura() -> str:
+    """Motivo pelo qual a LICENCA desta maquina proibe capturar ("" = liberada).
+
+    Dono (19/11/2026): "revogar/reemitir corta na hora". O pedido do cliente (a flag) nao pode desfazer
+    o que a licenca proibiu: o bloqueio e' conferido aqui, na UNICA porta de entrada que liga camera —
+    assim vale para a tela, para o pedido do cliente e para a varredura. Le do vinculo LOCAL
+    (`licenca.json`), entao nao depende de rede: sem internet vale o ultimo estado conhecido.
+    """
+    try:
+        import licenca as _licenca
+    except Exception:  # noqa: BLE001  (pacote antigo sem o modulo: nada bloqueia)
+        return ""
+    try:
+        r = _licenca.resumo() or {}
+    except Exception:  # noqa: BLE001  (arquivo torto: nao trava a captura)
+        return ""
+    if r.get("tem") and r.get("bloqueada"):
+        return str(r.get("texto") or "licenca revogada ou vencida")
+    return ""
+
+
 def ligar_camera(camera_id: str) -> dict:
     """Liga a camera pela tela, reusando o ultimo envio dela (mesmo ajuste, mesma origem).
 
     A camera volta sozinha: antes de abrir, solta quem estiver segurando o dispositivo.
     """
+    bloqueio = licenca_bloqueia_captura()
+    if bloqueio:
+        return {"erro": f"captura bloqueada pela licenca: {bloqueio}"}
     with conexao() as c:
         cam = c.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
         if not cam:

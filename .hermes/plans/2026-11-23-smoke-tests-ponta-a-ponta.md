@@ -271,3 +271,39 @@ que só existe com o radar de verdade no HDMI.
   a fonte sintética, o vídeo gravado/baixado **é** imagem de verdade — `h264 1920x1080` lido pelo ffprobe.)
 - **O apagamento com o cliente DESLIGANDO o computador** (o batimento de 10 s): a J5 prova a saída pela
   tela (`pagehide`, 0,5 s); a queda do computador é coberta pelo batimento e fica para a Fase 3.
+
+## 11. Diário da implementação (Fase 3, 23/11/2026) — **FECHADA**
+
+**Comando do critério de aceite:** `python tools/smoke/ponta-a-ponta.py --jornadas 7,8,9,10`
+→ **`SMOKE: 4/4 OK · 0 FALHA · 0 com ressalvas · 0 NÃO MEDIDA`** (RC=0).
+
+| Jornada | Medida que fechou o OK | Tempo |
+|---|---|---|
+| **J7** — os 4 escopos | o painel diz o escopo de cada um (tipo 1/2/3/4), cada cliente vê **só** os barcos dele (1/2/2/4) e o do vizinho é negado nos dois sentidos (HTTP 403/422) | 3,9 s |
+| **J8** — o admin manda | o cliente publica config → **403**; o admin publica `alvo_kbps=500` → o bordo grava `cameras.alvo='500k'`, confirma no terra e a banda **cai de 3,187 para 0,773 Mbps** com o vídeo de pé (28,26 fps); o admin publica `teto_s=1800` → o bordo grava; o admin **desliga** a câmera → o bordo desliga e o fluxo sai do mediamtx | 73,4 s |
+| **J9** — o defeito de verdade | o bordo reporta a saúde (9 sinais, sem segredo, com `nao_medido`); **com o ffmpeg fora do bordo o painel vira "problema" em 1,0 s**; 25 erros de envio viram "atenção"; o pedido pendente vira "atenção"; o bordo mudo vira "atenção" em **179,3 s** (limiar 180 s); a série preserva os 5 retratos | 195,7 s |
+| **J10** — licença revogada | o admin revoga → **o bordo consulta o terra sozinho e a transmissão morre em 2,3 s** (ciclo da bancada 5 s) → o fluxo sai do mediamtx, a tela diz o motivo, a trilha registra **1** `captura_parada_por_licenca`, o vínculo **não** é apagado e a reativação devolve o barco ao ar | 58,7 s |
+
+### Defeitos e armadilhas encontrados na Fase 3 (todos medidos)
+
+| # | O que era | Onde estava | Conserto |
+|---|---|---|---|
+| **O** | **DEFEITO REAL DO PRODUTO — o formato do `alvo`.** O admin publicava `alvo_kbps` e o valor gravado em `cameras.alvo` ia **cru** para o `-b:v` do ffmpeg: `800` é lido como **800 BITS/s** (0,0 Mbps, **0 quadro**). A convenção do produto é `"NNNNk"` (milhares de bits — ver `ingestao.alvo_automatico` e a lista da tela da câmera) | `ground/api.py` (validação do `alvo_kbps`) | a validação passou a aceitar `"800"` **e** `"800k"` (`valor.rstrip("kK") not in VALORES_DE_ALVO`) e o valor gravado carrega o `k`. **Os dois testes e2e que passavam com o defeito** (`"800"` → `"800k"`) foram atualizados — o teste antigo **deixava passar** o defeito medido |
+| **P** | O atendedor da bancada recusava `teto_s` com **422 "informe a camera"**: a trava de câmera valia também para a rota de configuração, que é da **embarcação** e vem **sem** câmera | `tools/smoke/bordo_de_bancada.py` | a trava passou a valer **só** nas rotas de câmera (`/api/cameras/ligar|desligar`) |
+| **Q** | A **J10 não subia navegador**: o medidor só lançava Chromium para `{2,3,4,5,6,8}` e a J10 exige navegador | `tools/smoke/ponta-a-ponta.py` | o conjunto passou a `{2,3,4,5,6,8,10}` |
+| **R** | **DEFEITO REAL DO PRODUTO — a revogação não cortava sozinha.** A rota local `/api/licenca` era quem sabia da revogação (ela pergunta ao terra e para a captura), **mas só era lida quando alguém abria a tela da licença naquela máquina**. Com o barco em operação e ninguém olhando o PC de captura, a chave revogada **continuava transmitindo** — a J10 mediu o envio de pé **120 s** depois da revogação (limite do teste) | `ground/agente_de_ordens.py` + `ground/ingestao.py` | (1) o laço de captura passou a **conferir a licença sozinho** (`conferir_licenca`, a cada `LECSOR_ESPERA_DA_LICENCA`, padrão 300 s — o mesmo em que o produto já confere), **antes** da flag: o pedido do cliente já encontra a captura bloqueada; (2) `ingestao.ligar_camera` passou a **recusar** o que a licença proíbe (`licenca_bloqueia_captura`) — assim o pedido do cliente (a flag) não desfaz o corte por nenhuma porta; (3) o miolo da rota virou `api.conferir_licenca_do_terra`, reusado pelo laço **e** pela bancada |
+| **S** | **A "memória" do agente prendia a câmera.** `agente_de_ordens._ligado` respondia pelo que o **agente lembrava** (arquivo `ligados`), não pelo que estava no ar: se algo **de fora** parasse a câmera (a licença, por exemplo), o pedido do cliente não a levantava de novo e o estado contado era mentira | `ground/agente_de_ordens.py` | `_ligado` passou a conferir o **estado GRAVADO** (`ingestoes`, quem escreve é o produto ao parar/ligar): memória que não bate com o banco é corrigida e a câmera volta a obedecer |
+| **T** | A trilha **repetia**: com a chave caída, cada conferência do laço "parava" câmeras já paradas e escrevia **outra** linha `captura_parada_por_licenca` com o mesmo conteúdo (**8 linhas iguais em ~40 s**) | `ground/api.py` (`parar_por_licenca`) | o corte acontece na **transição** (liberada → bloqueada): uma vez, com a trilha registrando o corte; nas conferências seguintes não há o que cortar |
+| **U** | **A J2 caiu inteira com `AttributeError: 'str' object has no attribute 'get'`** na leitura da tela: o `|| vs[0]` devolvia o **elemento de vídeo** (que o navegador não serializa) e a leitura voltava string. O mesmo defeito já tinha aparecido na Fase 2 (achado M) e **não** tinha sido fechado na raiz | `tools/smoke/medidor.py` (`tela_do_cliente`) | todo caminho do JS monta um **objeto simples** e o Python **confere o formato** do que voltou (`leitura inesperada do video: str`) em vez de explodir |
+| **V** | **Duas cópias de ffmpeg no PATH** desta máquina (Hermes e WinGet): a J9 tirava só a primeira pasta do `which` e o ffmpeg voltava pela segunda | `tools/smoke/jornadas/j9_defeito_e_saude.py` | `_path_sem_ffmpeg()` remove **todas** as pastas com ffmpeg |
+| **W** | A J9 pedia um ciclo de saúde **menor que o do produto**: `agente_de_ordens.intervalo_da_saude` **clampa** em ≥10 s (a bancada não consegue pedir menos) | `tools/smoke/jornadas/j9_defeito_e_saude.py` | `CICLO_DA_BANCADA_S = 10` |
+
+### O que a Fase 3 ainda não mede
+
+- **O ffmpeg sem sinal de rede** (a J9 prova o ffmpeg ausente; rede fora fica para a Fase 4, com o link real).
+- **A latência real da revogação no produto**: a bancada encurta o ciclo (5 s) para caber no relógio e o
+  produto confere a cada 300 s — o que a J10 prova é o **caminho** (o bordo pergunta sozinho e corta), não o
+  número de campo.
+- **A rodada completa (J1–J10) num host ocioso:** na rodada completa desta máquina, com o app de trabalho
+  aberto, a **J2 mediu 26,39 fps** (piso de 27) e falhou **por carga do host**, não pelo produto — isolada,
+  a J2 mede **30,0 fps**. O número de campo é do PC de captura (declarado desde a Fase 1).

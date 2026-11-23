@@ -243,11 +243,45 @@ def ler_flag(base: str, token: str, emb: str):
 
 
 def _ligado(cam_id: str) -> str:
-    """Fluxo deste camera se ESTE agente o tem no ar (senao string vazia)."""
-    for fluxo, dado in LIGADOS.items():
+    """Fluxo desta camera se ela esta' MESMO no ar aqui (senao string vazia).
+
+    A memoria do agente nao e' prova: a J10 do smoke (23/11/2026) mediu o caso — a propria LICENCA
+    (ou um desligamento feito por fora) para a camera, o agente continua achando que ela esta' no ar e
+    fica travado: nem o pedido do cliente a levanta de novo, nem o estado dele conta a verdade. O que
+    vale e' o estado GRAVADO (`ingestoes`: quem escreve e' o proprio produto, ao parar/ligar).
+    """
+    alvo = ""
+    for fluxo, dado in list(LIGADOS.items()):
         if str(dado.get("camera_id") or "") == cam_id:
-            return fluxo
-    return ""
+            alvo = fluxo
+            break
+    if not alvo:
+        return ""
+    if estado_gravado_do_fluxo(alvo) in ("parado", "fim"):
+        LIGADOS.pop(alvo, None)
+        _salvar_ligados()
+        _log(f"o fluxo {alvo} ja' nao estava no ar (estado gravado): a memoria do agente foi corrigida")
+        return ""
+    return alvo
+
+
+def estado_gravado_do_fluxo(fluxo_id: str) -> str:
+    """Ultimo estado GRAVADO do fluxo no banco do bordo ("" quando nao da' para ler)."""
+    try:
+        import sqlite3
+        if str(RAIZ / "ground") not in sys.path:
+            sys.path.insert(0, str(RAIZ / "ground"))
+        from ferramentas import caminho_banco
+        c = sqlite3.connect(caminho_banco(), timeout=10)
+        c.row_factory = sqlite3.Row
+        try:
+            linha = c.execute("SELECT estado FROM ingestoes WHERE fluxo_id=? ORDER BY id DESC LIMIT 1",
+                              (fluxo_id,)).fetchone()
+        finally:
+            c.close()
+        return str(linha["estado"] or "") if linha else ""
+    except Exception:  # noqa: BLE001  (banco ausente/torto: nao derruba o atendimento)
+        return ""
 
 
 def aplicar_flag(cameras: list, local: str, base: str, token: str, emb: str) -> dict:
@@ -551,6 +585,50 @@ def intervalo_da_saude() -> float:
     return min(3600.0, max(10.0, v))
 
 
+# ---------------------------------------------------------------------------------------------
+# LICENCA (J10 do smoke, 23/11/2026). O dono (19/11/2026): "revogar/reemitir corta na hora".
+#
+# O bordo NAO recebe conexao: quem sabe da revogacao e' a rota local `/api/licenca` (ela pergunta ao
+# lado terra e, quando a chave caiu, PARA o que esta' no ar). So' que, ate' 23/11/2026, essa rota so'
+# era lida quando alguem abria a tela da licenca NAQUELA maquina — ou seja, o corte nao acontecia
+# sozinho. Quem PERGUNTA tem de ser o proprio laco de captura. A J10 mediu o defeito (o envio seguia no
+# ar 120 s depois da revogacao) e esta e' a correcao.
+# ---------------------------------------------------------------------------------------------
+ULTIMA_LICENCA = 0.0
+
+
+def intervalo_da_licenca() -> float:
+    """De quanto em quanto tempo o bordo confere a licenca (env `LECSOR_ESPERA_DA_LICENCA`, padrao 300 s)."""
+    try:
+        v = float(os.environ.get("LECSOR_ESPERA_DA_LICENCA") or 300.0)
+    except Exception:  # noqa: BLE001
+        v = 300.0
+    return min(3600.0, max(5.0, v))
+
+
+def conferir_licenca(local: str) -> dict:
+    """Pergunta a licenca da PROPRIA maquina (a rota local) e conta o que ela disse.
+
+    Le a rota local de proposito: e' ela quem fala com o lado terra, guarda o vinculo e PARA a captura
+    quando a chave esta' revogada/vencida. Assim existe UM caminho de conferencia (o mesmo que a tela
+    usa) e o laco de captura nao precisa saber regra de licenca nenhuma.
+    """
+    global ULTIMA_LICENCA
+    ULTIMA_LICENCA = time.time()
+    try:
+        s, j = _http("GET", f"{local}/api/licenca", timeout=30)
+    except Exception as e:  # noqa: BLE001
+        _log(f"aviso: nao consegui conferir a licenca agora ({type(e).__name__}: {e})")
+        return {}
+    if s != 200:
+        _log(f"aviso: a conferencia da licenca respondeu {s}")
+        return {}
+    paradas = j.get("paradas") or []
+    if paradas:
+        _log(f"licenca bloqueada: parei {len(paradas)} camera(s) ({', '.join(str(x) for x in paradas)})")
+    return j if isinstance(j, dict) else {}
+
+
 def caminho_do_vivo() -> Path:
     trocado = (os.environ.get("LECSOR_AGENTE_ESTADO") or "").strip()
     return Path(trocado) if trocado else (LOG_DIR.parent / "agente-vivo.json")
@@ -595,6 +673,11 @@ def enviar_saude(base: str, token: str, emb: str) -> dict:
 
 def uma_rodada(base: str, local: str, token: str, emb: str, espera: float) -> int:
     marcar_vivo()
+    # A LICENCA E' CONFERIDA ANTES DA FLAG (J10 do smoke, 23/11/2026): se a chave caiu, o corte acontece
+    # nesta rodada e o pedido do cliente (a flag) ja' encontra a captura bloqueada — o que a licenca
+    # proibe nao sai no ar nem por um instante.
+    if time.time() - ULTIMA_LICENCA >= intervalo_da_licenca():
+        conferir_licenca(local)
     # A FLAG VEM PRIMEIRO (dono, 19/11/2026): o computador de captura nao recebe conexao nenhuma — ele
     # olha para terra. A fila de ordens continua sendo atendida quando existir (lado terra mais velho).
     flag = ler_flag(base, token, emb)

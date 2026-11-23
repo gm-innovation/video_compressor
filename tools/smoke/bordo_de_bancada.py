@@ -9,6 +9,10 @@ A UNICA substituicao do smoke, declarada:
   MESMA FUNCAO DO PRODUTO (`ingestao.ligar_camera` / `ingestao.desligar_camera`). O encode, o SRT, o
   banco e o mediamtx sao os reais; o que muda e' so' quem atende o POST.
 
+Depois da J8 (23/11/2026) o MESMO atendedor serve tambem `POST /api/config/aplicar` chamando
+`api.aplicar_config_local` — antes disso o `uma_rodada` do produto recebia "rota nao atendida" e a
+configuracao publicada pelo admin NUNCA chegava ao bordo. Era defeito da BANCADA, nao do produto.
+
 Todo o resto e' o produto, sem atalho:
   * a RODADA inteira e' a do produto (`agente_de_ordens.uma_rodada`): flag -> aplicar_flag ->
     atender_pedidos (o HD do radar) -> publicar_catalogo -> config -> saude -> teto. O laco deste
@@ -50,6 +54,19 @@ class Atendedor(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(dados)
 
+    def do_GET(self):  # noqa: N802
+        # A LICENCA (J10 do smoke, 23/11/2026): o laco de captura do produto passou a conferir a chave
+        # sozinho (`agente_de_ordens.uma_rodada`) pela rota local `/api/licenca`. Esta bancada atende
+        # essa rota com a MESMA funcao do produto (`api.conferir_licenca_do_terra`) — quem para a
+        # transmissao quando a chave caiu e' o codigo do produto, nao uma regra reescrita aqui.
+        if self.path.split("?")[0].endswith("/api/licenca"):
+            try:
+                import api as api_do_produto   # noqa: PLC0415
+                return self._responder(200, api_do_produto.conferir_licenca_do_terra("127.0.0.1"))
+            except Exception as e:  # noqa: BLE001
+                return self._responder(500, {"erro": f"{type(e).__name__}: {e}"})
+        return self._responder(404, {"erro": f"rota nao atendida: {self.path}"})
+
     def do_POST(self):  # noqa: N802
         try:  # noqa: SIM105
             tamanho = int(self.headers.get("Content-Length") or 0)
@@ -57,13 +74,24 @@ class Atendedor(BaseHTTPRequestHandler):
         except Exception:  # noqa: BLE001
             corpo = {}
         cam = str(corpo.get("camera_id") or corpo.get("id") or "").strip()
-        if not cam:
+        # O teto de tempo (`teto_s`) e' da EMBARCACAO e vem sem camera: a trava de camera vale so' para
+        # as rotas de camera (a J8 mediu: com a trava na frente, o teto virava recusa "informe a camera").
+        if not cam and not self.path.endswith("/api/config/aplicar"):
             return self._responder(422, {"erro": "informe a camera"})
         try:
             if self.path.endswith("/api/cameras/ligar"):
                 r = ingestao.ligar_camera(cam)
             elif self.path.endswith("/api/cameras/desligar"):
                 r = ingestao.desligar_camera(cam)
+            elif self.path.endswith("/api/config/aplicar"):
+                # A CONFIGURACAO publicada pelo admin: a regra de aplicar e' a do PRODUTO (a mesma
+                # funcao `api.aplicar_config_local` que o bordo de verdade usa). Sem esta rota o
+                # `uma_rodada` do produto recebia "rota nao atendida" e a config do admin NUNCA
+                # chegava ao bordo — o defeito era da BANCADA, medido em 23/11/2026 pela J8.
+                import api as api_do_produto   # noqa: PLC0415 — so' aqui: a bancada nao importa a API inteira
+                r = api_do_produto.aplicar_config_local(cam, str(corpo.get("chave") or ""),
+                                                        str(corpo.get("valor") or ""))
+                return self._responder(200 if r.get("ok") else 422, r)
             else:
                 return self._responder(404, {"erro": f"rota nao atendida: {self.path}"})
         except Exception as e:  # noqa: BLE001

@@ -186,6 +186,74 @@ def licenca_bloqueio(embarcacao_id: str) -> str:
                                  linhas[0]["status"], linhas[0]["motivo"])["texto"]
 
 
+def parar_por_licenca(origem: str = "127.0.0.1") -> list:
+    """Licenca vencida/revogada: PARA DE TRANSMITIR (desliga as cameras que ESTAO no ar) e conta o que fez.
+
+    Para TODA camera habilitada desta maquina (a regra do dono e' "revogar corta na hora") e devolve quais
+    foram. Quem chama e' `conferir_licenca_do_terra`, e so' na TRANSICAO (liberada -> bloqueada): repetir a
+    parada a cada ciclo nao muda o estado do barco e suja a trilha — a J10 do smoke mediu 8 linhas
+    `captura_parada_por_licenca` iguais em ~40 s, em 23/11/2026.
+    """
+    try:
+        with conexao() as c:
+            ligadas = [x["id"] for x in c.execute("SELECT id FROM cameras WHERE ativo=1")]
+    except Exception:  # noqa: BLE001
+        return []
+    paradas = []
+    for cam in ligadas:
+        try:
+            if not (ing_desligar_camera(cam) or {}).get("erro"):
+                paradas.append(cam)
+        except Exception:  # noqa: BLE001
+            continue
+    if paradas:
+        auditar(None, "captura_parada_por_licenca", ", ".join(paradas), origem)
+    return paradas
+
+
+def conferir_licenca_do_terra(origem: str = "127.0.0.1") -> dict:
+    """O que ESTA maquina tem guardado — e, com rede, o que o LADO TERRA diz agora.
+
+    E' o miolo da rota local `GET /api/licenca`, e existe como funcao de modulo de proposito (J10 do
+    smoke, 23/11/2026): quem PRECISA disso e' o laco de captura (`agente_de_ordens.uma_rodada`), que
+    pergunta de tempos em tempos sem ninguem abrir a tela. Se a resposta for "caiu", a transmissao PARA
+    aqui — corte visivel, nunca mudo.
+
+    Sem rede nada muda: "mantém tudo normalmente" (o corte e' por vencimento/revogacao, nao por falta
+    de rede) — por isso a falta de resposta vira `nota`, nunca desligamento.
+    """
+    r = licenca_modulo.resumo()
+    ja_estava_bloqueada = bool(r.get("bloqueada"))
+    if r.get("tem"):
+        resp = licenca_modulo.pedir_ao_terra("/api/licenca/validar",
+                                             {"chave": r["chave"], "maquina": licenca_modulo.maquina()},
+                                             segundos=8)
+        nova = dict(resp.get("licenca") or {}) if isinstance(resp.get("licenca"), dict) else {}
+        if nova:
+            guardado = licenca_modulo.ler()
+            for campo in ("validade_tipo", "validade_em", "status", "motivo",
+                          "embarcacao_id", "embarcacao_nome", "cliente_id", "cliente_nome"):
+                if str(nova.get(campo, "")).strip() or campo in ("validade_em", "motivo"):
+                    guardado[campo] = nova.get(campo, guardado.get(campo, ""))
+            guardado["conferida_em"] = em_iso()
+            licenca_modulo.gravar(guardado)
+            r = licenca_modulo.resumo()
+            r["conferida_em"] = guardado["conferida_em"]
+        else:
+            r["sem_rede"] = bool(resp.get("sem_rede"))
+            r["nota"] = ("sem falar com o lado terra agora — a captura segue normal (quem corta é "
+                         "vencimento ou revogação, não a falta de rede)"
+                         if resp.get("sem_rede") else (resp.get("motivo") or "não conferi agora"))
+        if r.get("bloqueada") and not ja_estava_bloqueada:
+            # TRANSICAO (liberada -> bloqueada): e' agora que a captura tem de parar — uma vez, com a
+            # trilha registrando o corte. Nas conferencias seguintes o estado ja' e' este: nao ha o que
+            # cortar de novo e nao se escreve outra linha igual.
+            r["paradas"] = parar_por_licenca(origem)
+        elif r.get("bloqueada"):
+            r["paradas"] = []
+    return r
+
+
 def licenca_do_terra(dados: dict, contar: bool = True) -> tuple[int, dict]:
     """(codigo, corpo) do LADO TERRA para ativar/validar uma chave de licenca.
 
@@ -666,14 +734,20 @@ def aplicar_config_local(camera_id: str, chave: str, valor: str) -> dict:
     chave = (chave or "").strip()
     valor = str(valor if valor is not None else "").strip()
     if chave == "alvo_kbps":
-        if valor not in VALORES_DE_ALVO:
+        if valor.rstrip("kK") not in VALORES_DE_ALVO:
             return {"ok": False, "motivo": f"alvo fora da lista do produto ({valor!r})"}
         if not cam:
             return {"ok": False, "motivo": "alvo_kbps e' por camera"}
+        # O campo `cameras.alvo` e' o que o ffmpeg recebe cru (`-b:v`), e a convencao do produto nele e'
+        # em MILHARES de bits ("1500k" — ver `ingestao.alvo_automatico` e a lista da tela da camera).
+        # A lista publicada pelo admin e' o NUMERO em kbps ("500"): sem o sufixo o ffmpeg leria BITS por
+        # segundo e o video morreria — medido na J8 (smoke) em 23/11/2026: alvo 500 -> 0,0 Mbps e ZERO
+        # quadro. A conversao numero -> banda acontece AQUI, na borda de quem escreve no campo.
+        banda = valor if valor.endswith(("k", "K")) else f"{valor}k"
         with conexao() as c:
             if not c.execute("SELECT 1 FROM cameras WHERE id=?", (cam,)).fetchone():
                 return {"ok": False, "motivo": f"a camera {cam} nao existe nesta maquina"}
-            c.execute("UPDATE cameras SET alvo=? WHERE id=?", (valor, cam))
+            c.execute("UPDATE cameras SET alvo=? WHERE id=?", (banda, cam))
             c.execute("""INSERT INTO config_local (camera_id,chave,valor,versao,atualizado_em)
                          VALUES (?,?,?,0,?)
                          ON CONFLICT(camera_id,chave) DO UPDATE SET valor=excluded.valor,
@@ -4672,54 +4746,9 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(corpo)
 
     def _estado_da_licenca(self) -> None:
-        """O que ESTA maquina tem guardado. A tela abre offline e diz a verdade.
-
-        Com rede, confere com o lado terra: e' assim que uma REVOGACAO feita depois da ativacao chega
-        nesta maquina. Quando o lado terra diz que a licenca caiu, a transmissao PARA aqui (as cameras
-        sao desligadas) e o motivo vai junto na resposta — corte visivel, nunca mudo.
-        """
-        r = licenca_modulo.resumo()
-        if r.get("tem"):
-            resp = licenca_modulo.pedir_ao_terra("/api/licenca/validar",
-                                                  {"chave": r["chave"], "maquina": licenca_modulo.maquina()},
-                                                  segundos=8)
-            nova = dict(resp.get("licenca") or {}) if isinstance(resp.get("licenca"), dict) else {}
-            if nova:
-                guardado = licenca_modulo.ler()
-                for campo in ("validade_tipo", "validade_em", "status", "motivo",
-                              "embarcacao_id", "embarcacao_nome", "cliente_id", "cliente_nome"):
-                    if str(nova.get(campo, "")).strip() or campo in ("validade_em", "motivo"):
-                        guardado[campo] = nova.get(campo, guardado.get(campo, ""))
-                guardado["conferida_em"] = em_iso()
-                licenca_modulo.gravar(guardado)
-                r = licenca_modulo.resumo()
-                r["conferida_em"] = guardado["conferida_em"]
-            else:
-                r["sem_rede"] = bool(resp.get("sem_rede"))
-                r["nota"] = ("sem falar com o lado terra agora — a captura segue normal (quem corta é "
-                             "vencimento ou revogação, não a falta de rede)"
-                             if resp.get("sem_rede") else (resp.get("motivo") or "não conferi agora"))
-            if r.get("bloqueada"):
-                r["paradas"] = self._parar_por_licenca()
-        return self._json(200, r, {"Cache-Control": "no-store"})
-
-    def _parar_por_licenca(self) -> list:
-        """Licenca vencida/revogada: PARA DE TRANSMITIR (desliga as cameras) e conta o que fez."""
-        try:
-            with conexao() as c:
-                ligadas = [x["id"] for x in c.execute("SELECT id FROM cameras WHERE ativo=1")]
-        except Exception:  # noqa: BLE001
-            return []
-        paradas = []
-        for cam in ligadas:
-            try:
-                if not (ing_desligar_camera(cam) or {}).get("erro"):
-                    paradas.append(cam)
-            except Exception:  # noqa: BLE001
-                continue
-        if paradas:
-            auditar(None, "captura_parada_por_licenca", ", ".join(paradas), self.client_address[0])
-        return paradas
+        """O que ESTA maquina tem guardado (a rota local `/api/licenca`)."""
+        return self._json(200, conferir_licenca_do_terra(self.client_address[0]),
+                          {"Cache-Control": "no-store"})
 
     def _licenca_atender(self, contar: bool) -> None:
         """Ativar (`contar=True`) ou revalidar (`contar=False`) — a MESMA rota, dois papeis.
