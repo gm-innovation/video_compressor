@@ -105,6 +105,13 @@ function amb(env, config, python) {
   const base = String(((config || {}).base) || '').trim();
   if (base) saida.LECSOR_LADO_TERRA_API = base;
   else delete saida.LECSOR_LADO_TERRA_API;
+  // A MAQUINA DE CAPTURA SE DECLARA (dono, 23/11/2026): "no pc de captura ninguém precisa abrir nada
+  // ... o app de captura deve ser autônomo". E' este aviso que autoriza o servidor desta maquina a
+  // varrer as cameras (POST /api/varredura) e a pedir a varredura SO' pelo loopback, SEM sessao de
+  // usuario — a maquina que varre e' ela mesma, nunca uma maquina de fora.
+  if ((config || {}).capturaLocal && ((config || {}).servidorLocal || {}).ligado) {
+    saida.LECSOR_CAPTURA_LOCAL = '1';
+  }
   // A LICENCA manda sobre o pacote: e' ela que diz de que embarcacao e' esta maquina.
   const lic = licencaDaMaquina(saida);
   if (lic.embarcacao_id) {
@@ -219,9 +226,13 @@ function subir(config) {
       ordens = 'agente de ordens: nao (esta maquina nao e a de captura)';
     } else if (!fs.existsSync(agenteOrdens)) {
       ordens = 'agente de ordens: nao vem neste pacote';
-    } else if (!String(env.LECSOR_EMBARCACAO || '').trim() || !String(env.LECSOR_TOKEN_INGESTAO || '').trim()) {
-      ordens = ('agente de ordens: DESLIGADO — falta LECSOR_EMBARCACAO/LECSOR_TOKEN_INGESTAO desta '
-        + 'embarcacao (o cliente liga na web e nao acontece nada)');
+    } else if (!String(env.LECSOR_TOKEN_INGESTAO || '').trim()) {
+      // A EMBARCACAO vem da LICENCA, nao do ambiente (dono, 23/11/2026: "o token continua no
+      // instalador" e a chave e' quem diz o barco): o proprio agente le a licenca
+      // (`licenca.embarcacao()`) e, sem ela, ESPERA a chave em vez de morrer. Por isso o unico
+      // requisito daqui e' o token do pacote.
+      ordens = ('agente de ordens: DESLIGADO — falta o LECSOR_TOKEN_INGESTAO do pacote (o instalador '
+        + 'leva o token; sem ele o cliente liga na web e nao acontece nada)');
     } else {
       item('agente-ordens', python, ['-u', agenteOrdens], repo,
         Object.assign({}, env, { LECSOR_PORTA_LOCAL: String((configAtual.servidorLocal || {}).portaApi || 8765) }));

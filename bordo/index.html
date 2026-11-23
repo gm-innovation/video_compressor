@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LECSOR · Bordo (PC de captura)</title>
+<!--
+  PAINEL DO BORDO — a tela do PC DE CAPTURA (dono, 23/11/2026).
+
+  "no pc de captura ninguém precisa abrir nada, tudo deve ser feito no admin e cliente, o app de captura
+  deve ser autônomo, faz as varreduras locais e fica verificando as flags de terra e enviando as respostas
+  e fazendo as atuações".
+
+  Esta página é servida PELO PRÓPRIO BORDO (`GET /bordo`), sem login: ela abre e diz a verdade mesmo sem
+  internet. Ela SÓ INFORMA — não configura, não liga câmera e não pede senha. O ajuste é do admin, no lado
+  terra. Nada de segredo aparece aqui: a chave da licença vai só nos últimos 4 dígitos e o token de
+  ingestão aparece como PRESENTE/AUSENTE.
+-->
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: #0b1220; color: #e8eefc;
+         font: 15px/1.5 system-ui, "Segoe UI", Roboto, sans-serif; padding: 22px 18px 34px; }
+  .carta { width: min(880px, 96vw); margin: 0 auto; }
+  h1 { margin: 0 0 4px; font-size: 20px; letter-spacing: .2px; }
+  p.sub { margin: 0 0 18px; color: #9fb0d0; font-size: 13.5px; }
+  .selo { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 700;
+          letter-spacing: .4px; text-transform: uppercase; }
+  .selo.ok { background: #10261c; color: #8ee9b8; border: 1px solid #2c6d4c; }
+  .selo.ruim { background: #2a1620; color: #ffc9d6; border: 1px solid #6d2c3f; }
+  .selo.neutro { background: #131f36; color: #bcd0f2; border: 1px solid #2b3c5e; }
+  .grade { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+  .bloco { background: #111a2e; border: 1px solid #22304d; border-radius: 12px; padding: 16px 16px 14px; }
+  .bloco h2 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .7px;
+              color: #9fb0d0; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  dl { display: grid; grid-template-columns: 138px 1fr; gap: 6px 12px; margin: 0; }
+  dt { color: #9fb0d0; font-size: 12.5px; text-transform: uppercase; letter-spacing: .5px; padding-top: 2px; }
+  dd { margin: 0; color: #f2f6ff; font-weight: 600; word-break: break-word; }
+  ul { margin: 6px 0 0; padding-left: 18px; }
+  li { margin: 3px 0; }
+  .fraco { color: #9fb0d0; font-weight: 400; }
+  .pe { margin-top: 16px; color: #7d8cab; font-size: 12px; display: flex; justify-content: space-between;
+        gap: 10px; flex-wrap: wrap; }
+  code { background: #0a1424; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+  .aviso { margin-bottom: 14px; padding: 11px 13px; border-radius: 10px; font-size: 13.5px; display: none; }
+  .aviso.erro { display: block; background: #2a1620; border: 1px solid #6d2c3f; color: #ffc9d6; }
+  .aviso.info { display: block; background: #131f36; border: 1px solid #2b3c5e; color: #bcd0f2; }
+  button { padding: 8px 12px; font: 600 13px/1 inherit; color: #04122b; background: #6ba6ff; border: 0;
+           border-radius: 8px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="carta">
+  <h1>Bordo — PC de captura <span id="selo-geral" class="selo neutro">conferindo…</span></h1>
+  <p class="sub">Esta máquina é autônoma: varre as câmeras locais, olha as flags do lado terra, obedece e
+  publica o cadastro. Ninguém precisa entrar aqui — a configuração e o acesso são feitos no painel do
+  admin e na tela do cliente, no lado terra.</p>
+
+  <div class="aviso" id="recado"></div>
+
+  <div class="grade">
+    <div class="bloco">
+      <h2>Licença desta máquina <span id="selo-licenca" class="selo neutro">—</span></h2>
+      <dl id="ficha-licenca"></dl>
+    </div>
+
+    <div class="bloco">
+      <h2>Envio para o lado terra <span id="selo-terra" class="selo neutro">—</span></h2>
+      <dl id="ficha-terra"></dl>
+    </div>
+
+    <div class="bloco">
+      <h2>Agente de ordens <span id="selo-agente" class="selo neutro">—</span></h2>
+      <dl id="ficha-agente"></dl>
+      <div id="ligados" class="fraco"></div>
+    </div>
+
+    <div class="bloco">
+      <h2>Varredura das câmeras <span id="selo-varredura" class="selo neutro">—</span></h2>
+      <dl id="ficha-varredura"></dl>
+      <div id="achados" class="fraco"></div>
+    </div>
+
+    <div class="bloco">
+      <h2>Saúde do bordo <span id="selo-saude" class="selo neutro">—</span></h2>
+      <dl id="ficha-saude"></dl>
+    </div>
+  </div>
+
+  <div class="pe">
+    <span id="atualizado">—</span>
+    <span><button id="agora">Atualizar agora</button></span>
+  </div>
+</div>
+
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+
+function selo(el, texto, classe) {
+  el.textContent = texto;
+  el.className = 'selo ' + classe;
+}
+
+function ficha(el, pares) {
+  el.innerHTML = '';
+  for (const [rotulo, valor] of pares) {
+    const dt = document.createElement('dt');
+    dt.textContent = rotulo;
+    const dd = document.createElement('dd');
+    if (valor && valor.nodeType === 1) { dd.appendChild(valor); } else { dd.textContent = valor ?? '—'; }
+    el.appendChild(dt); el.appendChild(dd);
+  }
+}
+
+function hora(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso);
+  return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+                                     second: '2-digit' });
+}
+
+function segundos(desde) {
+  if (!desde) return null;
+  const s = Math.max(0, Math.round(Date.now() / 1000 - Number(desde)));
+  return s;
+}
+
+async function carregar() {
+  let d;
+  try {
+    const r = await fetch('/api/bordo', { cache: 'no-store' });
+    d = await r.json();
+  } catch (e) {
+    const rec = $('recado');
+    rec.className = 'aviso erro';
+    rec.textContent = 'Não consegui falar com o servidor local desta máquina (' + e.message +
+                      '). Se isto continuar, feche e abra o aplicativo LECSOR.';
+    selo($('selo-geral'), 'sem servidor local', 'ruim');
+    return;
+  }
+  const rec = $('recado');
+  rec.className = 'aviso';
+
+  // ----- licença -------------------------------------------------------------------------------
+  const lic = d.licenca || {};
+  if (lic.tem) {
+    selo($('selo-licenca'), lic.estado || 'ativa', (lic.estado === 'ativa' ? 'ok' : 'ruim'));
+  } else {
+    selo($('selo-licenca'), 'não ativada', 'ruim');
+  }
+  ficha($('ficha-licenca'), [
+    ['Embarcação', (lic.embarcacao_nome || lic.embarcacao_id || '—') +
+                   (lic.embarcacao_id && lic.embarcacao_nome ? '  (' + lic.embarcacao_id + ')' : '')],
+    ['Empresa', lic.cliente_nome || '—'],
+    ['Situação', lic.texto || '—'],
+    ['Chave', lic.chave_ultimos4 ? ('····-' + lic.chave_ultimos4) : '—'],
+    ['Conferida em', hora(lic.conferida_em)],
+  ]);
+  if (!lic.tem) {
+    rec.className = 'aviso info';
+    rec.textContent = 'Esta máquina ainda não foi ativada. A tela da chave abre sozinha no aplicativo — ' +
+                      'digite a chave da embarcação e não precisa fazer mais nada.';
+  }
+
+  // ----- lado terra / token --------------------------------------------------------------------
+  const terra = d.lado_terra || {};
+  const tok = d.token || {};
+  selo($('selo-terra'), tok.presente ? 'token presente' : 'sem token', tok.presente ? 'ok' : 'ruim');
+  ficha($('ficha-terra'), [
+    ['Lado terra', terra.base || '—'],
+    ['Último aviso', terra.texto || (tok.presente ? 'enviando o cadastro desta máquina'
+                                                  : 'falta o token de ingestão no pacote')],
+    ['Cadastro publicado', (d.publicadas && d.publicadas.length)
+                            ? (d.publicadas.length + ' câmera(s) publicada(s) agora')
+                            : '—'],
+  ]);
+
+  // ----- agente de ordens ----------------------------------------------------------------------
+  const ag = d.agente || {};
+  selo($('selo-agente'), ag.no_ar ? 'no ar' : 'sem sinal', ag.no_ar ? 'ok' : 'ruim');
+  const seg = segundos(ag.em_em_segundos);
+  ficha($('ficha-agente'), [
+    ['Estado', ag.no_ar ? 'no ar (obedece o que o cliente pedir)' : 'sem sinal nesta máquina'],
+    ['Último sinal', ag.em ? (hora(ag.em) + (seg === null ? '' : '  (há ' + seg + ' s)')) : '—'],
+    ['Rodadas', ag.rodadas === null || ag.rodadas === undefined ? '—' : String(ag.rodadas)],
+    ['Motivo', ag.motivo || '—'],
+  ]);
+  const lig = d.no_ar || [];
+  const alvo = $('ligados');
+  alvo.innerHTML = '';
+  if (lig.length) {
+    const t = document.createElement('div');
+    t.textContent = 'No ar agora por ordem do cliente/admin:';
+    const ul = document.createElement('ul');
+    for (const c of lig) {
+      const li = document.createElement('li');
+      li.textContent = (c.camera_id || c.fluxo || 'câmera') +
+                       (c.desde ? '  (desde ' + hora(c.desde) + ')' : '') +
+                       (c.ordem ? '  · ' + c.ordem : '');
+      ul.appendChild(li);
+    }
+    alvo.appendChild(t); alvo.appendChild(ul);
+  } else {
+    alvo.textContent = 'Nenhuma câmera no ar agora (só o que o cliente ou o admin pedir sobe).';
+  }
+
+  // ----- varredura -----------------------------------------------------------------------------
+  const v = d.varredura || {};
+  if (v.quando && v.ok) {
+    selo($('selo-varredura'), 'ok', 'ok');
+  } else if (v.quando) {
+    selo($('selo-varredura'), 'sem cadastro', 'neutro');
+  } else {
+    selo($('selo-varredura'), 'ainda não varreu', 'neutro');
+  }
+  ficha($('ficha-varredura'), [
+    ['Última varredura', v.quando ? hora(v.quando) : '—'],
+    ['Dispositivos vistos', v.vistos === undefined ? '—' : String(v.vistos)],
+    ['Cadastradas', (v.cadastradas || []).join(', ') || '—'],
+    ['Atualizadas', (v.atualizadas || []).join(', ') || '—'],
+    ['Publicadas em terra', (v.publicadas || []).join(', ') || '—'],
+    ['Observação', v.motivo || '—'],
+  ]);
+  const ach = v.dispositivos || [];
+  const av = $('achados');
+  av.innerHTML = '';
+  if (ach.length) {
+    const ul = document.createElement('ul');
+    for (const x of ach) {
+      const li = document.createElement('li');
+      li.textContent = (x.rotulo || x.id || 'dispositivo') + (x.radar ? '  (radar)' : '') +
+                       (x.cadastrada ? '  · já cadastrada' : '');
+      ul.appendChild(li);
+    }
+    av.appendChild(ul);
+  }
+  const falhas = v.falhas_de_publicacao || [];
+  if (falhas.length) {
+    const p = document.createElement('div');
+    p.textContent = 'Não publicou: ' + falhas.map(f => (f.camera || '?') + ' (' + (f.motivo || '?') + ')')
+                                                   .join('; ');
+    av.appendChild(p);
+  }
+
+  // ----- saúde ---------------------------------------------------------------------------------
+  const s = d.saude || {};
+  const resumo = s.resumo || (s.retrato && s.retrato.resumo) || {};
+  selo($('selo-saude'), s.estado || resumo.estado || '—',
+       (s.estado === 'ok' || resumo.estado === 'ok') ? 'ok'
+         : ((s.estado === 'problema' || resumo.estado === 'problema') ? 'ruim' : 'neutro'));
+  ficha($('ficha-saude'), [
+    ['CPU', textoMedida(s, 'cpu_pct', '%')],
+    ['Memória', textoMedida(s, 'memoria_pct', '%')],
+    ['Disco', textoMedida(s, 'disco_pct', '%')],
+    ['Câmeras paradas/vivas', resumo.texto || s.texto || '—'],
+    ['Gerado em', hora(s.gerado_em)],
+  ]);
+
+  // ----- geral ---------------------------------------------------------------------------------
+  const essenciais = [lic.tem, tok.presente, ag.no_ar];
+  const faltando = essenciais.filter(x => !x).length;
+  selo($('selo-geral'), faltando === 0 ? 'operando' : (faltando === 1 ? 'atenção' : 'pendente'),
+       faltando === 0 ? 'ok' : (faltando === 1 ? 'neutro' : 'ruim'));
+  $('atualizado').textContent = 'Conferido às ' + new Date().toLocaleTimeString('pt-BR') +
+                                '  ·  esta tela se atualiza sozinha a cada 10 s';
+}
+
+function textoMedida(s, chave, sufixo) {
+  const v = (s && (s[chave] !== undefined ? s[chave] : (s.retrato ? s.retrato[chave] : undefined)));
+  return (v === undefined || v === null || v === '') ? '—' : (v + sufixo);
+}
+
+$('agora').addEventListener('click', carregar);
+carregar();
+setInterval(carregar, 10000);
+</script>
+</body>
+</html>

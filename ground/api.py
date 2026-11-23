@@ -66,7 +66,13 @@ ROTAS_CAPTURA_LOCAIS = ("/api/entrar", "/api/eu", "/api/sair", "/api/cameras",
                         # de captura e quem fala com o lado terra e' o bordo — mesmo desenho das rotas
                         # de captura acima. `/api/licencas` (plural) e' do painel do lado terra e NAO
                         # entra aqui: essa e' encaminhada como qualquer rota de administracao.
-                        "/api/licenca", "/api/licenca/ativar", "/api/licenca/esquecer", "/licenca")
+                        "/api/licenca", "/api/licenca/ativar", "/api/licenca/esquecer", "/licenca",
+                        # PAINEL DO BORDO (dono, 23/11/2026): "no pc de captura ninguém precisa abrir
+                        # nada, tudo deve ser feito no admin e cliente, o app de captura deve ser
+                        # autônomo". A tela de ENTRADA desta máquina é este painel — servido pelo próprio
+                        # bordo, sem login — e é ele que diz se a licença, o token, o agente, a varredura
+                        # e a publicação estão de pé.
+                        "/bordo", "/api/bordo")
 ORIGENS_CAPTURA_PADRAO = ("http://187.127.60.250:8085", "http://127.0.0.1:8085",
                           "http://127.0.0.1:8765", "http://localhost:8765")
 
@@ -1822,6 +1828,19 @@ class Handler(SimpleHTTPRequestHandler):
     def _local(self) -> bool:
         return self.client_address[0] in ("127.0.0.1", "::1")
 
+    def _maquina_de_captura(self) -> bool:
+        """A MAQUINA DE CAPTURA falando consigo mesma? (loopback + licenca/embarcacao desta maquina)
+
+        A maquina de captura e' autonoma desde 23/11/2026 (dono: "no pc de captura ninguém precisa abrir
+        nada ... o app de captura deve ser autônomo"): nao ha login nela, entao ela mesma pede a varredura
+        (e so' a varredura) por loopback, sem sessao. O app DECLARA essa maquina (`LECSOR_CAPTURA_LOCAL=1`,
+        ver `amb()` em `desktop/servidor.js`) E a licenca diz de que barco ela e' — sem as duas coisas,
+        vale a regra de sempre (sessao de usuario do PC de captura). Fora do loopback nada muda: quem nao
+        tem sessao continua de fora. Ver o uso em `POST /api/varredura`.
+        """
+        declarada = (os.environ.get("LECSOR_CAPTURA_LOCAL") or "").strip() == "1"
+        return self._local() and declarada and bool(licenca_modulo.embarcacao())
+
     # ---- transmissao a pedido do cliente (17/11/2026)
     def _papel_cliente(self, u) -> bool:
         """Quem INICIA transmissao e' o cliente (dono, 17/11/2026: "apenas o cliente")."""
@@ -2399,6 +2418,10 @@ class Handler(SimpleHTTPRequestHandler):
             return self._pagina_da_licenca()
         if rota == "/api/licenca":
             return self._estado_da_licenca()
+        if rota == "/bordo":
+            return self._pagina_do_bordo()
+        if rota == "/api/bordo":
+            return self._estado_do_bordo()
         if rota == "/api/licencas":
             # PAINEL DO ADMIN (dono, 19/11/2026): gerar, ver/copiar a chave inteira, ver o uso e
             # revogar. Cliente e observador nao entram aqui.
@@ -3644,8 +3667,13 @@ class Handler(SimpleHTTPRequestHandler):
             # VARRER AGORA (botao da tela do bordo). Mesma regra do cadastro de camera: operacao/admin,
             # ou o usuario do PC de captura NA PROPRIA maquina (a varredura so' faz sentido onde a camera
             # esta' plugada). Cliente nao varre. A varredura nao mexe na configuracao do admin.
+            #
+            # 23/11/2026: a maquina de captura passou a ser AUTONOMA (nao ha login nela — "no pc de
+            # captura ninguém precisa abrir nada"), entao a PROPRIA maquina de captura pede a varredura
+            # por loopback, sem sessao: e' a mesma maquina que varre, nunca uma maquina de fora.
             if not ((u and u["papel"] in PAPEL_ADMIN)
-                    or (u and u["papel"] in ("tecnico", "captura") and self._local())):
+                    or (u and u["papel"] in ("tecnico", "captura") and self._local())
+                    or self._maquina_de_captura()):
                 return self._json(401, {"erro": "entre no sistema"})
             import varredura_do_bordo
             r = varredura_do_bordo.varrer()
@@ -4749,6 +4777,124 @@ class Handler(SimpleHTTPRequestHandler):
         """O que ESTA maquina tem guardado (a rota local `/api/licenca`)."""
         return self._json(200, conferir_licenca_do_terra(self.client_address[0]),
                           {"Cache-Control": "no-store"})
+
+    # ---- PAINEL DO BORDO (dono, 23/11/2026) ------------------------------------------------------
+    #
+    # "no pc de captura ninguém precisa abrir nada, tudo deve ser feito no admin e cliente, o app de
+    # captura deve ser autônomo, faz as varreduras locais e fica verificando as flags de terra e enviando
+    # as respostas e fazendo as atuações". Por isso a tela de entrada do PC de captura é ESTE painel —
+    # servido pelo próprio bordo, SEM LOGIN — e ele só INFORMA: licença, token do pacote, lado terra,
+    # agente de ordens, varredura/publicação e saúde. Quem configura é o admin, do lado terra.
+    #
+    # Nada de segredo aqui: a chave da licença aparece só nos últimos 4 dígitos e o token de ingestão
+    # aparece como PRESENTE/AUSENTE — nunca com valor.
+
+    def _pagina_do_bordo(self) -> None:
+        """A tela do BORDO, servida pelo próprio bordo (mesmo desenho da tela da chave)."""
+        pagina = RAIZ / "bordo" / "index.html"
+        try:
+            corpo = pagina.read_bytes()
+        except Exception:  # noqa: BLE001
+            corpo = ("<!doctype html><meta charset=\"utf-8\"><title>Bordo</title>"
+                     "<h1>Bordo</h1><p>O painel do bordo não veio neste pacote.</p>").encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(corpo)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(corpo)
+
+    def _estado_do_bordo(self) -> None:
+        return self._json(200, self._resumo_do_bordo(), {"Cache-Control": "no-store"})
+
+    @staticmethod
+    def _ler_json_do_bordo(caminho: Path):
+        """Le um JSON do estado do bordo. Ausente/torto devolve `{}` (a tela nunca fica em branco)."""
+        try:
+            return json.loads(caminho.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            return {}
+
+    @staticmethod
+    def _caminho_do_estado_do_agente(nome: str, env: str) -> Path:
+        """Os mesmos caminhos que o agente usa, com as MESMAS variaveis de troca (`LECSOR_*`)."""
+        trocado = (os.environ.get(env) or "").strip()
+        return Path(trocado) if trocado else (RAIZ / "ordens" / nome)
+
+    def _agente_do_bordo(self) -> dict:
+        """O agente de ordens está vivo? Ele marca `ordens/agente-vivo.json` a cada rodada.
+
+        Sem o sinal fresco o painel diz "sem sinal" — o mesmo que o silêncio do bordo significa para o
+        admin no lado terra. O agente pergunta ao lado terra a cada poucos segundos; 3 minutos sem
+        sinal já é agente parado (o agente espera a chave, e o log conta o motivo).
+        """
+        d = self._ler_json_do_bordo(self._caminho_do_estado_do_agente("agente-vivo.json",
+                                                                     "LECSOR_AGENTE_ESTADO"))
+        em = str((d or {}).get("em") or "")
+        rodadas = (d or {}).get("rodadas")
+        if not em:
+            return {"no_ar": False, "em": "", "em_em_segundos": None, "rodadas": None,
+                    "motivo": "o agente de ordens ainda não deu sinal nesta máquina"}
+        try:
+            quando = dt.datetime.strptime(em, "%Y-%m-%dT%H:%M:%S")
+            idade = (dt.datetime.now() - quando).total_seconds()
+        except Exception:  # noqa: BLE001
+            return {"no_ar": False, "em": em, "em_em_segundos": None, "rodadas": rodadas,
+                    "motivo": "não consegui ler a hora do último sinal do agente"}
+        no_ar = idade <= 180.0
+        return {"no_ar": no_ar, "em": em, "em_em_segundos": round(idade, 1), "rodadas": rodadas,
+                "motivo": "" if no_ar else f"o agente não dá sinal há {int(idade)} s"}
+
+    def _no_ar_do_bordo(self) -> list:
+        """O que ESTE bordo ligou e ainda não foi mandado parar (`ordens/ligados.json`)."""
+        d = self._ler_json_do_bordo(self._caminho_do_estado_do_agente("ligados.json",
+                                                                     "LECSOR_ORDENS_ESTADO"))
+        saida = []
+        for fluxo, info in (d or {}).items():
+            if not isinstance(info, dict):
+                continue
+            desde = info.get("desde")
+            try:
+                quando = dt.datetime.fromtimestamp(float(desde)).astimezone().isoformat(timespec="seconds")
+            except Exception:  # noqa: BLE001
+                quando = ""
+            saida.append({"fluxo": str(fluxo), "camera_id": str(info.get("camera_id") or ""),
+                          "desde": quando, "ordem": str(info.get("ordem") or "")})
+        return sorted(saida, key=lambda x: x.get("desde") or "")
+
+    def _resumo_do_bordo(self) -> dict:
+        lic = licenca_modulo.resumo()
+        token = bool((os.environ.get("LECSOR_TOKEN_INGESTAO") or "").strip())
+        base = licenca_modulo.base_do_terra() or ""
+        try:
+            import varredura_do_bordo
+            varredura = dict(varredura_do_bordo.ultima() or {})
+        except Exception as e:  # noqa: BLE001
+            varredura = {"ok": False, "motivo": f"não consegui ler a varredura ({type(e).__name__})"}
+        try:
+            import saude_do_bordo
+            saude = dict(saude_do_bordo.retrato() or {})
+        except Exception as e:  # noqa: BLE001
+            saude = {"nao_medido": {"retrato": f"{type(e).__name__}: {e}"}}
+        lic_publica = {k: lic.get(k) for k in ("tem", "ativada", "embarcacao_id", "embarcacao_nome",
+                                               "cliente_id", "cliente_nome", "validade_tipo",
+                                               "validade_em", "estado", "texto", "motivo",
+                                               "chave_ultimos4", "conferida_em", "ativada_em")}
+        return {
+            "ok": True,
+            "maquina": licenca_modulo.maquina(),
+            "licenca": lic_publica,
+            "token": {"presente": token},
+            "lado_terra": {"base": base,
+                           "texto": ("o cadastro desta máquina publica por aqui"
+                                     if token else
+                                     "falta o token de ingestão no pacote: o cadastro não publica")},
+            "agente": self._agente_do_bordo(),
+            "varredura": varredura,
+            "publicadas": list(varredura.get("publicadas") or []),
+            "no_ar": self._no_ar_do_bordo(),
+            "saude": saude,
+        }
 
     def _licenca_atender(self, contar: bool) -> None:
         """Ativar (`contar=True`) ou revalidar (`contar=False`) — a MESMA rota, dois papeis.

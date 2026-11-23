@@ -13,11 +13,43 @@ o caminho completo **bordo → terra → tela** rodando na bancada com vídeo pr
 - `tools/`  — binários de bancada (mediamtx v1.21.3 windows_amd64)
 
 ## PC de captura (câmeras ligadas direto no computador)
-Passo a passo em `INSTALAR-PC-DE-CAPTURA.md`: as câmeras entram pela tela **Enviar vídeo**, o
-sistema comprime na máquina e o vídeo comprimido sobe para o lado terra (`destinoSrt`).
+
+**O PC de captura é autônomo** (dono, 23/11/2026): instala o app, **digita a chave de licença e pronto** —
+não há login nessa máquina. Dali em diante, sozinho, ele varre as câmeras locais, cadastra e publica o
+cadastro no lado terra, olha as flags do lado terra e obedece (liga/desliga câmera, aplica o alvo, manda a
+saúde). A tela do app nessa máquina é o **Painel do Bordo** (`/bordo`, servido pelo próprio bordo, sem
+login), que só informa: embarcação/empresa da chave, situação da licença, token do instalador
+(presente/ausente), lado terra, agente de ordens no ar, o que está no ar, a última varredura/publicação e a
+saúde do bordo. **Quem configura é o admin e quem assiste é o cliente — no lado terra, pelo navegador.**
+Passo a passo em `INSTALAR-PC-DE-CAPTURA.md`: as câmeras entram pela tela **Enviar vídeo**, o sistema
+comprime na máquina e o vídeo comprimido sobe para o lado terra (`destinoSrt`).
 
 ## Instaladores prontos (Windows x64) — PLUG & PLAY desde a 0.2.0
 Na página de releases: https://github.com/gm-innovation/video_compressor/releases
+
+### 0.11.0 — **o PC de captura ficou autônomo: chave, painel do bordo e mais nada** (dono, 23/11/2026)
+- **O que o dono relatou:** *"inseri a chave de acesso no app no computador de captura, depois me pede email e
+  senha, mas não aceita nenhum que já tenho. após o reconhecimento da licença não deveria precisar fazer mais
+  nada no app de captura, ele já deveria fazer a varredura e enviar as informações"* e *"no pc de captura
+  ninguém precisa abrir nada, tudo deve ser feito no admin e cliente, o app de captura deve ser autônomo"*.
+- **O defeito:** ativada a chave, o app ainda abria a **tela de login** (a mesma do lado terra) e o login do
+  servidor local daquela máquina só aceita quem está no cadastro **dela** — vinha *"esta conta nao esta
+  cadastrada nesta instalacao"*, que é o "não aceita nenhum que já tenho".
+- **Agora:** com a chave digitada, a entrada do app é o **Painel do Bordo** (`/bordo`, servido pelo próprio
+  bordo, **sem login**): embarcação/empresa da chave, situação da licença, **token do instalador
+  presente/ausente**, lado terra, **agente de ordens no ar** (com a última batida), o que está no ar por ordem
+  do cliente/admin, a **última varredura** (o que viu, cadastrou, publicou e o que falhou) e a **saúde do
+  bordo**. Nada de segredo: a chave só nos últimos 4 dígitos, o token só como presente/ausente.
+- **Publica sozinho:** a varredura local roda no boot e de tempo em tempo, o cadastro é publicado ao lado terra
+  com reenvio enquanto falhar, e a própria tela da chave pede a varredura e vai para o painel — sem ninguém
+  clicar em nada. O pacote de captura passa a subir junto com o Windows.
+- **O agente de ordens espera a chave em vez de morrer** (a embarcação vem da licença; o token continua vindo
+  no instalador). A varredura sem sessão vale **só** para a própria máquina (loopback + o app declarando a
+  captura + licença): de fora nada mudou e o cliente continua sem poder varrer.
+- **Provas:** `tests/test-bordo-sem-login-e-autonomo.py` (novo), `tests/e2e-app-ativado-por-licenca.py`,
+  `tests/e2e-varredura-do-bordo.py`, `tests/test-config-endereco.py`, `tests/test-app-unico-por-papel.py`,
+  `tests/test_captura_liberada_no_app.py`, `tests/test-instalador-plug-and-play.py`,
+  `tests/test-agente-de-ordens.py` e `tools/regressao-0100.py` (20 provas).
 
 ### 0.10.1 — **os consertos que os testes de ponta a ponta acharam dentro do produto** (23/11/2026)
 - **O alvo de banda que o admin publica chegava ao ffmpeg com a unidade errada:** o campo `alvo` é o valor cru

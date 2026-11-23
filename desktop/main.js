@@ -153,6 +153,11 @@ const SUPERFICIES = {
   // manda para a tela do papel do usuario. As superficies abaixo continuam existindo para a bancada
   // de engenharia e para os instaladores antigos.
   entrada: { titulo: 'LECSOR — entrar', rota: '/entrada', particao: 'persist:lecsor', permitirSessao: true },
+  // PAINEL DO BORDO (dono, 23/11/2026): a tela do PC DE CAPTURA. Servida pelo PROPRIO bordo
+  // (`/bordo`), SEM LOGIN, e ela so' informa (licenca, token, lado terra, agente, varredura, saude).
+  // "no pc de captura ninguém precisa abrir nada, tudo deve ser feito no admin e cliente, o app de
+  // captura deve ser autônomo".
+  bordo: { titulo: 'LECSOR — Bordo (PC de captura)', rota: '/bordo', particao: 'persist:bordo', permitirSessao: false },
   cliente: { titulo: 'LECSOR — Cliente', rota: '/app', particao: 'persist:cliente', permitirSessao: true },
   admin: { titulo: 'LECSOR — Admin / Operacao', rota: '/admin', particao: 'persist:admin', permitirSessao: true },
   bancada: { titulo: 'LECSOR — Bancada', rota: '/', particao: 'persist:bancada', permitirSessao: true }
@@ -176,8 +181,11 @@ let baseLocalDaCaptura = '';
 // CHAVE DE LICENCA (dono, 19/11/2026): "quero apenas instalar o app no computador de captura, inserir
 // a chave da licenca e assim fazer a conexao com a empresa e embarcacao cadastradas". Quando o
 // servidor local desta maquina responde que NAO tem licenca, a entrada que abre e' a tela da chave
-// (`/licenca`, servida pelo proprio bordo) — e nao o login. Depois de ativada, a entrada volta a ser
-// a de sempre, sem reinstalar nada.
+// (`/licenca`, servida pelo proprio bordo) — e nao o login. ATIVADA, a entrada e' o PAINEL DO BORDO
+// (`/bordo`, tambem servido pelo bordo, SEM LOGIN) — dono, 23/11/2026: "inseri a chave ... depois me
+// pede email e senha, mas não aceita nenhum que já tenho" e "no pc de captura ninguém precisa abrir
+// nada, tudo deve ser feito no admin e cliente, o app de captura deve ser autônomo". Login, admin e
+// telas do cliente sao do LADO TERRA, no navegador — nunca nesta maquina.
 let precisaDeLicenca = false;
 async function definirEnderecoDaEntrada() {
   const porta = (config.servidorLocal || {}).portaApi || 8765;
@@ -227,6 +235,11 @@ function baseDaEntrada() {
   return config.base;
 }
 
+// Esta maquina e' a de CAPTURA? (o papel liga o servidor local para capturar — ver `configuracao.js`)
+function ehMaquinaDeCaptura() {
+  return !!(config.capturaLocal && config.servidorLocal && config.servidorLocal.ligado);
+}
+
 function urlDe(nome) {
   // Com a captura ligada nesta maquina, TODAS as telas vem do servidor LOCAL — a mesma origem das
   // rotas de captura (dono, 18/11/2026). O servidor local encaminha ao lado terra tudo o que nao e'
@@ -236,6 +249,13 @@ function urlDe(nome) {
   // bordo). Ver `precisaDeLicenca` acima.
   if (nome === 'entrada' && precisaDeLicenca && baseLocalDaCaptura) {
     return baseLocalDaCaptura.replace(/\/$/, '') + '/licenca';
+  }
+  // Maquina de captura JA ativada: a entrada e' o PAINEL DO BORDO — nao o login (dono, 23/11/2026:
+  // "inseri a chave ... depois me pede email e senha, mas não aceita nenhum que já tenho" e "no pc de
+  // captura ninguém precisa abrir nada ... o app de captura deve ser autônomo"). O login e o painel do
+  // admin/cliente sao do lado terra, no navegador — nunca nesta maquina.
+  if (nome === 'entrada' && baseLocalDaCaptura && ehMaquinaDeCaptura()) {
+    return baseLocalDaCaptura.replace(/\/$/, '') + '/bordo';
   }
   return raiz.replace(/\/$/, '') + SUPERFICIES[nome].rota;
 }
@@ -374,6 +394,15 @@ function menu() {
           if (d.sintetica) linhas.push('existe tambem uma fonte sintetica de teste (testsrc2)');
           linhas.push('', 'esta maquina: ' + require('os').hostname());
           dialog.showMessageBox({ message: cams.length ? 'C\u00e2meras encontradas nesta maquina' : 'Nenhuma c\u00e2mera encontrada nesta maquina', detail: linhas.join('\n') });
+        } },
+      { label: 'Trocar a chave desta maquina (licenca de captura)', click: () => {
+          // A chave e' o UNICO passo do PC de captura (dono, 23/11/2026). Aqui se troca de embarcacao
+          // sem reinstalar nada: a tela da chave e' servida pelo proprio bordo e o "Continuar" dela
+          // volta para o painel do bordo (`/bordo`).
+          const porta = (config.servidorLocal || {}).portaApi || 8765;
+          const raiz = (baseLocalDaCaptura || ('http://127.0.0.1:' + porta)).replace(/\/$/, '');
+          const janela = abrir('entrada');
+          if (janela) janela.webContents.loadURL(raiz + '/licenca');
         } },
       { label: 'Parar servidor local', click: () => {
           servidor.parar(config);

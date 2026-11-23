@@ -151,7 +151,7 @@
       if (r.ok && j.ok) {
         dizer('ok', 'Pronto: ' + ((j.licenca || {}).embarcacao_nome || 'embarcação')
           + ' ligada a esta máquina.');
-        setTimeout(() => { window.location.href = '/entrada'; }, 1200);
+        setTimeout(seguir, 1200);
         return;
       }
       const texto = j.erro || j.motivo || (j.licenca && j.licenca.texto) || 'não foi possível ativar';
@@ -166,7 +166,22 @@
     }
   });
 
-  $('continuar').addEventListener('click', () => { window.location.href = '/entrada'; });
+  // DEPOIS DA CHAVE NAO HA NADA PARA FAZER NESTA MAQUINA (dono, 23/11/2026: "após o reconhecimento da
+  // licença não deveria precisar fazer mais nada no app de captura, ele já deveria fazer a varredura e
+  // enviar as informações"). A entrada desta maquina passa a ser o PAINEL DO BORDO (`/bordo`, servido
+  // pelo proprio bordo, sem login) e, antes de abrir, esta tela PEDE a varredura local: a camera desta
+  // maquina ja' entra cadastrada e publicada no painel do admin, sem ninguem clicar nada.
+  async function seguir() {
+    try {
+      await fetch('/api/varredura', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                      body: '{}' });
+    } catch (e) {
+      // A varredura tambem roda sozinha, de tempo em tempo: nao travar a tela por causa disto.
+    }
+    window.location.href = '/bordo';
+  }
+
+  $('continuar').addEventListener('click', seguir);
 
   $('trocar').addEventListener('click', async () => {
     if (!confirm('Apagar a licença desta máquina? A captura para até digitar outra chave.')) return;

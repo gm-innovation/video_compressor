@@ -180,9 +180,11 @@ def main() -> int:
             aviso = texto(pag, "#aviso")
             checar("a tela confirma a ativacao com o nome da embarcacao",
                    "ligada a esta máquina" in aviso and "Embarcacao Teste" in aviso, aviso[:160])
-            pag.wait_for_timeout(2500)     # a propria tela leva para /entrada
-            checar("depois de ativar, o app segue para a entrada normal",
-                   "/entrada" in pag.url, pag.url)
+            pag.wait_for_timeout(2500)     # a propria tela leva para o PAINEL DO BORDO
+            checar("depois de ativar, o app segue para o PAINEL DO BORDO (nao para um login) — "
+                   "dono, 23/11/2026: 'após o reconhecimento da licença não deveria precisar fazer mais "
+                   "nada no app de captura'",
+                   "/bordo" in pag.url, pag.url)
             checar("o vinculo ficou gravado no PC de captura", ARQ_LICENCA.exists(), str(ARQ_LICENCA))
             if ARQ_LICENCA.exists():
                 g = json.loads(ARQ_LICENCA.read_text(encoding="utf-8"))

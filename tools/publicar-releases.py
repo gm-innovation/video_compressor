@@ -24,7 +24,7 @@ PAPEIS = ("Captura", "Terra", "Admin", "Cliente")
 # Ordem de publicacao: o PRIMEIRO e' o `latest` do GitHub. Nova versao entra na frente.
 # A 0.8.0 nunca chegou a virar release: o que ela trazia (config do bordo vinda de terra e saude do
 # bordo no admin) entrou inteiro na 0.9.0, que e' quem publica. A nota dela fica em NOTAS abaixo.
-VERSOES_PUBLICADAS = ("0.10.1", "0.10.0", "0.9.1", "0.9.0", "0.7.0", "0.6.10", "0.6.9", "0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
+VERSOES_PUBLICADAS = ("0.11.0", "0.10.1", "0.10.0", "0.9.1", "0.9.0", "0.7.0", "0.6.10", "0.6.9", "0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
 
 
 def instaladores(versao: str) -> list:
@@ -44,6 +44,41 @@ def instaladores(versao: str) -> list:
     return [DIST / papel.lower() / f"LECSOR-{papel}-{versao}-x64.exe" for papel in PAPEIS]
 
 NOTAS = {
+    "0.11.0": (
+        "**O PC de captura ficou autonomo: chave, painel do bordo e mais nada.**\n\n"
+        "Relato do dono (23/11/2026): \"inseri a chave de acesso no app no computador de captura, depois me "
+        "pede email e senha, mas nao aceita nenhum que ja tenho. apos o reconhecimento da licenca nao deveria "
+        "precisar fazer mais nada no app de captura, ele ja deveria fazer a varredura e enviar as informacoes\" "
+        "e, depois, \"no pc de captura ninguem precisa abrir nada, tudo deve ser feito no admin e cliente, o "
+        "app de captura deve ser autonomo, faz as varreduras locais e fica verificando as flags de terra e "
+        "enviando as respostas e fazendo as atuacoes\".\n\n"
+        "**1. O que estava errado.** Ativada a chave, o app mandava a pessoa para o LOGIN (a mesma tela do "
+        "lado terra) e o login do servidor local daquela maquina so' aceita quem esta' no cadastro DELA: "
+        "aparecia \"esta conta nao esta cadastrada nesta instalacao\" — dava \"nao aceita nenhum que ja tenho\". "
+        "O desenho do produto nunca foi pedir login no PC de captura.\n\n"
+        "**2. Como fica agora.** Com a chave digitada, a entrada do app passa a ser o **Painel do Bordo** "
+        "(`/bordo`, servido pelo proprio bordo, **sem login**): embarcacao e empresa da chave, situacao da "
+        "licenca, **token do instalador presente/ausente**, lado terra, **agente de ordens no ar** (com a "
+        "ultima batida), o que esta' no ar por ordem do cliente/admin, a **ultima varredura** (o que viu, o "
+        "que cadastrou, o que publicou e o que falhou) e a **saude do bordo**. Ela so' INFORMA: quem "
+        "configura e' o admin, no painel do lado terra, e quem assiste e' o cliente, na tela dele. Nada de "
+        "segredo aparece: a chave vai so' nos ultimos 4 digitos e o token como presente/ausente.\n\n"
+        "**3. O bordo publica sozinho.** A varredura local ja roda sozinha (no boot e de tempo em tempo) e "
+        "o cadastro das cameras e' publicado ao lado terra com reenvio enquanto falhar — nao depende de "
+        "ninguem clicar nada. Depois de digitar a chave, a propria tela da chave pede a varredura e vai para "
+        "o painel: a camera desta maquina entra cadastrada e publicada.\n\n"
+        "**4. O agente de ordens nao morre mais sem chave.** A embarcacao vem da LICENCA (o token continua "
+        "vindo no instalador): sem chave ele **espera** a chave em vez de sair, e o pacote de captura sobe "
+        "junto com o Windows. A varredura sem sessao vale SO' para a propria maquina (loopback + o app "
+        "declarando a captura + licenca) — de fora nada mudou, e o cliente continua sem poder varrer.\n\n"
+        "**Provas:** `tests/test-bordo-sem-login-e-autonomo.py` (novo: painel sem login, estado sem segredo, "
+        "sinal do agente, o que esta' no ar, varredura so' pela propria maquina), "
+        "`tests/e2e-app-ativado-por-licenca.py` (depois da chave o app segue para o painel, nao para o login), "
+        "`tests/e2e-varredura-do-bordo.py`, `tests/test-config-endereco.py`, "
+        "`tests/test-app-unico-por-papel.py`, `tests/test_captura_liberada_no_app.py`, "
+        "`tests/test-instalador-plug-and-play.py`, `tests/test-agente-de-ordens.py` e "
+        "`tools/regressao-0100.py` (20 provas).\n"
+    ),
     "0.10.1": (
         "**Os consertos que os testes de ponta a ponta acharam DENTRO do produto.**\n\n"
         "Depois dos testes de ponta a ponta da bancada (10 jornadas, J1 a J10, com acao de usuario de verdade e "

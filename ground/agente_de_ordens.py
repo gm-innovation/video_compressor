@@ -723,11 +723,25 @@ def principal() -> int:
     base = base_do_lado_terra()
     local = base_local()
     token = (os.environ.get("LECSOR_TOKEN_INGESTAO") or "").strip()
-    emb = licenca.embarcacao()   # LICENCA deste PC de captura (dono, 19/11/2026); senao o ambiente
-    if not base or not token or not emb:
-        _log("sem lado terra, sem LECSOR_TOKEN_INGESTAO ou sem embarcacao (LICENCA/ambiente): o agente nao pergunta "
+    if not base or not token:
+        _log("sem lado terra ou sem LECSOR_TOKEN_INGESTAO/LECSOR_EMBARCACAO: o agente nao pergunta "
              "nada (a ordem do cliente nao chega nesta maquina). Configure o mesmo ambiente do envio.")
         return 2
+    emb = licenca.embarcacao()   # LICENCA deste PC de captura (dono, 19/11/2026); senao o ambiente
+    if not emb:
+        # A CHAVE AINDA NAO FOI DIGITADA (dono, 23/11/2026): o app do PC de captura e' autonomo e a
+        # chave e' o unico passo do instalador. Em vez de MORRER aqui — o app sobe os filhos uma vez, na
+        # abertura, e nao reinicia o agente so' porque a chave chegou depois — o agente ESPERA a chave,
+        # olhando a licenca de tempo em tempo. `--uma-vez` (usado nos testes) sai 2 como sempre.
+        if uma_vez:
+            _log("sem embarcacao (LECSOR_EMBARCACAO/LICENCA): esta maquina ainda nao foi ativada")
+            return 2
+        _log("sem embarcacao: esta maquina ainda nao foi ativada — aguardando a CHAVE DE LICENCA "
+             "(a tela do proprio app)...")
+        while not emb:
+            time.sleep(20.0)
+            emb = licenca.embarcacao()
+        _log(f"licenca reconhecida nesta maquina: embarcacao {emb} — entrando no ar")
     LIGADOS.clear()
     LIGADOS.update(_carregar_ligados())
     JA_APLICADAS.clear()
