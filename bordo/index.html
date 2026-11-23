@@ -60,6 +60,12 @@
 
   <div class="grade">
     <div class="bloco">
+      <h2>O que está acontecendo agora <span id="selo-agora" class="selo neutro">—</span></h2>
+      <dl id="ficha-agora"></dl>
+      <div id="processos" class="fraco"></div>
+    </div>
+
+    <div class="bloco">
       <h2>Licença desta máquina <span id="selo-licenca" class="selo neutro">—</span></h2>
       <dl id="ficha-licenca"></dl>
     </div>
@@ -82,8 +88,14 @@
     </div>
 
     <div class="bloco">
-      <h2>Saúde do bordo <span id="selo-saude" class="selo neutro">—</span></h2>
+      <h2>Saúde e desempenho <span id="selo-saude" class="selo neutro">—</span></h2>
       <dl id="ficha-saude"></dl>
+      <div id="desempenho" class="fraco"></div>
+    </div>
+
+    <div class="bloco">
+      <h2>Como esta máquina se configurou sozinha <span id="selo-config" class="selo neutro">—</span></h2>
+      <div id="configuracao" class="fraco"></div>
     </div>
   </div>
 
@@ -125,6 +137,35 @@ function segundos(desde) {
   if (!desde) return null;
   const s = Math.max(0, Math.round(Date.now() / 1000 - Number(desde)));
   return s;
+}
+
+function numero(v, casas, sufixo) {
+  if (v === null || v === undefined || v === '') return 'sem medida';
+  const n = Number(v);
+  if (!isFinite(n)) return 'sem medida';
+  return n.toLocaleString('pt-BR', { minimumFractionDigits: casas ?? 0, maximumFractionDigits: casas ?? 1 }) +
+         (sufixo || '');
+}
+
+function mb(bytes) {
+  if (bytes === null || bytes === undefined || bytes === '') return null;
+  const n = Number(bytes);
+  if (!isFinite(n)) return null;
+  if (n < 1048576) return (n / 1024).toFixed(0) + ' KB';
+  if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
+  return (n / 1073741824).toFixed(2) + ' GB';
+}
+
+function lista(el, itens, vazio) {
+  el.innerHTML = '';
+  if (!itens || !itens.length) { el.textContent = vazio; return; }
+  const ul = document.createElement('ul');
+  for (const t of itens) {
+    const li = document.createElement('li');
+    li.textContent = t;
+    ul.appendChild(li);
+  }
+  el.appendChild(ul);
 }
 
 async function carregar() {
@@ -257,6 +298,77 @@ async function carregar() {
     ['Câmeras paradas/vivas', resumo.texto || s.texto || '—'],
     ['Gerado em', hora(s.gerado_em)],
   ]);
+
+  // ----- o que está acontecendo agora (os processos) -------------------------------------------
+  const proc = d.processos || [];
+  const grav = d.gravacao || {};
+  const estados = proc.map(p => p.estado);
+  const agora = estados.indexOf('transmitindo e gravando') >= 0 ? 'transmitindo e gravando'
+              : estados.indexOf('transmitindo') >= 0 ? 'transmitindo'
+              : estados.indexOf('gravando') >= 0 ? 'gravando' : 'nada no ar';
+  selo($('selo-agora'), agora, agora === 'nada no ar' ? 'neutro' : 'ok');
+  ficha($('ficha-agora'), [
+    ['Processos ativos', proc.filter(p => p.estado !== 'parado').length + ' de ' + proc.length],
+    ['Gravação full-time', grav.erro ? ('não consegui ler: ' + grav.erro)
+        : (grav.ligada ? ('ligada — ' + (grav.camera || 'radar') + ', ' + (grav.blocos ?? 0) + ' bloco(s)')
+                       : 'desligada (quem liga é o admin)')],
+    ['HD da gravação', grav.diretorio
+        ? (grav.diretorio + '  ·  ' + (mb(grav.bytes) || '0 KB') + ' gravados  ·  ' +
+           (mb(grav.livre_bytes) || '?') + ' livre(s) de ' + (mb(grav.total_bytes) || '?')) : '—'],
+  ]);
+  lista($('processos'), proc.map(p => {
+    const partes = [(p.fluxo || p.camera_id || 'fluxo') + ' — ' + p.estado];
+    if (p.transmitindo && p.desde) partes.push('transmitindo desde ' + hora(p.desde));
+    if (p.ordem) partes.push('ordem: ' + p.ordem);
+    if (p.gravando && p.desde_gravacao) partes.push('gravando desde ' + p.desde_gravacao);
+    if (p.hd && p.hd.blocos !== undefined) partes.push(p.hd.blocos + ' bloco(s) no HD');
+    if (p.observacao) partes.push(p.observacao);
+    return partes.join('  ·  ');
+  }), 'Nada no ar agora: nenhuma câmera transmitindo e nenhuma gravação full-time ligada.');
+
+  // ----- desempenho (só o que foi medido) -------------------------------------------------------
+  const des = d.desempenho || {};
+  const lk = des.link || {};
+  const linhasDes = (des.fluxos || []).map(f =>
+    (f.fluxo_id || f.camera_id || 'fluxo') + ' — entrada ' + numero(f.entrada_kbps, 0, ' kbps') +
+    ' → saída ' + numero(f.saida_kbps, 0, ' kbps') +
+    (f.compressao_pct === null || f.compressao_pct === undefined
+      ? '' : '  (' + numero(f.compressao_pct, 1, ' %') + ' de redução)') +
+    '  ·  ' + numero(f.mb_enviados, 1, ' MB') + ' enviados  ·  ' +
+    numero(f.segundos_no_ar, 0, ' s no ar') + (f.minuto ? '  ·  minuto ' + f.minuto : ''));
+  if (!linhasDes.length) {
+    linhasDes.push('sem medida — ' + (des.erro || des.motivo || 'nenhum minuto fechado ainda'));
+  }
+  const linkTxt = lk.erro ? lk.erro
+    : ('RTT ' + numero(lk.rtt_ms, 0, ' ms') + '  ·  link ' + numero(lk.capacidade_link_mbps, 1, ' Mbps') +
+       '  ·  enviando ' + numero(lk.taxa_envio_mbps, 1, ' Mbps') +
+       '  ·  perda ' + numero(lk.perda_pct, 1, ' %') +
+       '  ·  buffer ' + numero(lk.atraso_buffer_ms, 0, ' ms') +
+       '  ·  internet ' + numero(lk.latencia_internet_ms, 0, ' ms') +
+       (lk.medido_ha_s !== undefined && lk.medido_ha_s !== null
+         ? '  (lido há ' + numero(lk.medido_ha_s, 0, ' s') + ')' : ''));
+  const desp = $('desempenho');
+  desp.innerHTML = '';
+  const dTitulo = document.createElement('div');
+  dTitulo.textContent = 'Medido por este bordo (minuto a minuto):';
+  desp.appendChild(dTitulo);
+  const dUl = document.createElement('ul');
+  for (const t of linhasDes) { const li = document.createElement('li'); li.textContent = t; dUl.appendChild(li); }
+  desp.appendChild(dUl);
+  const dLink = document.createElement('div');
+  dLink.textContent = 'Link: ' + linkTxt;
+  desp.appendChild(dLink);
+  const dFps = document.createElement('div');
+  dFps.textContent = 'fps: sem medida nesta máquina (não é medido aqui — esta tela não inventa número).';
+  desp.appendChild(dFps);
+
+  // ----- como esta máquina se configurou sozinha -----------------------------------------------
+  const cfg = d.configuracao || [];
+  const feitos = cfg.filter(x => x.feito).length;
+  selo($('selo-config'), feitos + '/' + (cfg.length || 0) + ' passos', feitos === cfg.length ? 'ok' : 'neutro');
+  lista($('configuracao'), cfg.map(x => (x.feito ? '✓ ' : '• ') + x.passo + ': ' + (x.texto || '—') +
+                                       (x.em ? '  (' + hora(x.em) + ')' : '')),
+        'sem passos ainda');
 
   // ----- geral ---------------------------------------------------------------------------------
   const essenciais = [lic.tem, tok.presente, ag.no_ar];

@@ -24,7 +24,7 @@ PAPEIS = ("Captura", "Terra", "Admin", "Cliente")
 # Ordem de publicacao: o PRIMEIRO e' o `latest` do GitHub. Nova versao entra na frente.
 # A 0.8.0 nunca chegou a virar release: o que ela trazia (config do bordo vinda de terra e saude do
 # bordo no admin) entrou inteiro na 0.9.0, que e' quem publica. A nota dela fica em NOTAS abaixo.
-VERSOES_PUBLICADAS = ("0.11.0", "0.10.1", "0.10.0", "0.9.1", "0.9.0", "0.7.0", "0.6.10", "0.6.9", "0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
+VERSOES_PUBLICADAS = ("0.11.1", "0.11.0", "0.10.1", "0.10.0", "0.9.1", "0.9.0", "0.7.0", "0.6.10", "0.6.9", "0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
 
 
 def instaladores(versao: str) -> list:
@@ -44,6 +44,32 @@ def instaladores(versao: str) -> list:
     return [DIST / papel.lower() / f"LECSOR-{papel}-{versao}-x64.exe" for papel in PAPEIS]
 
 NOTAS = {
+    "0.11.1": (
+        "**O painel do bordo mostra o que esta acontecendo: os processos e o desempenho medido.**\n\n"
+        "Pedido do dono (23/11/2026): \"apos a validacao da chave de acesso, o app inicia a sua "
+        "configuracao local autonoma e exibe as informacoes de saude e desempenho na tela, bem como os "
+        "processos em andamento, como stremming, salvando video, ambos, etc...\"\n\n"
+        "A tela do PC de captura (`/bordo`, sem login) ganhou tres cartoes:\n\n"
+        "**1. O que esta acontecendo agora** — processo por fluxo, com o nome certo: "
+        "**transmitindo**, **gravando** (a gravacao full-time do radar no HD local), "
+        "**transmitindo e gravando** (o \"ambos\" que o dono pediu) ou **parado**, com o desde-quando, a "
+        "origem da ordem (cliente/admin) e o HD (blocos, espaco ocupado e livre, tamanho do bloco).\n\n"
+        "**2. Saude e desempenho** — a saude que ja' existia (CPU, memoria, disco, erros) mais o "
+        "**desempenho medido pelo proprio bordo**: entrada x saida em kbps por fluxo com a **reducao de "
+        "banda** em %, MB enviados e segundos no ar no ultimo minuto fechado, e o link (RTT, capacidade, "
+        "taxa de envio, perda, buffer e latencia de internet). O que NAO tem fonte nao vira numero: o "
+        "**fps nao e' medido nesta maquina e a tela diz \"sem medida\"** — nada e' inventado.\n\n"
+        "**3. Como esta maquina se configurou sozinha** — a configuracao local autonoma, na ordem da "
+        "vida real: chave de licenca, varredura das cameras e entradas de video locais, publicacao do "
+        "cadastro ao lado terra e o olhar para as flags do lado terra (com quando e o que deu).\n\n"
+        "O link custa uma medicao de verdade (ping + mediamtx, ~5 s): ele e' guardado em cache curto e o "
+        "campo diz ha' quanto tempo foi lido, em vez de repetir a medicao a cada 10 s.\n\n"
+        "**Provas:** `tests/test-bordo-sem-login-e-autonomo.py` (55 provas, novo bloco 2b: \"transmitindo e "
+        "gravando\" para o radar que grava, \"transmitindo\" para a camera com ordem do cliente, a gravacao "
+        "com os blocos do HD, o desempenho 4512 -> 812 kbps com 82 % de reducao lido do banco, a "
+        "\"sem medida\" com motivo quando nao ha medicao — e o cache do link), "
+        "`tools/regressao-0100.py` (20 provas), `node --check` e `py_compile`.\n"
+    ),
     "0.11.0": (
         "**O PC de captura ficou autonomo: chave, painel do bordo e mais nada.**\n\n"
         "Relato do dono (23/11/2026): \"inseri a chave de acesso no app no computador de captura, depois me "

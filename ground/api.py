@@ -109,6 +109,12 @@ BANCO = caminho_banco()
 CAMPOS_OBRIGATORIOS = ("valor", "fonte", "data", "hardware_versao", "comando")
 PORTA_WEBRTC, PORTA_HLS, PORTA_API_MEDIAMTX = 8889, 8888, 9997
 _CACHE_METRICAS: dict = {}
+# O painel do bordo (dono, 23/11/2026) mostra o DESEMPENHO do link: medir isso custa um ping e uma
+# consulta ao mediamtx (~5 s). O painel se atualiza a cada 10 s e o link nao muda de segundo em
+# segundo — um cache curto evita pagar 5 s toda vez sem mentir sobre o numero (ele e' "ha' quanto
+# tempo foi medido" no proprio campo).
+_CACHE_DESEMPENHO_BORDO: dict = {}
+CACHE_DESEMPENHO_BORDO_S = 25.0
 DURACAO_SESSAO_H = 12
 INICIADO_EM = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
 PAPEL_ADMIN = ("operador", "admin")
@@ -4862,6 +4868,153 @@ class Handler(SimpleHTTPRequestHandler):
                           "desde": quando, "ordem": str(info.get("ordem") or "")})
         return sorted(saida, key=lambda x: x.get("desde") or "")
 
+    # ------------------------------------------------------- painel do bordo: o que ele mediu e faz
+    def _processos_do_bordo(self) -> list:
+        """O que ESTA maquina esta fazendo AGORA, fluxo por fluxo (dono, 23/11/2026).
+
+        > "exibe as informacoes de saude e desempenho na tela, bem como os processos em andamento,
+        >  como stremming, salvando video, ambos, etc..."
+
+        Duas fontes reais — nada de suposicao:
+          * `ordens/ligados.json` (o mesmo que o agente usa): o que o cliente/admin mandou subir;
+          * `gravacao_continua` (o gravador full-time do radar no HD local): o que esta GRAVANDO.
+        """
+        processos: dict = {}
+
+        def _pega(fluxo: str, camera: str) -> dict:
+            chave = (fluxo or camera or "fluxo").strip() or "fluxo"
+            return processos.setdefault(chave, {"fluxo": fluxo, "camera_id": camera,
+                                                "transmitindo": False, "gravando": False,
+                                                "desde": "", "ordem": "", "desde_gravacao": "",
+                                                "hd": None, "observacao": ""})
+
+        for x in self._no_ar_do_bordo():
+            p = _pega(str(x.get("fluxo") or ""), str(x.get("camera_id") or ""))
+            p["transmitindo"] = True
+            p["desde"] = x.get("desde") or ""
+            p["ordem"] = x.get("ordem") or ""
+
+        try:
+            import gravacao_continua
+            g = dict(gravacao_continua.resumo() or {})
+            if g.get("ligada"):
+                p = _pega(str(g.get("camera") or "radar"), "")
+                p["gravando"] = True
+                p["desde_gravacao"] = g.get("ultimo") or ""
+                p["hd"] = {"diretorio": g.get("diretorio"), "blocos": g.get("blocos"),
+                           "bytes": g.get("bytes"), "livre_bytes": g.get("livre_bytes"),
+                           "total_bytes": g.get("total_bytes"),
+                           "bloco_segundos": g.get("bloco_segundos")}
+        except Exception as e:  # noqa: BLE001
+            processos.setdefault("_gravacao", {}).update(
+                {"fluxo": "(gravacao full-time)", "camera_id": "", "transmitindo": False,
+                 "gravando": False, "observacao": f"nao consegui ler o gravador: {type(e).__name__}"})
+
+        for p in processos.values():
+            p["estado"] = ("transmitindo e gravando" if p["transmitindo"] and p["gravando"]
+                           else "transmitindo" if p["transmitindo"]
+                           else "gravando" if p["gravando"] else "parado")
+            if not p["transmitindo"] and not p["gravando"] and not p.get("observacao"):
+                p["observacao"] = "sem ordem do cliente/admin (e a gravacao full-time nao esta ligada)"
+        return sorted(processos.values(), key=lambda p: (p["estado"] == "parado", p["fluxo"]))
+
+    def _gravacao_do_bordo(self) -> dict:
+        """O estado do gravador full-time do radar — o que o admin liga (`LECSOR_GRAVACAO_CONTINUA`)."""
+        try:
+            import gravacao_continua
+            g = dict(gravacao_continua.resumo() or {})
+            return {"ligada": bool(g.get("ligada")), "camera": g.get("camera") or "radar",
+                    "diretorio": g.get("diretorio") or "", "blocos": g.get("blocos"),
+                    "bytes": g.get("bytes"), "livre_bytes": g.get("livre_bytes"),
+                    "total_bytes": g.get("total_bytes"), "bloco_segundos": g.get("bloco_segundos"),
+                    "primeiro": g.get("primeiro") or "", "ultimo": g.get("ultimo") or "", "erro": ""}
+        except Exception as e:  # noqa: BLE001
+            return {"ligada": False, "erro": f"nao consegui ler o gravador ({type(e).__name__})"}
+
+    def _desempenho_do_bordo(self) -> dict:
+        """O que o bordo MEDIU: entrada x saida por fluxo e o estado do link (dono, 23/11/2026).
+
+        Fonte: `telemetria_minuto` (o que o proprio bordo fechou, minuto a minuto) e o proprio SRT
+        (`producao.link_srt`) + a latencia de internet. **O que nao tem fonte nao vira numero**: o
+        `fps` nao e' medido aqui e a tela diz "sem medida" — numero inventado e' pior que numero nenhum.
+        """
+        desde = (dt.datetime.now() - dt.timedelta(hours=6)).strftime("%Y-%m-%dT%H:%M")
+        fluxos: list = []
+        erro = ""
+        try:
+            import producao
+            with producao.conexao_banco() as c:
+                linhas = [dict(x) for x in c.execute(
+                    "SELECT fluxo_id, camera_id, minuto, entrada_kbps, saida_kbps, compressao_pct, "
+                    "mb_enviados, segundos_no_ar FROM telemetria_minuto WHERE minuto >= ? "
+                    "ORDER BY minuto DESC LIMIT 400", (desde,))]
+            vistos: set = set()
+            for l in linhas:                      # a linha mais NOVA de cada fluxo
+                f = str(l.get("fluxo_id") or "")
+                if f in vistos:
+                    continue
+                vistos.add(f)
+                fluxos.append(l)
+        except Exception as e:  # noqa: BLE001
+            erro = f"nao consegui ler a telemetria ({type(e).__name__})"
+        link: dict = {}
+        agora_ts = time.time()
+        guardado = _CACHE_DESEMPENHO_BORDO.get("link") or {}
+        if guardado and agora_ts - float(_CACHE_DESEMPENHO_BORDO.get("link_em") or 0) < CACHE_DESEMPENHO_BORDO_S:
+            link = dict(guardado)
+        else:
+            try:
+                import producao
+                link = dict(producao.link_srt() or {})
+                link["latencia_internet_ms"] = (producao.latencia_internet() or {}).get("ms_medio")
+            except Exception as e:  # noqa: BLE001
+                link = {"erro": f"nao consegui ler o link ({type(e).__name__})"}
+            _CACHE_DESEMPENHO_BORDO["link"] = dict(link)
+            _CACHE_DESEMPENHO_BORDO["link_em"] = agora_ts
+        link["medido_ha_s"] = round(max(0.0, agora_ts - float(_CACHE_DESEMPENHO_BORDO.get("link_em") or agora_ts)), 0)
+        return {"medido": bool(fluxos), "fluxos": fluxos, "link": link, "erro": erro,
+                "motivo": "" if fluxos else "esta maquina ainda nao fechou nenhum minuto de medicao"}
+
+    def _configuracao_do_bordo(self) -> list:
+        """A configuracao LOCAL autonoma: o que esta maquina ja fez sozinha (dono, 23/11/2026).
+
+        > "apos a validacao da chave de acesso, o app inicia a sua configuracao local autonoma"
+
+        A ordem e' a ordem em que acontece na vida real — e cada passo diz se ja' aconteceu, quando e
+        o que deu. Sem chave, o passo 1 fica em aberto e os outros dizem que esperam por ela.
+        """
+        lic = licenca_modulo.resumo()
+        try:
+            import varredura_do_bordo
+            v = dict(varredura_do_bordo.ultima() or {})
+        except Exception:  # noqa: BLE001
+            v = {}
+        ag = self._agente_do_bordo()
+        publicadas = list(v.get("publicadas") or [])
+        return [
+            {"passo": "Chave de licenca desta maquina", "feito": bool(lic.get("tem")),
+             "em": lic.get("ativada_em") or lic.get("conferida_em") or "",
+             "texto": (f"ligada a embarcacao {lic.get('embarcacao_nome') or lic.get('embarcacao_id')}"
+                       f" ({lic.get('cliente_nome') or '—'})") if lic.get("tem")
+                      else "em aberto: o aplicativo abre a tela da chave sozinho"},
+            {"passo": "Varredura das cameras e entradas de video locais",
+             "feito": bool(v.get("quando")), "em": v.get("quando") or "",
+             "texto": (f"{v.get('vistos', 0)} dispositivo(s) visto(s); "
+                       f"{(v.get('cadastradas') or []) and ', '.join(v.get('cadastradas') or []) or 'nenhuma nova'}"
+                       f" cadastrada(s)") if v.get("quando") else "ainda nao rodou"},
+            {"passo": "Publicacao do cadastro ao lado terra", "feito": bool(publicadas),
+             "em": v.get("quando") or "",
+             "texto": (f"{len(publicadas)} camera(s) publicada(s): {', '.join(publicadas)}") if publicadas
+                      else (v.get("falhas_de_publicacao") and
+                            "falhou: " + "; ".join(str(f.get('motivo') or '?')
+                                                   for f in v.get("falhas_de_publicacao") or [])) or
+                           "nada a publicar ainda"},
+            {"passo": "Olhando as flags do lado terra e obedecendo", "feito": bool(ag.get("no_ar")),
+             "em": ag.get("em") or "",
+             "texto": ("no ar: o bordo pergunta ao lado terra e obedece" if ag.get("no_ar")
+                       else (ag.get("motivo") or "sem sinal ainda"))},
+        ]
+
     def _resumo_do_bordo(self) -> dict:
         lic = licenca_modulo.resumo()
         token = bool((os.environ.get("LECSOR_TOKEN_INGESTAO") or "").strip())
@@ -4894,6 +5047,12 @@ class Handler(SimpleHTTPRequestHandler):
             "publicadas": list(varredura.get("publicadas") or []),
             "no_ar": self._no_ar_do_bordo(),
             "saude": saude,
+            # O que esta maquina faz AGORA (transmitindo / gravando / os dois), o que ela MEDIU e a
+            # configuracao local que ela mesma fez depois da chave (dono, 23/11/2026).
+            "processos": self._processos_do_bordo(),
+            "gravacao": self._gravacao_do_bordo(),
+            "desempenho": self._desempenho_do_bordo(),
+            "configuracao": self._configuracao_do_bordo(),
         }
 
     def _licenca_atender(self, contar: bool) -> None:

@@ -18,7 +18,10 @@ o caminho completo **bordo → terra → tela** rodando na bancada com vídeo pr
 não há login nessa máquina. Dali em diante, sozinho, ele varre as câmeras locais, cadastra e publica o
 cadastro no lado terra, olha as flags do lado terra e obedece (liga/desliga câmera, aplica o alvo, manda a
 saúde). A tela do app nessa máquina é o **Painel do Bordo** (`/bordo`, servido pelo próprio bordo, sem
-login), que só informa: embarcação/empresa da chave, situação da licença, token do instalador
+login), que só informa: **o que está acontecendo agora** (transmitindo / gravando full-time / os dois, com o
+desde-quando e o HD), **saúde e desempenho** (CPU/memória/disco + entrada × saída em kbps com a redução de
+banda, MB enviados e o link), **como esta máquina se configurou sozinha**, embarcação/empresa da chave, a
+situação da licença, token do instalador
 (presente/ausente), lado terra, agente de ordens no ar, o que está no ar, a última varredura/publicação e a
 saúde do bordo. **Quem configura é o admin e quem assiste é o cliente — no lado terra, pelo navegador.**
 Passo a passo em `INSTALAR-PC-DE-CAPTURA.md`: as câmeras entram pela tela **Enviar vídeo**, o sistema
@@ -26,6 +29,27 @@ comprime na máquina e o vídeo comprimido sobe para o lado terra (`destinoSrt`)
 
 ## Instaladores prontos (Windows x64) — PLUG & PLAY desde a 0.2.0
 Na página de releases: https://github.com/gm-innovation/video_compressor/releases
+
+### 0.11.1 — **o painel do bordo mostra o que está acontecendo: os processos e o desempenho medido** (dono, 23/11/2026)
+- **O que o dono pediu:** *"após a validação da chave de acesso, o app inicia a sua configuração local
+  autônoma e exibe as informações de saúde e desempenho na tela, bem como os processos em andamento, como
+  stremming, salvando vídeo, ambos, etc..."*.
+- **"O que está acontecendo agora":** processo por fluxo com o nome certo — **transmitindo**, **gravando**
+  (a gravação full-time do radar no HD local), **transmitindo e gravando** (o "ambos") ou **parado** — com
+  o desde-quando, a origem da ordem (cliente/admin) e o HD (blocos, ocupado, livre e o tamanho do bloco).
+- **"Saúde e desempenho":** a saúde (CPU, memória, disco, erros) mais o **desempenho medido pelo próprio
+  bordo** — entrada × saída em kbps por fluxo com a **redução de banda** em %, MB enviados e segundos no ar
+  no último minuto fechado, e o link (RTT, capacidade, taxa de envio, perda, buffer e latência). **O `fps`
+  não é medido nesta máquina: a tela diz "sem medida"** — nada é inventado.
+- **"Como esta máquina se configurou sozinha":** a configuração local autônoma na ordem da vida real —
+  chave de licença, varredura das câmeras e entradas de vídeo locais, publicação do cadastro ao lado terra e
+  o olhar para as flags do lado terra (com quando e o que deu).
+- **O link não é remedido a cada 10 s:** a medição de verdade (ping + mediamtx, ~5 s) fica em cache curto e
+  o campo diz há quanto tempo foi lido.
+- **Provas:** `tests/test-bordo-sem-login-e-autonomo.py` (55 provas, bloco 2b novo: "transmitindo e gravando",
+  "transmitindo", a gravação com os blocos do HD, o desempenho 4512 → 812 kbps com 82 % de redução lido do
+  banco, o "sem medida" com motivo e o cache do link), `tools/regressao-0100.py` (20 provas), `node --check`
+  e `py_compile`.
 
 ### 0.11.0 — **o PC de captura ficou autônomo: chave, painel do bordo e mais nada** (dono, 23/11/2026)
 - **O que o dono relatou:** *"inseri a chave de acesso no app no computador de captura, depois me pede email e
