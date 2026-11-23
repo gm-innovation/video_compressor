@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Regressao do SMOKE de ponta a ponta: o medidor mede, e as jornadas passam.
 
-    python tools/regressao-smoke.py            # completa (medidor + J1..J4)  ~4 min
-    python tools/regressao-smoke.py --rapido   # antes de commitar              ~2 min
+    python tools/regressao-smoke.py            # completa (medidor + J1..J4 + J6)  ~7 min
+    python tools/regressao-smoke.py --rapido   # antes de commitar                ~2 min
 
 Roda:
   1. `tests/smoke-medidor-detecta-falha.py` — prova que o medidor nao da' "OK" de graca;
@@ -45,7 +45,9 @@ def main() -> int:
     if not args.sem_medidor:
         provas.append(("o medidor mede (e devolve zero quando nao ha' fluxo)",
                        [sys.executable, "tests/smoke-medidor-detecta-falha.py"], 420))
-    jornadas = "1,2" if args.rapido else "1,2,3,4"
+    # J6 (o HD do radar) entra na rodada completa: ela leva mais tempo e, sem dispositivo de video na
+    # maquina, ela mesma se marca NAO MEDIDA em vez de mentir "OK".
+    jornadas = "1,2" if args.rapido else "1,2,3,4,6"
     provas.append((f"smoke de ponta a ponta (jornadas {jornadas})",
                    [sys.executable, "tools/smoke/ponta-a-ponta.py", "--jornadas", jornadas], 1500))
 

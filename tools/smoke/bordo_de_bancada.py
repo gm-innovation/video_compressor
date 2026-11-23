@@ -10,9 +10,11 @@ A UNICA substituicao do smoke, declarada:
   banco e o mediamtx sao os reais; o que muda e' so' quem atende o POST.
 
 Todo o resto e' o produto, sem atalho:
-  * a flag e' lida pelo `agente_de_ordens.ler_flag` (GET /api/estado-desejado no lado terra);
-  * as acoes e o relato sao do `agente_de_ordens.aplicar_flag` (que conta em POST /api/estado-real);
-  * a saude e o "estou vivo" sao do proprio agente.
+  * a RODADA inteira e' a do produto (`agente_de_ordens.uma_rodada`): flag -> aplicar_flag ->
+    atender_pedidos (o HD do radar) -> publicar_catalogo -> config -> saude -> teto. O laco deste
+    arquivo so' repete a rodada do produto no ritmo do `--intervalo`; um laco proprio aqui foi um
+    DEFEITO (deixava de fora o catalogo e os pedidos do HD — medido em 23/11/2026), entao a unica
+    coisa que este processo substitui mesmo e' QUEM atende o POST local.
 """
 from __future__ import annotations
 
@@ -97,15 +99,9 @@ def principal() -> int:
 
     while True:
         try:
-            agente.marcar_vivo()
-            flag = agente.ler_flag(base, token, emb)
-            if flag:
-                cams = flag.get("cameras") or flag.get("estado") or []
-                if cams:
-                    r = agente.aplicar_flag(cams, local, base, token, emb)
-                    if r.get("acoes"):
-                        print(f"[bordo] {json.dumps(r['acoes'], ensure_ascii=False)}", flush=True)
-            agente.enviar_saude(base, token, emb)
+            # A RODADA E' A DO PRODUTO (flag -> aplicar_flag -> atender_pedidos -> catalogo -> config
+            # -> saude -> teto). `espera=0` porque o lado terra responde a flag na hora.
+            agente.uma_rodada(base, local, token, emb, 0.0)
         except Exception as e:  # noqa: BLE001
             print(f"[bordo] rodada com erro: {type(e).__name__}: {e}", flush=True)
         time.sleep(max(0.5, args.intervalo))

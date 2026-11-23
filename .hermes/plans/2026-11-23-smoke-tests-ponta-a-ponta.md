@@ -3,8 +3,10 @@ adotado (b), (a) e (a): o smoke convive com a lista curada por rodada, pode cria
 `smoke-<data>` no terra de produção (com limpeza automática; a trilha permanece) e a rodada longa da Fase 4
 roda nesta máquina, com o número de campo ficando para o PC de captura real.
 
-**Progresso (23/11/2026):** **Fase 1 P0/P1 feita** — medidor, ambiente, atendedor de bancada, relatório,
-comando único, J1–J4 e `docs/smoke.md` escritos e **J1–J4 medidos** (ver §9). Fases 2–5 não iniciadas.
+**Progresso (23/11/2026):** **Fase 1 fechada** (medidor, ambiente, atendedor de bancada, relatório, comando
+único, J1–J4, `docs/smoke.md` — ver §9) e **Fase 2 com P0 (J3, J4) e P2 (J6) fechados**: o HD do radar
+grava full time e o cliente vê/pede/baixa o trecho na tela (ver §10). **P1 da Fase 2 (J5 — gravação,
+download e apagamento) e as Fases 3–5 não iniciadas.**
 
 # Smoke tests de ponta a ponta do pipeline bordo → terra → tela
 
@@ -226,3 +228,36 @@ decodificada com o tempo andando (0,56 → 6,56 s) · arranque 12,7 s do clique 
 - **Nesta máquina há webcam de verdade** (`ACER HD User Facing`, `ingestao.maquina_de_captura()` = `true`)
   — o atendedor de bancada continua existindo para a rodada **não depender de a webcam estar livre**, mas
   a próxima rodada pode medir também com a câmera física. Declarado em `docs/smoke.md`.
+
+## 10. Diário da implementação (Fase 2, 23/11/2026)
+
+**Fase 2 P0 (J3, J4) e P2 (J6) fechados com número.** `python tools/regressao-smoke.py` → **RC=0**:
+medidor (11 checagens) + **J1–J4 e J6 → `SMOKE: 5/5 OK`** (J1 0,5 s · J2 21,9 s · J3 16,6 s · J4 23,6 s ·
+J6 18,9 s). **Falta o P1 da Fase 2 (J5 — gravação, download e apagamento)**, que tem motor em
+`tests/e2e-gravacao-baixar-e-sair.py`.
+
+Medida de J6 (o radar de óleo, o caminho inteiro): **o HD gravou 1 bloco sem ninguém pedir (0,7 s)** →
+**o agente publicou o catálogo no terra (3 blocos em 4,3 s)** → **o cliente viu 5 trechos na tela** →
+**PEDIR → HTTP 201** (fila do bordo) → **o BORDO enviou o bloco (261 B)** → **o cliente baixou 261 B**.
+O bloco tem 261 B porque **o dispositivo desta máquina não entrega quadros** (a webcam abre e não produz
+frame — medido com `ffmpeg -f dshow -i "ACER HD User Facing" -t 3`: 0 quadro). **O que a J6 prova é a
+cadeia** (gravação contínua → catálogo → pedido → envio pelo bordo → download), não a imagem do radar —
+que só existe com o radar de verdade no HDMI.
+
+### Defeitos e armadilhas encontrados na Fase 2 (todos medidos)
+
+| # | O que era | Onde estava | Conserto |
+|---|---|---|---|
+| G | **O defeito do HD não era do produto.** O teste lia o catálogo **uma vez**, logo depois de o primeiro bloco nascer, e o agente publica o catálogo **a cada rodada**: a leitura pegava o catálogo de **antes** do bloco (`resumo.blocos = 0`) e o `IndexError` era consequência | `tests/e2e-hd-do-radar-cliente-pede-trecho.py` (passo 2) | a prova **espera** o catálogo alcançar o disco (como os passos 1 e 4 do mesmo teste já faziam) |
+| H | **O laço caseiro do bordo de bancada** reimplementava a rodada e **deixava de fora o catálogo do HD e os pedidos de trecho**: o próprio smoke escondia o defeito que a J6 existe para pegar | `tools/smoke/bordo_de_bancada.py` | o laço passou a chamar **`agente_de_ordens.uma_rodada`** (a rodada do produto); a única substituição continua sendo **quem atende o POST local** |
+| I | O agente **só publica o catálogo** se o ambiente do HD estiver nele (`LECSOR_GRAVACAO_CONTINUA=1`) e, na bancada, ele sobe **antes** do HD | `tools/smoke/ambiente.py` | `reiniciar_agente()`: a J6 sobe o agente **com o ambiente do HD** (defeito da bancada, não do produto) |
+| J | A tabela do HD nasce com uma linha de **"carregando"**: contar linha **não provava nada** (a primeira rodada deu *5 linhas* de cabeçalho e 1 linha falsa de dado) | `jornadas/j6_radar_hd.py` | a checagem exige o resumo do app (`N trecho(s)`) — ele só é escrito **depois** de o catálogo chegar |
+| K | A tela do HD **não se atualiza sozinha**: com o trecho já `enviado`, o botão continuava `pedir` | `jornadas/j6_radar_hd.py` | a J6 **reabre a tela** (o gesto que o cliente faria) até aparecer o BAIXAR |
+
+### O que a Fase 2 ainda não mede
+
+- **O conteúdo de imagem do HD do radar:** depende do radar de verdade entrando por HDMI. Nesta bancada o
+  anel de blocos é provado (gravou, girou, catalogou, entregou, baixou), o **quadro** não.
+- **A GRAVAÇÃO do vídeo ao vivo (J5):** quem grava o fluxo ao vivo é o lado terra, e o apagamento ao sair
+  é o que o dono pediu ("quando ele desligar o sistema ou sair da tela os arquivos serão apagados") — é o
+  P1 da Fase 2, com motor pronto em `tests/e2e-gravacao-baixar-e-sair.py`.

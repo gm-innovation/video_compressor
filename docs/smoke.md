@@ -7,7 +7,7 @@ evidência em disco.
 ```bash
 export LECSOR_SENHA_DEMO=...          # a senha dos usuários de demonstração do lado terra
 python tools/smoke/ponta-a-ponta.py --rapido          # J1+J2 (o que roda antes de cada commit)
-python tools/smoke/ponta-a-ponta.py --jornadas 1,2,3,4
+python tools/smoke/ponta-a-ponta.py --jornadas 1,2,3,4,6
 python tools/smoke/ponta-a-ponta.py --modo producao --terra https://... --bordo http://... --jornadas 1,2
 ```
 
@@ -19,6 +19,7 @@ python tools/smoke/ponta-a-ponta.py --modo producao --terra https://... --bordo 
 | J2 | O cliente pede e a câmera sobe | o cliente clica "Iniciar transmissão" | fps, Mbps, latência, tempo de subida e a **imagem decodificada no navegador** |
 | J3 | O cliente sai e a banda volta | o cliente fecha a tela | o tempo de parada, o processo morto, a banda de volta a ~0 |
 | J4 | Dois clientes, um sai | A e B assistem; A sai; depois B | com 1 cliente a câmera **continua**; o envio morre só quando o último sai |
+| J6 | O radar de óleo e o HD | o cliente abre **Radar de óleo (HD)** e pede um trecho | o HD gravou **sem ninguém pedir**, o catálogo chegou ao cliente, o **bordo enviou** o bloco (ele olha a fila do terra) e o cliente **baixou** o arquivo |
 
 ## Vereditos
 
@@ -40,7 +41,11 @@ Regra dura: **sem medida, o veredito nunca é "OK"**. Um número ausente aparece
 - o hardware definitivo (4 câmeras + o radar por HDMI) — na bancada a fonte é sintética: **na bancada
   não há câmera plugada**, então quem entrega os quadros é o gerador do produto (`testsrc2`), e o
   encode/SRT/mediamtx são os reais;
-- a latência **percebida na tela** num cliente externo de verdade.
+- a latência **percebida na tela** num cliente externo de verdade;
+- **a imagem do HD do radar** (J6): o radar de verdade entra por HDMI. Nesta bancada o dispositivo de
+  vídeo abre mas **não entrega quadro** (`ffmpeg -f dshow -i "ACER HD User Facing" -t 3` = 0 quadro), então
+  o que a J6 prova é a **cadeia** (gravou sozinho → catálogo → pedido → o bordo enviou → o cliente baixou);
+  o **quadro** do radar só se prova com o radar no HDMI.
 
 ## Duas coisas que só a bancada tem
 

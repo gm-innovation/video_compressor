@@ -193,6 +193,8 @@ class Ambiente:
         self.banco_bordo = self.tmp / "bordo" / "pipeline.db"
         self.licenca = self.tmp / "bordo" / "licenca.json"
         self.gravacoes = self.tmp / "gravacoes"
+        self.hd_dir = self.tmp / "hd"          # HD do radar de oleo (gravacao continua)
+        self.hd_env: dict = {}                 # o que o BORDO tambem precisa para publicar o catalogo
         self.porta_terra = 0
         self.porta_bordo = 0
         self.porta_media = 0          # mediamtx (RTSP) — o que o medidor le'
@@ -284,7 +286,70 @@ class Ambiente:
         self.bordo = f"http://127.0.0.1:{self.porta_bordo}"
         return self._espera_json(f"{self.bordo}/api/saude")
 
-    def subir_agente(self, token: str | None = None, intervalo: float = 2.0) -> bool:
+    def reiniciar_agente(self, extra: dict | None = None) -> bool:
+        """Sobe o agente DE NOVO com o ambiente novo (o HD do radar precisa entrar no env do agente:
+        e' ele quem publica o catalogo; sem isso o catalogo sai vazio e a J6 cai por um defeito da
+        BANCADA, nao do produto)."""
+        p = self.nomes.pop("agente", None)
+        if p is not None and p.poll() is None:
+            try:
+                p.terminate()
+                p.wait(timeout=10)
+            except Exception:  # noqa: BLE001
+                try:
+                    p.kill()
+                except Exception:  # noqa: BLE001
+                    pass
+        return self.subir_agente(extra=extra if extra is not None else self.hd_env)
+
+    def dispositivo_do_radar(self) -> str:
+        """O dispositivo de video desta maquina (dshow) — o que o HD do radar vai gravar.
+
+        NUNCA inventa: sem dispositivo devolve "" e quem chama marca a jornada NAO MEDIDA, em vez de
+        fingir que gravou (o nome fixo no codigo era um defeito antigo do produto).
+        """
+        do_ambiente = (os.environ.get("LECSOR_HD_DISPOSITIVO") or "").strip()
+        if do_ambiente:
+            return do_ambiente
+        codigo, r = pedir("GET", f"{self.bordo}/api/dispositivos", timeout=60)
+        if codigo != 200:
+            return ""
+        video = (r or {}).get("video") or (r or {}).get("dispositivos") or []
+        nomes: list[str] = []
+        for v in video:
+            if isinstance(v, dict):
+                nomes.append(str(v.get("nome") or v.get("name") or ""))
+            elif v:
+                nomes.append(str(v))
+        return nomes[0] if nomes else ""
+
+    def subir_hd_do_radar(self, dispositivo: str = "", camera: str = "radar-01",
+                          bloco_segundos: int = 2) -> dict:
+        """Liga a GRAVACAO CONTINUA do HD do radar (o daemon do produto, `ground/gravacao_continua.py`).
+
+        Nada aqui e' dubl^e: e' o mesmo processo que o app sobe na maquina de captura, gravando de um
+        dispositivo de verdade. Sem dispositivo, devolve `{}` (a jornada fica NAO MEDIDA).
+        """
+        disp = dispositivo or self.dispositivo_do_radar()
+        if not disp:
+            self._log("HD do radar: esta maquina nao expos nenhum dispositivo de video")
+            return {}
+        self.hd_dir.mkdir(parents=True, exist_ok=True)
+        self.hd_env = {"LECSOR_GRAVACAO_CONTINUA": "1", "LECSOR_HD_DIR": str(self.hd_dir),
+                       "LECSOR_HD_DISPOSITIVO": disp, "LECSOR_HD_CAMERA": camera,
+                       "LECSOR_BLOCO_SEGUNDOS": str(bloco_segundos)}
+        self._abrir("hd_do_radar", [sys.executable, str(RAIZ / "ground" / "gravacao_continua.py")],
+                    env=self._env(**self.hd_env))
+        return dict(self.hd_env)
+
+    def blocos_no_hd(self) -> list[pathlib.Path]:
+        try:
+            return sorted(self.hd_dir.glob("bloco-*.mp4"))
+        except Exception:  # noqa: BLE001
+            return []
+
+    def subir_agente(self, token: str | None = None, intervalo: float = 2.0,
+                     extra: dict | None = None) -> bool:
         """O agente do bordo de verdade (`ground/agente_de_ordens.py`), olhando a flag do lado terra.
 
         A unica substituicao esta' declarada em `bordo_de_bancada.py`: nesta maquina nao ha' camera
@@ -293,7 +358,11 @@ class Ambiente:
         """
         env = self._env(LECSOR_BANCO=self.banco_bordo, LECSOR_LICENCA=self.licenca,
                         LECSOR_LADO_TERRA_API=self.terra, LECSOR_PORTA_LOCAL=str(self.porta_bordo),
-                        LECSOR_TOKEN_INGESTAO=token or token_do_bordo())
+                        LECSOR_TOKEN_INGESTAO=token or token_do_bordo(),
+                        **(extra if extra is not None else self.hd_env))
+        # O agente publica o catalogo do MESMO `LECSOR_HD_DIR` que o gravador esta enchendo: sem isto a
+        # jornada J6 mede um catalogo vazio (o defeito que ela existe para pegar).
+        env.setdefault("LECSOR_HD_DIR", str(self.hd_dir))
         linha = self.tmp / "agente-endereco.txt"
         self._abrir("agente", [sys.executable, str(RAIZ / "tools" / "smoke" / "bordo_de_bancada.py"),
                                "--local", f"127.0.0.1:{porta_livre()}", "--terra", self.terra,
@@ -427,7 +496,7 @@ class Ambiente:
 
     # ------------------------------------------------------------------ fim
     def fechar(self) -> None:
-        for nome in ("agente", "bordo", "terra"):
+        for nome in ("hd_do_radar", "agente", "bordo", "terra"):
             p = self.nomes.pop(nome, None)
             if p is None or p.poll() is not None:
                 continue
@@ -439,6 +508,12 @@ class Ambiente:
                     p.kill()
                 except Exception:  # noqa: BLE001
                     pass
+        # ffmpeg do HD do radar: grava na pasta temporaria desta rodada (nao em SRT); se ficou orfao, mata
+        for f in self.processo_da_midia(str(self.hd_dir)):
+            try:
+                subprocess.run(["taskkill", "/F", "/PID", str(f["pid"])], capture_output=True, timeout=20)
+            except Exception:  # noqa: BLE001
+                pass
         # ffmpeg do smoke e' filho do bordo: se ficou orfao, mata (nunca deixa processo pendurado)
         for f in self.processo_da_midia("srt://127.0.0.1"):
             try:

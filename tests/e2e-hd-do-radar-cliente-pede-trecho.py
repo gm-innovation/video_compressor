@@ -204,9 +204,21 @@ def main() -> int:
                f"a gravacao continua encheu o HD ({len(list(hd.glob('bloco-*.mp4')))} bloco(s)) sem ninguem pedir")
 
         # 2) o bordo publica o catalogo em terra
-        st, jc, _ = pedir("GET", base_terra + f"/api/hd/catalogo?camera_id={CAM_RADAR}", cookie=tok)
-        cat = (jc.get("catalogos") or [{}])[0]
-        blocos = cat.get("blocos") or []
+        # O catalogo e' publicado a cada RODADA do agente (e a rodada pode estar no meio do envio da
+        # saude). Ler UMA vez logo depois de o primeiro bloco nascer le' o catalogo de ANTES dele —
+        # medido em 23/11/2026: o agente publicou as 09:39:32 com 0 blocos e a leitura unica as 09:39:41
+        # viu 0 bloco(s) com 2 no disco. Esperar o catalogo ALCANCAR o disco e' o que a prova exige.
+        def catalogo_com_blocos() -> dict:
+            _st, _jc, _ = pedir("GET", base_terra + f"/api/hd/catalogo?camera_id={CAM_RADAR}", cookie=tok)
+            _cat = (_jc.get("catalogos") or [{}])[0]
+            return {"st": _st, "blocos": _cat.get("blocos") or []}
+
+        try:
+            espera(lambda: len(catalogo_com_blocos()["blocos"]) >= 1, 120.0)
+        except Exception:  # noqa: BLE001
+            pass
+        _cat = catalogo_com_blocos()
+        st, blocos = _cat["st"], _cat["blocos"]
         exigir(st == 200 and len(blocos) >= 1,
                f"o cliente VE o catalogo do HD na tela ({len(blocos)} bloco(s), "
                f"primeiro {str((blocos[0] if blocos else {}).get('inicio'))[11:19]})")
