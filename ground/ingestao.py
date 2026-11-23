@@ -162,7 +162,13 @@ def _comando(fonte: str, fluxo_id: str, bitrate: str, codec: str, repetir: bool,
     destino = (f"srt://{srt_host}:{srt_port}?mode=caller&latency=200&pkt_size=1316&streamid=publish:{fluxo_id}")
     cmd = [caminho_ffmpeg(), "-hide_banner", "-nostdin", "-loglevel", "warning"]
     if tipo in ("camera", "sintetica", "radar"):
-        # FONTE VIVA: a webcam (ou o gerador) entrega no tempo real — nada de -re nem de laço,
+        if tipo == "sintetica":
+            # O GERADOR sintetico (testsrc2) NAO e' fonte de tempo real: sem `-re` ele produz o mais
+            # rapido que a maquina consegue. Medido em 23/11/2026 pelo smoke: 238 quadros em 0,38 s de
+            # relogio (a entrega ia a ~630 q/s, o mediamtx enchia o buffer e a latencia do caminho virava
+            # NUMERO NEGATIVO). A webcam ja' entrega no tempo real; o gerador precisa ser mandado.
+            cmd += ["-re"]
+        # FONTE VIVA: a webcam (ou o gerador) entrega no tempo real — nada de laço,
         # o envio e' CONTINUO, igual a operacao. Sem -t: so para quando o dono mandar parar.
         # RADAR entra aqui desde a Fase 3 (17/11/2026): os quadros do radar chegam por `pipe:0`,
         # gerados pelo `radar_drq.quadros_ao_vivo` — mesma cadeia (SRT -> mediamtx -> lado terra).

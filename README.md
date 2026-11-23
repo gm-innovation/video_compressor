@@ -293,6 +293,21 @@ python ground/api.py 8765                # http://127.0.0.1:8765/
 ```
 Saída da medição de banda/VMAF: `bench/saida/resultado-fase0.json` e `medicoes.csv`.
 
+## Smoke de ponta a ponta (bordo → terra → tela)
+
+```bash
+export LECSOR_SENHA_DEMO=...                    # senha dos usuários de demonstração do lado terra
+python tools/regressao-smoke.py --rapido        # medidor + J1+J2 (~2 min) — antes de commitar
+python tools/regressao-smoke.py                 # medidor + J1..J4 (~4 min)
+```
+
+Cada jornada tem **ação de usuário em navegador real**, **comando real de mídia** (ffmpeg/SRT/mediamtx)
+e **medida com número**; o relatório sai em `smoke/saida/<data>/`. Regra dura: **sem medida, a jornada
+não é "OK"** — é "NÃO MEDIDA". Detalhes, vereditos e limites em [`docs/smoke.md`](docs/smoke.md).
+
+Rodada de 23/11/2026 (bancada, fluxo `cam-01`): **30,0 fps · 3,176 Mbps · latência 0,199 s · imagem
+1920×1080 decodificada no cliente · arranque 12,7 s**; J1–J4 **4/4 OK**.
+
 ## Medições feitas na bancada (nada digitado à mão)
 
 | medição | resultado | onde |

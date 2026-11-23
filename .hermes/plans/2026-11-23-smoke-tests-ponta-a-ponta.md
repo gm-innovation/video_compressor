@@ -1,0 +1,228 @@
+**Status:** aprovado (dono, "prossiga", 23/11/2026) — implementando por fase; decisões S1/S2/S3 adotadas como
+adotado (b), (a) e (a): o smoke convive com a lista curada por rodada, pode criar/apagar dado próprio
+`smoke-<data>` no terra de produção (com limpeza automática; a trilha permanece) e a rodada longa da Fase 4
+roda nesta máquina, com o número de campo ficando para o PC de captura real.
+
+**Progresso (23/11/2026):** **Fase 1 P0/P1 feita** — medidor, ambiente, atendedor de bancada, relatório,
+comando único, J1–J4 e `docs/smoke.md` escritos e **J1–J4 medidos** (ver §9). Fases 2–5 não iniciadas.
+
+# Smoke tests de ponta a ponta do pipeline bordo → terra → tela
+
+> **Para o Hermes:** este plano é para o dono aprovar antes de existir código. Ele não implementa nada:
+> descreve as jornadas que provam que o sistema FUNCIONA (ação de usuário → comando real → efeito
+> medido), onde cada jornada roda e como se sabe que passou.
+
+**Goal:** dar ao dono **um comando** que responda, com números medidos, se o produto realmente funciona
+ponta a ponta — instalar, o cliente pedir, a câmera subir, o vídeo chegar na tela, a gravação existir, o
+HD do radar entregar o trecho e a licença cortar — em vez de provar só que as telas abrem e não quebram.
+
+**Architecture:** um **medidor único** (`tools/smoke/ponta-a-ponta.py`) que sobe o ambiente, executa
+**jornadas** (ações de usuário em navegador de verdade + comandos reais de mídia: ffmpeg, mediamtx, SRT),
+**mede** o que o produto promete (fps, latência, banda/peso, tempo de subida, tempo de parada) e escreve um
+**relatório com veredito por jornada**. O smoke **não reescreve** o que já existe: ele **orquestra** as
+provas de nível de efeito que a rodada já tem (`tests/e2e-*.py` que publicam mídia de verdade) e cobre as
+jornadas que ainda não têm prova, com **uma regra dura**: *sem número medido e sem arquivo de evidência,
+a jornada é "não medida" — nunca "OK"*.
+
+**Tech Stack:** Python 3.12/3.14 (stdlib + `urllib`), Playwright/Chromium (ações de usuário reais),
+ffmpeg + mediamtx (mídia real), SRT/HLS/WebRTC, SQLite (bordo e terra), VPS 187.127.60.250 (lado terra de
+produção), Supabase `gscfcobpejxhtyzwfrjp` (quando a jornada for de produção controlada).
+
+---
+
+## 1. Evidência de hoje (o que existe, medido — não relatado)
+
+| Fato | Como foi verificado |
+|---|---|
+| O repositório tem **89 arquivos** em `tests/`, um runner (`tests/suite.py`) e uma regressão curada por rodada (`tools/regressao-0100.py`, hoje `TUDO VERDE (20 provas) RC=0`) | `ls tests/ | wc -l` = 89; execução do `tools/regressao-0100.py` nesta sessão |
+| **Não existe nenhum smoke test** no projeto | `grep -rli smoke --include=*.py --include=*.md --include=*.sh .` só retorna arquivos do `numpy` dentro de `.venv/` |
+| Existem provas de **efeito real** (não só tela) — ex.: `tests/e2e-gravacao-baixar-e-sair.py` publica mídia com mediamtx+ffmpeg, baixa o arquivo pelo navegador e confere o **apagamento no disco** | docstring e corpo do próprio teste (343 linhas) |
+| A suíte **não roda inteira** e ninguém percebe: `tests/e2e-fase3-4.py` falha hoje com `Playwright: Page.goto: net::ERR_CONNECTION_REFUSED at http://127.0.0.1:8765/app` (depende de bancada externa ligada) | execução do teste nesta sessão |
+| Há **defeito real** escondido na suíte: `tests/e2e-hd-do-radar-cliente-pede-trecho.py` → `FALHA o cliente VE o catalogo do HD na tela (0 bloco(s), primeiro )` e em seguida `IndexError: list index out of range` (linha 215: `blocos[0]["arquivo"]`) | execução do teste nesta sessão |
+| O produto **promete números** e já tem como medi-los: latência RTSP **1,568 s**, HLS **2,596–3,087 s**, banda **5,51 Mbps** com VMAF 94,87 (1080p30), HLS 1280×720 **30 fps** | tabela "Medições feitas na bancada" do `README.md` (linhas 296–307) |
+| Existem as ferramentas de medição, mas nenhuma delas está amarrada ao teste do produto: `ground/producao.py` (`link_srt`, `latencia_internet`, `atraso_stream`, `_qualidade_por_fluxo`, `resumo_producao`), `bench/medir-latencia.py`, `tests/medir-aceleracao.py` | leitura dos módulos |
+| A bancada tem receita pronta (3 comandos) e fontes sintéticas de vídeo | `README.md` §"Como rodar na bancada" (linhas 283–293): `./ground/start-mediamtx.sh`, `python board/agent.py`, `python ground/api.py 8765` |
+| O lado terra de produção está no ar e é acessível | `systemctl is-active pipeline-api.service` = **active**; `/api/saude` = **200** (VPS 187.127.60.250:8085) |
+| Existem as rotas que as jornadas precisam | `ground/api.py`: `/api/licenca`, `/api/licenca/ativar`, `/api/licencas`, `/api/varredura`, `/api/cameras` (`/ligar`, `/desligar`, `/prontidao`), `/api/estado-desejado`, `/api/estado-real`, `/api/config-desejada`, `/api/config/aplicar`, `/api/config-aplicada`, `/api/transmissao/{iniciar,sair,pedidos,config}`, `/api/ordens`, `/api/hd/{catalogo,pedir,trecho,baixar}`, `/api/gravacoes/`, `/api/saude-do-bordo`, `/api/tempo-real`, `/api/qualidade/medir` |
+
+**Leitura do conjunto:** o projeto tem profundidade (as provas de efeito existem), mas **não tem um
+veredito**: 89 arquivos, dois quebrados, nenhum comando único que diga "o produto funciona hoje" — e a
+frase "os testes passaram" hoje se refere a uma lista curada por rodada, não ao produto inteiro.
+
+## 2. O que é (e o que não é) prova de ponta a ponta aqui
+
+**É prova de ponta a ponta** quando a jornada tem as cinco partes:
+
+1. **Ação de usuário real** — clique/digitação em navegador (cliente, admin, operador) ou a ação do
+   operador na máquina de captura; nada de chamar função interna no lugar do usuário.
+2. **Comando real disparado pelo produto** — `ffmpeg` sobe o canal, `mediamtx` publica, `srt` transporta,
+   o arquivo é escrito no disco, a chave é gravada no `licenca.json`. Nada de dublê no caminho de mídia.
+3. **Efeito observável do outro lado** — o quadro aparece na tela do cliente, o caminho existe no
+   `mediamtx`, o bloco aparece no HD, o apagamento acontece no disco, a trilha de auditoria ganha a linha.
+4. **Medida com número** — fps recebido, latência (s), banda de subida (Mbps), peso do bloco, tempo de
+   subida (s) e de parada (s), CPU/memória do bordo. **Sem medida, a jornada é "não medida".**
+5. **Evidência arquivada** — `smoke/saida/<data>/<jornada>/{resultado.json, qa.md, tela-*.png, log*.txt}`.
+
+**Não é** — e não serve mais como critério de aceite: "a tela abriu", "a rota respondeu 200", "o botão
+existe", "não deu erro de JavaScript", "a resposta JSON tem o campo". Isso continua sendo prova de
+integridade (útil, mas é piso, não teto).
+
+## 3. Onde roda (dois modos, ambos obrigatórios)
+
+| Modo | Ambiente | Para que serve | Como |
+|---|---|---|---|
+| **A — bancada** (`--modo bancada`) | máquina de engenharia: API+banco temporário, mediamtx local, câmeras **sintéticas** (`board/agent.py`, 720p30) | roda em minutos, a cada mudança; é o smoke de rotina | mediamtx + agente + `api.py --semear-demo` em banco novo |
+| **B — produção controlada** (`--modo producao`) | VPS 187.127.60.250 (lado terra de produção, `pipeline-api.service`) + **PC de captura de verdade** + Supabase | prova que o que ficou publicado funciona no ambiente real | credenciais por variável de ambiente/cofre; **nenhuma credencial de câmera circula em chat, e-mail ou repositório** |
+
+Regras de convivência: cada jornada do modo B **cria o próprio dado** (empresa/embarcação/usuário/licença
+com prefixo `smoke-<data>`) e **remove no fim** — o que a campanha inseriu é apagado, a **trilha de
+auditoria permanece** (decisão do dono: nada é apagado da trilha). Jornada que grava mídia apaga os
+arquivos temporários ao fim.
+
+## 4. As jornadas (o que o smoke prova)
+
+| # | Jornada | Ação do usuário | Comando / efeito real | Medida que fecha o "OK" |
+|---|---|---|---|---|
+| **J1** | **Instalar e vincular** | instala o app no PC de captura, abre, digita a chave `XXXX-XXXX-XXXX-XXXX` | o bordo grava `licenca.json`, roda a varredura e publica o cadastro no terra | `LICENCA.tem=1`, a embarcação da chave, `>=1` câmera cadastrada no admin |
+| **J2** | **O cliente pede e a câmera sobe** | cliente entra na web (`/app`), clica **Iniciar transmissão** | terra publica o desejo → o **agente do bordo olha** → `ffmpeg` liga a câmera → `mediamtx` publica → a tela sintoniza | **fps recebidos ≥30**, **latência ≤3 s**, **Mbps de subida** e **% de redução** vs. bruto, tempo de subida (s) |
+| **J3** | **O cliente sai e a banda volta** | cliente fecha a tela | o terra marca a saída → o bordo **para** a câmera (`/api/cameras/desligar`) → o caminho sai do mediamtx | transmissão `parada`, caminho ausente, **subida ≈0 Mbps** em ≤15 s |
+| **J4** | **Dois clientes, um sai** | A entra, B entra, A sai (e B continua) | a transmissão **não pode parar** enquanto houver alguém; para só quando o último sai | sessão viva após a saída de A; parada só na saída de B (prova em `tests/e2e-dois-clientes-um-sai.py`) |
+| **J5** | **Gravação, download e apagamento** | operador grava; o cliente **baixa** o vídeo; o cliente **sai** | mídia real gravada no terra, download pelo navegador, **arquivo apagado no disco** ao sair | arquivo baixado com tamanho > 0 e abre; arquivo ausente do disco ao sair; **trilha** com pedido/aviso/download/apagamento |
+| **J6** | **Radar de óleo e o HD** | admin escolhe o radar; cliente pede um **trecho** do passado | HD grava **full time** (mesmo sem ninguém pedindo) → catálogo → bloco entregue → cliente baixa | bloco gravado sem pedido; **catálogo visível ao cliente** (hoje FALHA — ver §1); trecho baixado íntegro; observador vê só o radar |
+| **J7** | **Quem vê o quê** | cliente tipo 1/2/3 e observador entram | escopos 1 (1 barco), 2 (N), 3 (empresa), 4 (observador = radar de todas as empresas) | cada um vê o que deve **e não vê o do vizinho** (prova HTTP + tela) |
+| **J8** | **O admin manda, o bordo obedece** | admin muda qualidade / ativa-desativa câmera | terra publica a config → o bordo aplica e **conta o que aplicou** | `config-aplicada` = o que foi mandado; a tela do cliente reflete a mudança |
+| **J9** | **Defeito de verdade no bordo** | (nenhuma ação: o defeito é injetado) mata o ffmpeg / estoura a CPU / remove a rede do bordo | o bordo reporta a saúde; o **silêncio** tem de virar problema | semáforo do admin muda em ≤2 ciclos; "nunca reportou" ≠ verde; o aviso diz o que fazer |
+| **J10** | **Licença revogada corta** | admin revoga a chave do barco | o bordo consulta o terra e **para** o que estava no ar | transmissões paradas em ≤1 ciclo; o bordo informa a licença caída na tela |
+
+## 5. Fases
+
+Ordem de execução: **1 → 2 → 3 → 4 → 5**. As fases 1–3 rodam em bancada; a 5 é a produção controlada.
+Cada fase só começa quando a anterior fecha com o critério de aceite cumprido.
+
+### Fase 1 — O medidor e o núcleo (J1 + J2)
+- **P0** — `tools/smoke/ponta-a-ponta.py`: `--modo bancada`, `--jornadas 1,2`, `--saida smoke/saida/<data>`.
+  Sobe o ambiente (mediamtx + agente sintético + API com banco temporário), roda as jornadas e escreve
+  `resultado.json` + `qa.md` com o veredito **OK / FALHA / NÃO MEDIDA** por jornada.
+- **P0** — **J1** (licença + varredura) e **J2** (cliente pede → câmera sobe → vídeo na tela) com atores
+  reais: Chromium para o cliente, HTTP real para o bordo, `ffmpeg`+`mediamtx` de verdade na mídia.
+- **P0** — o **medidor de qualidade**: fps recebido e latência com `bench/medir-latencia.py` / `atraso_stream`,
+  banda de subida com `producao.link_srt()`, % de redução contra o bruto declarado.
+- **P1** — limpeza automática do que a rodada sujar (processos, portas, banco temporário, arquivos de mídia).
+- **P2** — `--rapido` (só J1+J2, alvo ≤4 min) para rodar antes de cada commit.
+- **Custo:** 1 dia. **Dependência:** nenhuma (bancada local).
+- **Critério de aceite (comando):** `python tools/smoke/ponta-a-ponta.py --modo bancada --jornadas 1,2`
+  termina com `SMOKE: 2/2 OK` e `smoke/saida/<data>/j2/resultado.json` traz **fps, latência, Mbps e o
+  tempo de subida** — e falha de propósito quando eu corto o mediamtx à mão (prova de que o medidor mede).
+
+### Fase 2 — O que o cliente manda e o sistema responde (J3, J4, J5, J6)
+- **P0** — **J3** (sai → para, banda volta) e **J4** (dois clientes) — o J4 já tem motor em
+  `tests/e2e-dois-clientes-um-sai.py`, aqui entra com mídia real e medida de banda.
+- **P1** — **J5** (gravação → download → apagamento) reusando o motor de `tests/e2e-gravacao-baixar-e-sair.py`
+  e acrescentando a medida de peso/bitrate do arquivo gravado.
+- **P2** — **J6** (radar + HD full time + trecho) — **inclui consertar o defeito medido** (`o cliente VE o
+  catalogo do HD na tela (0 bloco(s))`, §1): a jornada só passa quando o catálogo chega ao cliente.
+- **Custo:** 1,5 dia. **Dependência:** fase 1.
+- **Critério de aceite:** `--jornadas 3,4,5,6` → `SMOKE: 4/4 OK`, com a **subida em ≈0 Mbps** na J3, o
+  **tempo de parada** medido, o **peso do arquivo baixado** e o **bloco do HD** entregue ao cliente.
+
+### Fase 3 — Escopo, comando do admin e defeito real (J7, J8, J9, J10)
+- **P0** — **J7** (os 4 escopos, incluindo "não enxerga o vizinho") e **J8** (admin manda, bordo obedece).
+- **P1** — **J9** (defeito injetado: processo morto, CPU no teto, rede fora) — o smoke **injeta** a falha e
+  exige a reação da saúde; é a jornada que prova que "bordo mudo é problema".
+- **P2** — **J10** (licença revogada corta o que está no ar).
+- **Custo:** 1 dia. **Dependência:** fase 1.
+- **Critério de aceite:** `--jornadas 7,8,9,10` → `SMOKE: 4/4 OK`, com o **tempo de reação** da saúde
+  medido e o isolamento entre barcos/empresas provado nos dois sentidos.
+
+### Fase 4 — Os números do produto (o que ele promete ao cliente)
+- **P0** — medir, no mesmo relatório, **≥30 fps**, **≤3 s** de latência ponta a ponta e **≥80 % de redução
+  de banda** vs. o bruto, com o comando e o hardware carimbados (regra 2 do README).
+- **P1** — **4 câmeras simultâneas + radar**: medir CPU, memória, banda somada e queda de fps por canal
+  (o teto real da máquina, não o desejado).
+- **P2** — rodada longa (mín. 2 h; alvo 8 h) com o relatório de estabilidade: reinícios, quadros
+  perdidos, pico de memória, reconexões do SRT.
+- **Custo:** 1 dia (+ a rodada longa, no relógio). **Dependência:** fases 1–3; P1/P2 dependem do PC de
+  captura real (4 câmeras + radar por HDMI).
+- **Critério de aceite:** `smoke/saida/<data>/qualidade.json` com os três números (fps, latência, redução),
+  o comando de origem e o hardware — **abaixo do alvo o veredito é "funcionou com ressalvas", nunca "OK"**.
+
+### Fase 5 — Produção controlada e entrega
+- **P0** — `--modo producao`: rodar J1→J10 contra a **VPS de produção** e o **PC de captura real**,
+  criando dado próprio (`smoke-<data>`) e removendo no fim (trilha permanece).
+- **P0** — relatório de entrega: `smoke/saida/<data>/RELATORIO.md` — jornada por jornada, veredito, os
+  números, o que **não** foi medido e por quê, e o que ficou diferente da bancada.
+- **P1** — runbook no vault + `index.md` + nota em `10-projetos/pipeline-video.md` (o fato durável vai para
+  o vault, não para a conversa).
+- **P2** — agendar o modo bancada (`--rapido`) após cada publicação de release e alarmar quando uma jornada
+  sair de OK.
+- **Custo:** 1 dia. **Dependência:** o **PC de captura real com as 4 câmeras e o radar** — que hoje não
+  está nesta máquina; sem ele, a P0 roda contra a VPS + um bordo de bancada e o relatório diz isso.
+- **Critério de aceite:** `smoke/saida/<data>/RELATORIO.md` existe, cita o commit, o instalador usado
+  (nome + sha256) e o ambiente, e cada jornada tem veredito com número ou a palavra **"não medida"**.
+
+## 6. Arquivos que devem nascer
+
+| Arquivo | Papel |
+|---|---|
+| `tools/smoke/ponta-a-ponta.py` | o comando único (modos, jornadas, `--rapido`, `--saida`) |
+| `tools/smoke/jornadas/j1_vinculo.py` … `j10_licenca.py` | uma jornada por arquivo, cada uma com ação → efeito → medida |
+| `tools/smoke/medidor.py` | fps, latência, Mbps, peso, tempos — em cima de `ground/producao.py` e `bench/medir-latencia.py` |
+| `tools/smoke/relatorio.py` | `resultado.json` + `qa.md` + o agregado do relatório de entrega |
+| `tests/smoke-*.py` | provas de bancada que o smoke orquestra (uma por jornada quando o motor já existe) |
+| `docs/smoke.md` | como rodar nos dois modos, o que significa cada veredito, como ler a evidência |
+| `README.md` | seção nova "Smoke de ponta a ponta" ao lado de "Como rodar na bancada" |
+
+## 7. Riscos e limites (declarados)
+
+- **O que continua não medido por este smoke:** o link **Starlink Maritime real** (RTT, perda, queda de
+  chuva), o hardware definitivo de 4 câmeras + radar por HDMI, e o comportamento com **cliente externo de
+  verdade** (hoje quem pede a transmissão no smoke é uma conta de teste criada na hora).
+- **Custo de rodar o modo produção:** cada rodada cria e apaga dado real no terra de produção e usa banda
+  real da embarcação — por isso o modo B é manual, não agendado (o agendado é o `--rapido` de bancada).
+- **Latência medida ≠ latência percebida:** a medida de fps/latência é de mídia no caminho interno; se um
+  dia o cliente reclamar de atraso na tela, a medição tem de ser refeita no navegador dele (HLS por
+  segmento tem 2,6–3,1 s no README, contra 1,568 s do RTSP).
+- **O smoke não substitui a prova de campo** (instalar no computador de captura do cliente, atrás da
+  VPN/roteador dele): ele reduz o que sobra para o teste de campo, não elimina.
+- **Dois testes já quebrados hoje** (`e2e-fase3-4.py`, `e2e-hd-do-radar-cliente-pede-trecho.py`) são
+  dívida da suíte atual: a Fase 2 P2 conserta o segundo (é defeito do produto); o primeiro ou vira jornada
+  de smoke ou sai da suíte — teste que depende de bancada externa ligada não pode continuar contando como
+  prova do produto.
+
+## 8. Decisões que preciso do dono
+
+| # | Pergunta | Opções | O que muda |
+|---|---|---|---|
+| S1 | O smoke roda **substituindo** a lista curada por rodada (`tools/regressao-01xx.py`) ou ao lado dela? | (a) o smoke é o portão de publicação e a lista curada vira história; (b) os dois convivem | define se a Fase 1 já troca o gate das publicações |
+| S2 | No modo produção, o smoke pode **criar e apagar dado próprio** (`smoke-<data>`) no terra de produção? | (a) sim, com prefixo e limpeza automática; (b) só leitura no terra de produção | define o que a Fase 5 consegue provar |
+| S3 | A rodada longa da Fase 4 (`2 h`/`8 h`) roda **nesta máquina** ou no **PC de captura real**? | (a) nesta; (b) no PC de captura | em (a) o número não vale como medição de campo |
+
+## 9. Diário da implementação (Fase 1, 23/11/2026)
+
+**Fase 1 fechada com número.** Comando único `tools/regressao-smoke.py` → **RC=0**: medidor
+(`tests/smoke-medidor-detecta-falha.py`, 11 checagens) + **J1–J4 4/4 OK** em 70 s.
+
+Medida de J2 (cliente clica → imagem na tela, fluxo `cam-01` pelo caminho inteiro):
+**30,0 fps de mídia · 241 quadros · 3,176 Mbps · latência 0,199 s · tempo_real ✓ · imagem 1920×1080
+decodificada com o tempo andando (0,56 → 6,56 s) · arranque 12,7 s do clique até "no ar"**.
+
+### Defeitos e armadilhas encontrados pela bancada (todos medidos)
+
+| # | O que era | Onde estava | Conserto |
+|---|---|---|---|
+| A | A fonte **sintética** (`testsrc2`, sem `-re`) produz **mais rápido que o tempo real** (238 quadros em 0,38 s): o mediamtx enche o buffer e a **latência do caminho vira número negativo** | `ground/ingestao.py` (ramo `tipo == "sintetica"`) | `-re` no ramo sintético (a webcam já entrega em tempo real) |
+| B | O medidor devolvia **0,0 Mbps sempre**: `-f null` **não conta byte nenhum** | `tools/smoke/medidor.py` | a mídia sai por um cano (`-c copy -f mpegts pipe:1`) e os bytes que **chegam** são contados |
+| C | O medidor **travava para sempre** com a fonte morta: `for linha in p.stderr` bloqueia e o `terminate()` do `finally` nunca rodava (o ffmpeg ficou pendurado e o `regressao-smoke` só morreu no tempo-limite) | `tools/smoke/medidor.py` | o erro padrão é lido em **fio separado**; o laço tem **tempo-limite** e o `terminate()` sempre roda |
+| D | `-rw_timeout` e `-timeout` **quebram a conexão RTSP** nesta compilação do ffmpeg (`Connection to tcp://… failed: Error number -138`, 0 quadros com a fonte **no ar**) | tentativa de conserto do item C | **não usar** flag de tempo no ffmpeg; o limite é do lado do Python |
+| E | `tests/smoke-medidor-detecta-falha.py` dava o veredito e **não saía** (filho preso segurava o processo) | `tests/smoke-medidor-detecta-falha.py` | `os._exit(codigo)` depois de esvaziar a saída |
+| F | J2 e J4 só passavam **depois** do J1: sem o J1 a câmera do bordo não estava semeada e o bordo respondia *"esta camera nunca foi transmitida daqui"* | `jornadas/j2_ao_vivo.py`, `jornadas/j4_dois_clientes.py` | cada jornada semeia a própria câmera (idempotente) |
+
+### Onde o medidor ainda não é o produto
+
+- A **compresão** (≥80% de redução) e o **SSIM** não são medidos por este smoke: o número do caminho ao
+  vivo é o bitrate que o bordo **escolheu** (3,176 Mbps aqui). Entram na Fase 4 ("os números do produto").
+- A latência de **0,199 s** é do caminho interno (SRT local + mediamtx local); não é a latência percebida
+  num cliente externo (o README já registra 1,568 s no RTSP e 2,6–3,1 s no HLS por segmento).
+- **Nesta máquina há webcam de verdade** (`ACER HD User Facing`, `ingestao.maquina_de_captura()` = `true`)
+  — o atendedor de bancada continua existindo para a rodada **não depender de a webcam estar livre**, mas
+  a próxima rodada pode medir também com a câmera física. Declarado em `docs/smoke.md`.
