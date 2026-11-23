@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Regressao do SMOKE de ponta a ponta: o medidor mede, e as jornadas passam.
 
-    python tools/regressao-smoke.py            # completa (medidor + J1..J4 + J6)  ~7 min
+    python tools/regressao-smoke.py            # medidor + J1..J6 (o dia a dia)    ~8 min
+    python tools/regressao-smoke.py --completo # medidor + J1..J10 (bancada toda) ~12 min
     python tools/regressao-smoke.py --rapido   # antes de commitar                ~2 min
 
 Roda:
@@ -38,6 +39,7 @@ def rodar(nome: str, comando: list[str], teto: int) -> bool:
 def main() -> int:
     p = argparse.ArgumentParser(description="regressao do smoke de ponta a ponta")
     p.add_argument("--rapido", action="store_true", help="só J1+J2 no smoke")
+    p.add_argument("--completo", action="store_true", help="a bancada toda (J1..J10)")
     p.add_argument("--sem-medidor", action="store_true", help="pula a prova do medidor")
     args = p.parse_args()
 
@@ -45,11 +47,18 @@ def main() -> int:
     if not args.sem_medidor:
         provas.append(("o medidor mede (e devolve zero quando nao ha' fluxo)",
                        [sys.executable, "tests/smoke-medidor-detecta-falha.py"], 420))
-    # J6 (o HD do radar) entra na rodada completa: ela leva mais tempo e, sem dispositivo de video na
-    # maquina, ela mesma se marca NAO MEDIDA em vez de mentir "OK".
-    jornadas = "1,2" if args.rapido else "1,2,3,4,5,6"
+    # `--completo` = a bancada toda (J1..J10); sem ele, J1..J6 (o dia a dia, ~8 min). Jornada que depende de
+    # dispositivo de video (J6, o HD do radar) se marca NAO MEDIDA sozinha, em vez de mentir "OK".
+    # AVISO DE BANCADA (medido): a J2 mede fps e, com a maquina OCUPADA, pode nao sustentar os 30 fps do
+    # produto (medido 26,4 fps; isolada, 30,0). Nao e' o produto — e' o host. Rode com a maquina ociosa.
+    if args.rapido:
+        jornadas = "1,2"
+    elif args.completo:
+        jornadas = "1,2,3,4,5,6,7,8,9,10"
+    else:
+        jornadas = "1,2,3,4,5,6"
     provas.append((f"smoke de ponta a ponta (jornadas {jornadas})",
-                   [sys.executable, "tools/smoke/ponta-a-ponta.py", "--jornadas", jornadas], 1500))
+                       [sys.executable, "tools/smoke/ponta-a-ponta.py", "--jornadas", jornadas], 2400))
 
     resultados = [(nome, rodar(nome, cmd, teto)) for nome, cmd, teto in provas]
     print("=" * 78)

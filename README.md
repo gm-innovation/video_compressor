@@ -298,14 +298,23 @@ Saída da medição de banda/VMAF: `bench/saida/resultado-fase0.json` e `medicoe
 ```bash
 export LECSOR_SENHA_DEMO=...                    # senha dos usuários de demonstração do lado terra
 python tools/regressao-smoke.py --rapido        # medidor + J1+J2 (~2 min) — antes de commitar
-python tools/regressao-smoke.py                 # medidor + J1..J6 (a bancada inteira) (~8 min)
+python tools/regressao-smoke.py                 # medidor + J1..J6 (o dia a dia) (~8 min)
+python tools/regressao-smoke.py --completo      # medidor + J1..J10 (a bancada toda) (~12 min)
 ```
 
 Cada jornada tem **ação de usuário em navegador real**, **comando real de mídia** (ffmpeg/SRT/mediamtx)
 e **medida com número**; o relatório sai em `smoke/saida/<data>/`. Regra dura: **sem medida, a jornada
 não é "OK"** — é "NÃO MEDIDA". Detalhes, vereditos e limites em [`docs/smoke.md`](docs/smoke.md).
 
-Rodada de 23/11/2026 (bancada, fluxo `cam-01`): **`SMOKE: 6/6 OK`** (J1–J6).
+Rodada de 23/11/2026 (bancada, fluxo `cam-01`): **`SMOKE: 6/6 OK`** (J1–J6) e **`SMOKE: 4/4 OK`**
+(J7–J10, Fase 3 fechada em `main` = `64a9a0f`): os 4 escopos de cliente, o admin mandando e o bordo
+obedecendo (**a banda cai de 3,187 para 0,773 Mbps** com o vídeo de pé), o **ffmpeg fora do bordo** virando
+"problema" no painel em **1,0 s** e a **licença revogada cortando a transmissão em 2,3 s** — a bancada achou
+**dois defeitos reais de produto** nessa fase (o formato do `alvo`, que o ffmpeg lia como **800 bits/s**, e a
+revogação que **não cortava sozinha**; detalhes em [`docs/smoke.md`](docs/smoke.md)).
+A rodada **completa** (J1–J10) nesta máquina dá **`9/10 OK`**: só a **J2** falha, medindo **26,4 fps**
+(piso 27) com o host ocupado — **isolada, a J2 mede 30,0 fps**, então o que falta é máquina ociosa, não
+produto (a J2 sob carga é um aviso de bancada; o número de campo é do PC de captura).
 **J2**: 30,0 fps · 3,182 Mbps · latência 0,217 s · imagem 1920×1080 decodificada no cliente · arranque 15,3 s.
 **J5** (gravação): **2.358.516 B em 7,0 s** de gravação, baixados iguais (**h264 1920×1080**, lido pelo
 ffprobe), **o arquivo apagado 0,5 s depois de o cliente sair** e a linha + as 15 ações de auditoria

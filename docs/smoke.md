@@ -50,7 +50,10 @@ Regra dura: **sem medida, o veredito nunca é "OK"**. Um número ausente aparece
 - o hardware definitivo (4 câmeras + o radar por HDMI) — na bancada a fonte é sintética: **na bancada
   não há câmera plugada**, então quem entrega os quadros é o gerador do produto (`testsrc2`), e o
   encode/SRT/mediamtx são os reais;
-- a latência **percebida na tela** num cliente externo de verdade;
+- a **latência percebida na tela** num cliente externo de verdade;
+- o **fps com a máquina ocupada**: a J2 mede fps e, com o host carregado (o app de trabalho aberto), a
+  rodada completa mede **26,4 fps** (piso 27) — isolada, a J2 mede **30,0 fps**. O número de campo é do PC de
+  captura; aqui, rode com a máquina ociosa;
 - **a imagem do HD do radar** (J6): o radar de verdade entra por HDMI. Nesta bancada o dispositivo de
   vídeo abre mas **não entrega quadro** (`ffmpeg -f dshow -i "ACER HD User Facing" -t 3` = 0 quadro), então
   o que a J6 prova é a **cadeia** (gravou sozinho → catálogo → pedido → o bordo enviou → o cliente baixou);
