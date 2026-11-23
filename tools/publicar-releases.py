@@ -24,7 +24,7 @@ PAPEIS = ("Captura", "Terra", "Admin", "Cliente")
 # Ordem de publicacao: o PRIMEIRO e' o `latest` do GitHub. Nova versao entra na frente.
 # A 0.8.0 nunca chegou a virar release: o que ela trazia (config do bordo vinda de terra e saude do
 # bordo no admin) entrou inteiro na 0.9.0, que e' quem publica. A nota dela fica em NOTAS abaixo.
-VERSOES_PUBLICADAS = ("0.11.1", "0.11.0", "0.10.1", "0.10.0", "0.9.1", "0.9.0", "0.7.0", "0.6.10", "0.6.9", "0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
+VERSOES_PUBLICADAS = ("0.12.0", "0.11.1", "0.11.0", "0.10.1", "0.10.0", "0.9.1", "0.9.0", "0.7.0", "0.6.10", "0.6.9", "0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
 
 
 def instaladores(versao: str) -> list:
@@ -44,6 +44,43 @@ def instaladores(versao: str) -> list:
     return [DIST / papel.lower() / f"LECSOR-{papel}-{versao}-x64.exe" for papel in PAPEIS]
 
 NOTAS = {
+    "0.12.0": (
+        "**O admin ficou numa area so: empresa -> embarcacao -> cameras.**\n\n"
+        "Pedido do dono (23/11/2026): \"preciso poder configurar cada cliente/embarcacao/cameras de forma "
+        "unificada e simples, hoje eu tenho muitas paginas: clientes/embarcacoes/cameras/licencas/producao/"
+        "tempo real/enviar videos/usuarios/configuracoes do bordo, tudo isso poderia ser uma area so, de "
+        "configuracao por cliente e de embarcacoes pra baixo tudo vinculado ao cliente... e esta ainda "
+        "truncado, parece que esta tudo funcionando do lado da captura mas as cameras nao aparecem do lado "
+        "do admin, pelo menos nao com o nome que a varredura pegou, e nao consigo configurar e ligar as "
+        "cameras\". E o fluxo que ele mandou seguir: \"o correto e' eu criar a empresa caso ainda nao tenha "
+        "sido criada, depois embarcacao vinculada a aquela empresa, gero a chave na embarcacao, na "
+        "embarcacao aparecem as cameras encontradas na varredura, configuro as cameras e a captura pega as "
+        "informacoes e replica no app de captura, inclusive os nomes das cameras\".\n\n"
+        "**Uma tela so'** (`Empresas e configuracao`, agora a tela de entrada do admin): o cliente na "
+        "raiz, as embarcacoes vinculadas a ele e, em cada embarcacao, as cameras. As paginas antigas viram "
+        "abas DENTRO do cliente/embarcacao — \"tempo real, producao e cameras e' a mesma coisa, nao precisa "
+        "dividir\" — e continuam alcancaveis pelo grupo **Avancado (telas antigas)**: nada de link salvo "
+        "quebrando.\n\n"
+        "**Cada camera e' um CARTAO** (fim da tabela de 12 colunas que cortava a informacao): o nome num "
+        "campo, o estado (no ar / fora do ar / desativada, e \"achada pela varredura\"), a situacao que o "
+        "bordo conta, o que foi publicado e o que o bordo aplicou, mais as acoes na mesma linha — "
+        "**ligar/desligar**, **ativar/desativar**, **a qualidade de envio** (1500 a 300 kbps) e o "
+        "**salvar nome**.\n\n"
+        "**O nome da camera desce para o PC de captura** (pedido literal do dono: \"a captura pega as "
+        "informacoes e replica no app de captura, inclusive os nomes das cameras\"): o nome que o admin "
+        "escreve em terra vira a chave `rotulo` da configuracao, o bordo aplica no cadastro local dele e a "
+        "varredura **passa a respeitar o nome escolhido** em vez de reescreve-lo com o nome do dispositivo "
+        "a cada rodada.\n\n"
+        "**A chave da licenca se gera na embarcacao** (\"gero a chave na embarcacao\"), no mesmo lugar de "
+        "tudo: gerar, ver/copiar, prazo e numero de PCs, revogar e reativar — e ela continua aparecendo "
+        "depois de qualquer redesenho da tela.\n\n"
+        "**Provas:** `tests/e2e-admin-unificado.py` (tela nova de ponta a ponta: a area unica abre na "
+        "empresa, as cameras da varredura aparecem COM o nome do dispositivo sem truncar, dar nome publica "
+        "o `rotulo`, a qualidade publica o `alvo_kbps`, ativar/desativar muda o estado, ligar/desligar "
+        "responde na tela, a chave se gera na embarcacao e as telas antigas seguem alcancaveis), "
+        "`tests/e2e-varredura-do-bordo.py` (novo bloco 4b: o nome do admin sobrevive a varredura), "
+        "`tools/regressao-0100.py` (21 provas, tudo verde), `node --check` e `py_compile`.\n"
+    ),
     "0.11.1": (
         "**O painel do bordo mostra o que esta acontecendo: os processos e o desempenho medido.**\n\n"
         "Pedido do dono (23/11/2026): \"apos a validacao da chave de acesso, o app inicia a sua "

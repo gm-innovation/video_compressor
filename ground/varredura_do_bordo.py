@@ -157,7 +157,12 @@ def varrer(embarcacao_id: str | None = None, aplicar: bool = True) -> dict:
             if ja:
                 # SO' o rotulo acompanha o dispositivo. `alvo`, `ativo` e a transmissao ficam como o
                 # admin deixou: a varredura nao briga com a configuracao.
-                if (ja["rotulo"] or "") != rotulo:
+                # O NOME QUE O ADMIN DEU MANDA (dono, 23/11/2026: "a captura pega as informações e
+                # replica no app de captura, inclusive os nomes das câmeras"): se a chave `rotulo`
+                # ja' foi aplicada nesta maquina (config_local), a varredura NAO reescreve o nome.
+                nomeado = c.execute("SELECT valor FROM config_local WHERE camera_id=? AND chave='rotulo'",
+                                    (cid,)).fetchone()
+                if not nomeado and (ja["rotulo"] or "") != rotulo:
                     c.execute("UPDATE cameras SET rotulo=? WHERE id=?", (rotulo, cid))
                 atualizadas.append(cid)
             else:

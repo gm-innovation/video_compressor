@@ -20,6 +20,8 @@ RAIZ = pathlib.Path(__file__).resolve().parent.parent
 # `ambiente.json` que esta' no repositorio, e passaria a falar com a producao em vez de responder em casa.
 os.environ["LECSOR_SEM_AMBIENTE"] = "1"
 PROVAS = (
+    # AREA UNICA DO ADMIN: empresa -> embarcacao -> cameras (rodada 0.12.0)
+    "tests/e2e-admin-unificado.py",
     # CHAVE DE LICENCA (rodada 0.10.0)
     "tests/test-licenca-de-ativacao.py",
     "tests/test-licenca-do-bordo.py",

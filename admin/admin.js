@@ -1,6 +1,6 @@
 /* Admin do projeto e do sistema: acompanhamento (§6) + administracao (clientes, embarcacoes,
    cameras, usuarios, analises, auditoria, saude). Le e escreve tudo pela API do produto. */
-const A = { usuario: null, resumo: null, clientes: [], usuarios: [], verificarCredencial: false, sistema: null, cameras: [], embarcacoes: [], licencas: [], tela: 'painel', timer: null, marca: null, radarForm: null, radarAviso: null, prontidao: null, config: null };
+const A = { usuario: null, resumo: null, clientes: [], usuarios: [], verificarCredencial: false, sistema: null, cameras: [], embarcacoes: [], licencas: [], tela: 'empresas', timer: null, chaveRevelada: null, marca: null, radarForm: null, radarAviso: null, prontidao: null, config: null, empresaId: null, arvore: null };
 const $ = (id) => document.getElementById(id);
 const limpar = (el) => { while (el.firstChild) el.removeChild(el.firstChild); };
 const esc = (s) => String(s === null || s === undefined ? '' : s);
@@ -238,6 +238,7 @@ function recado(texto, erro) {
 }
 
 const SUBS = {
+  empresas: ['Empresas e configuração', 'Uma área só: o cliente na raiz, as embarcações vinculadas a ele e, em cada embarcação, as câmeras que a varredura achou — com nome, ligar/desligar, ativar e a qualidade de envio. A chave da licença nasce na embarcação.'],
   painel: ['Painel do projeto', 'Fases, medições, decisões e estado do link, tudo lido do banco.'],
   fases: ['Fases do projeto', 'Cada fase só fecha com evidência anexada.'],
   medicoes: ['Medições', 'Medição sem valor + fonte + data + hardware/versão + comando é recusada pelo banco.'],
@@ -263,6 +264,12 @@ const SUBS = {
 /* --------------------------------------------------------- telas */
 function envioEmAndamento() {
   /* Ha' algo escolhido/digitado na tela de envio que o redesenho apagaria? */
+  /* Idem na area unica: se o operador esta' DIGITANDO o nome de uma camera, o redesenho do timer
+     devolveria o nome antigo no meio da digitacao (0.12.0). */
+  if (A.tela === 'empresas') {
+    const foco = document.activeElement;
+    return !!(foco && foco.classList && foco.classList.contains('nome-camera'));
+  }
   if (A.tela !== 'envios') return false;
   const arq = document.getElementById('env-arquivo');
   if (arq && arq.files && arq.files.length) return true;
@@ -285,7 +292,7 @@ function desenhar(forcado) {
   if (timerEnvios) { clearInterval(timerEnvios); timerEnvios = null; }
   if (timerTempo) { clearInterval(timerTempo); timerTempo = null; }
   if (timerProducao) { clearInterval(timerProducao); timerProducao = null; }
-  const despacho = { painel: telaPainel, fases: telaFases, medicoes: telaMedicoes, decisoes: telaDecisoes,
+  const despacho = { empresas: telaEmpresas, painel: telaPainel, fases: telaFases, medicoes: telaMedicoes, decisoes: telaDecisoes,
     evidencias: telaEvidencias, documentos: telaDocumentos, clientes: telaClientes, embarcacoes: telaEmbarcacoes,
     cameras: telaCameras, usuarios: telaUsuarios, tempo: telaTempoReal, producao: telaProducao, analises: telaAnalises, marcas: telaMarcas, envios: telaEnvios,
     auditoria: telaAuditoria, saude: telaSaude, config_bordo: telaConfigDoBordo,
@@ -2156,6 +2163,269 @@ async function telaSaudeDoBordo(t) {
   });
 }
 
+/* ==================================== A ÁREA ÚNICA (0.12.0): EMPRESA → EMBARCAÇÃO → CÂMERAS
+   Pedido do dono (23/11/2026): "preciso poder configurar cada cliente/embarcação/câmeras de forma
+   unificada e simples... hoje eu tenho muitas páginas: clientes/embarcações/câmeras/licenças/produção/
+   tempo real/enviar vídeos/usuários/configurações do bordo, tudo isso poderia ser uma área só, de
+   configuração por cliente e de embarcações pra baixo tudo vinculado ao cliente"; "tempo real,
+   produção e câmeras é a mesma coisa, não precisa dividir"; "as câmeras não aparecem do lado do admin
+   ... e não consigo configurar e ligar as câmeras". Ou seja: o cliente na raiz, a embarcação abaixo e
+   as câmeras (as achadas pela varredura inclusive) em CARTÃO — cada uma com ligar/desligar,
+   ativar/desativar, nome que desce ao bordo e qualidade de envio. As telas antigas continuam
+   alcançáveis pelo grupo "Avançado" do menu, para nenhum link salvo quebrar. */
+const ALVOS_DE_ENVIO = ['1500', '1200', '1000', '800', '500', '300'];
+
+function seloDe(tom, texto) {
+  const s = document.createElement('span');
+  s.className = 'pill';
+  s.textContent = texto;
+  const cor = ({ ok: '#22c55e', alerta: '#eab308', ruim: '#ef4444' })[tom] || '#64748b';
+  s.style.background = cor + '22'; s.style.borderColor = cor; s.style.color = cor;
+  return s;
+}
+
+function notaDe(texto) { const p = document.createElement('p'); p.className = 'nota'; p.textContent = texto; return p; }
+
+async function telaEmpresas(t) {
+  const r = await api('/api/empresas');
+  if (!r.ok) { t.appendChild(recado('não consegui ler a área do cliente: ' + JSON.stringify(r.corpo), true)); return; }
+  A.arvore = r.corpo || { empresas: [], embarcacoes_sem_empresa: [] };
+  const empresas = A.arvore.empresas || [];
+  const escolhida = empresas.find((e) => e.id === A.empresaId);
+  if (escolhida) { areaDaEmpresa(t, escolhida); return; }
+  areaDasEmpresas(t, empresas, A.arvore.embarcacoes_sem_empresa || []);
+}
+
+function areaDasEmpresas(t, empresas, semEmpresa) {
+  t.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Empresas (clientes)' }));
+  if (A.usuario.papel === 'admin') {
+    const caixa = document.createElement('div'); caixa.className = 'caixa-form';
+    const linha = document.createElement('div'); linha.className = 'linha-form'; caixa.appendChild(linha);
+    const id = campo(linha, 'em-id', 'Identificador (ex.: petrobras)', '');
+    const nome = campo(linha, 'em-nome', 'Nome da empresa', '');
+    caixa.appendChild(botao('Cadastrar empresa', 'marca', async () => {
+      const r = await api('/api/clientes', { method: 'POST', body: JSON.stringify({ id: id.value.trim(), nome: nome.value }) });
+      if (r.ok) A.empresaId = id.value.trim();
+      await atualizar();
+      mostrarRecado(r.ok ? 'empresa cadastrada: ' + r.corpo.id : 'recusado: ' + JSON.stringify(r.corpo), !r.ok);
+    }));
+    t.appendChild(caixa);
+  }
+  if (!empresas.length) {
+    t.appendChild(recado('Nenhuma empresa cadastrada ainda. Comece criando a empresa — depois a '
+      + 'embarcação vinculada, a chave na embarcação e as câmeras que a varredura encontrar.', true));
+  }
+  for (const e of empresas) {
+    const caixa = document.createElement('div'); caixa.className = 'cartao-empresa';
+    caixa.appendChild(Object.assign(document.createElement('h2'), { textContent: e.nome + ' — ' + e.id }));
+    caixa.appendChild(notaDe(e.resumo.embarcacoes + ' embarcação(ões) · ' + e.resumo.cameras + ' câmera(s) · '
+      + e.resumo.no_ar + ' no ar'
+      + (e.resumo.achadas_pela_varredura ? ' · ' + e.resumo.achadas_pela_varredura + ' achada(s) pela varredura' : '')));
+    const acoes = document.createElement('div'); acoes.className = 'linha-form';
+    acoes.appendChild(botao('Abrir', 'marca', () => { A.empresaId = e.id; desenhar(true); }));
+    caixa.appendChild(acoes);
+    t.appendChild(caixa);
+  }
+  if (semEmpresa.length) {
+    const caixa = document.createElement('div'); caixa.className = 'caixa-form';
+    caixa.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Embarcações sem empresa' }));
+    caixa.appendChild(notaDe('Estas embarcações não estão vinculadas a nenhuma empresa — elas não '
+      + 'aparecem na área de nenhum cliente. (É o caso típico da bancada de testes.)'));
+    caixa.appendChild(tabela([{ rotulo: 'Embarcação', campo: 'nome' }, { rotulo: 'Identificador', campo: 'id' },
+      { rotulo: 'Câmeras', valor: (l) => String((l.resumo || {}).cameras || 0) }], semEmpresa, 'nenhuma'));
+    t.appendChild(caixa);
+  }
+}
+
+function areaDaEmpresa(t, empresa) {
+  const barra = document.createElement('div'); barra.className = 'linha-form';
+  barra.appendChild(botao('← todas as empresas', 'mini', () => { A.empresaId = null; desenhar(true); }));
+  t.appendChild(barra);
+  t.appendChild(Object.assign(document.createElement('h2'), { textContent: empresa.nome + ' — ' + empresa.id }));
+  t.appendChild(notaDe(empresa.resumo.embarcacoes + ' embarcação(ões) · ' + empresa.resumo.cameras
+    + ' câmera(s) · ' + empresa.resumo.no_ar + ' no ar'));
+
+  if (A.usuario.papel === 'admin') {
+    const caixa = document.createElement('div'); caixa.className = 'caixa-form';
+    caixa.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Nova embarcação nesta empresa' }));
+    const linha = document.createElement('div'); linha.className = 'linha-form'; caixa.appendChild(linha);
+    const id = campo(linha, 'eb-id', 'Identificador (ex.: psv-01)', '');
+    const nome = campo(linha, 'eb-nome', 'Nome da embarcação', '');
+    const imo = campo(linha, 'eb-imo', 'IMO (opcional)', '');
+    caixa.appendChild(botao('Cadastrar embarcação', 'marca', async () => {
+      const r = await api('/api/embarcacoes', { method: 'POST',
+        body: JSON.stringify({ id: id.value.trim(), cliente_id: empresa.id, nome: nome.value, imo: imo.value }) });
+      await atualizar();
+      mostrarRecado(r.ok ? 'embarcação cadastrada: ' + r.corpo.id : 'recusado: ' + JSON.stringify(r.corpo), !r.ok);
+    }));
+    t.appendChild(caixa);
+  }
+  if (!empresa.embarcacoes.length) {
+    t.appendChild(recado('Nenhuma embarcação nesta empresa ainda. Crie a primeira acima — a chave se '
+      + 'gera ali e as câmeras da varredura aparecem depois que o PC de captura entrar com ela.', true));
+  }
+  for (const emb of empresa.embarcacoes) t.appendChild(cartaoDaEmbarcacao(emb));
+}
+
+function cartaoDaEmbarcacao(emb) {
+  const caixa = document.createElement('div'); caixa.className = 'cartao-embarcacao';
+  const h = document.createElement('h2');
+  h.appendChild(document.createTextNode(emb.nome + ' — ' + emb.id + '  '));
+  const se = emb.saude && emb.saude.estado;
+  h.appendChild(seloDe(se === 'ok' ? 'ok' : (se === 'atencao' ? 'alerta' : (se ? 'ruim' : 'neutro')),
+    se === 'ok' ? 'saúde ok' : (se === 'atencao' ? 'atenção' : (se ? 'problema' : 'sem retorno do bordo'))));
+  caixa.appendChild(h);
+  caixa.appendChild(notaDe('Câmeras: ' + emb.resumo.cameras + ' · no ar: ' + emb.resumo.no_ar
+    + ' · ativas: ' + emb.resumo.ativas
+    + (emb.resumo.achadas_pela_varredura ? ' · achadas pela varredura: ' + emb.resumo.achadas_pela_varredura : '')
+    + (emb.saude && emb.saude.em ? ' · último retrato do bordo: ' + emb.saude.em : '')
+    + (emb.maquinas && emb.maquinas.length ? ' · PC(s): ' + emb.maquinas.map((m) => m.maquina).join(', ') : '')));
+  caixa.appendChild(fichaLicenca(emb));
+  const cams = document.createElement('div'); cams.className = 'cartes-cameras';
+  for (const c of emb.cameras) cams.appendChild(cartaoDaCamera(c, emb));
+  if (!emb.cameras.length) {
+    cams.appendChild(notaDe('Nenhuma câmera nesta embarcação ainda. No PC de captura, a varredura '
+      + 'manda as câmeras encontradas com o nome do dispositivo — elas aparecem aqui, com o nome, para '
+      + 'você configurar e ligar.'));
+  }
+  caixa.appendChild(cams);
+  return caixa;
+}
+
+/* A chave da licença NA EMBARCAÇÃO (dono, 19/11/2026: "inserir a chave da licença e assim fazer a
+   conexão com a empresa e embarcação cadastradas"). Aqui é onde ela nasce: o admin gera, vê/copia e
+   revoga — no mesmo lugar de tudo. A chave só aparece para o admin (a rota recusa o resto). */
+function fichaLicenca(emb) {
+  const caixa = document.createElement('div'); caixa.className = 'ficha-licenca';
+  const l = emb.licenca || {};
+  caixa.appendChild(notaDe(l.id
+    ? ('Licença desta embarcação: ' + (l.validade_tipo === 'ate' ? 'até ' + l.validade_em : 'sem prazo')
+       + ' · ' + (l.status || '?') + ' · até ' + (l.maquinas_max || 1) + ' PC(s)'
+       + (l.ultimo_uso_em ? ' · último uso em ' + l.ultimo_uso_em : ' · ainda não usada'))
+    : 'Sem licença para esta embarcação — o PC de captura só entra no sistema depois de digitar uma chave gerada aqui.'));
+  if (A.usuario.papel !== 'admin') return caixa;
+  const acoes = document.createElement('div'); acoes.className = 'linha-form';
+  if (!l.id) {
+    acoes.appendChild(botao('Gerar chave', 'marca', () => gerarChave(emb, caixa)));
+  } else {
+    acoes.appendChild(botao('ver / copiar chave', 'mini', () => revelarChave(emb, caixa)));
+    acoes.appendChild(botao('gerar outra chave', 'mini', async () => {
+      if (!confirm('Gerar OUTRA chave para ' + emb.nome + '? A anterior deixa de valer.')) return;
+      const r = await api('/api/licencas/' + l.id + '/reemitir', { method: 'POST', body: JSON.stringify({}) });
+      if (r.ok && r.corpo.chave) { mostrarChave(emb.id, caixa, r.corpo.chave); } else { mostrarRecado('recusado: ' + JSON.stringify(r.corpo), true); }
+      await atualizar();
+    }));
+    acoes.appendChild(botao('prazo e nº de PCs', 'mini', () => editarLicenca(caixa, { id: l.id, validade_tipo: l.validade_tipo, validade_em: l.validade_em, maquinas_max: l.maquinas_max })));
+    if (l.status === 'revogada') acoes.appendChild(botao('reativar', 'mini', () => agirLicenca('reativar', l, {})));
+    else acoes.appendChild(botao('revogar', 'mini', () => agirLicenca('revogar', l, { motivo: 'revogada pelo admin' })));
+  }
+  caixa.appendChild(acoes);
+  /* A chave JA' revelada volta a aparecer depois de qualquer redesenho (o timer do painel redesenha
+     sozinho — sem isto ela aparecia por um instante e sumia na cara do admin). */
+  if (A.chaveRevelada && A.chaveRevelada.emb === emb.id) caixa.appendChild(caixaDaChave(A.chaveRevelada.chave));
+  return caixa;
+}
+
+async function gerarChave(emb, caixa) {
+  const r = await api('/api/licencas', { method: 'POST', body: JSON.stringify({ embarcacao_id: emb.id,
+    validade_tipo: 'indeterminada', validade_em: '', maquinas_max: 1 }) });
+  if (r.ok && r.corpo.chave) { mostrarChave(emb.id, caixa, r.corpo.chave); }
+  else { mostrarRecado('recusado: ' + ((r.corpo && r.corpo.erro) || JSON.stringify(r.corpo)), true); }
+  await atualizar();
+}
+
+async function revelarChave(emb, caixa) {
+  const r = await api('/api/licencas');
+  const l = ((r.corpo && r.corpo.licencas) || []).find((x) => x.embarcacao_id === emb.id);
+  if (l && l.chave) mostrarChave(emb.id, caixa, l.chave);
+  else mostrarRecado('não achei a chave desta embarcação (só o administrador vê a chave)', true);
+}
+
+function mostrarChave(embId, caixa, chave) {
+  A.chaveRevelada = { emb: embId, chave: chave };
+  const antigo = caixa.querySelector('.chave-revelada'); if (antigo) antigo.remove();
+  caixa.appendChild(caixaDaChave(chave));
+}
+
+function caixaDaChave(chave) {
+  const d = document.createElement('div'); d.className = 'chave-revelada';
+  const c = document.createElement('code'); c.textContent = chave;
+  c.style.cssText = 'font-size:15px;letter-spacing:1px;user-select:all';
+  d.appendChild(c);
+  d.appendChild(botao('copiar chave', 'mini', async () => {
+    try { await navigator.clipboard.writeText(chave); mostrarRecado('chave copiada: ' + chave, false); }
+    catch (e) { mostrarRecado('não consegui copiar — selecione a chave e copie na mão', true); }
+  }));
+  d.appendChild(notaDe('Digite esta chave no aplicativo do PC de captura. Ela não circula por e-mail nem por chat.'));
+  return d;
+}
+
+function cartaoDaCamera(c, emb) {
+  const caixa = document.createElement('div'); caixa.className = 'cartao-camera' + (c.no_ar ? ' no-ar' : '');
+  const topo = document.createElement('div'); topo.className = 'linha-form linha-nome';
+  const nome = document.createElement('input');
+  nome.type = 'text'; nome.value = c.rotulo || ''; nome.maxLength = 120; nome.className = 'nome-camera';
+  nome.title = 'nome da câmera — ele desce para o PC de captura';
+  topo.appendChild(nome);
+  topo.appendChild(botao('salvar nome', 'mini', async () => {
+    const r = await api('/api/cameras/' + encodeURIComponent(c.id) + '/nome',
+      { method: 'POST', body: JSON.stringify({ rotulo: nome.value.trim() }) });
+    // ATUALIZA PRIMEIRO: o recado vive dentro da tela e o redesenho o apagaria (a tela mostra o nome
+    // novo do cartao e o aviso fica na cara do admin).
+    await atualizar();
+    if (r.ok) mostrarRecado('nome salvo e publicado para o PC de captura: ' + r.corpo.rotulo, false);
+    else mostrarRecado('recusado: ' + ((r.corpo && r.corpo.erro) || JSON.stringify(r.corpo)), true);
+  }));
+  caixa.appendChild(topo);
+
+  const selos = document.createElement('div'); selos.className = 'linha-selos';
+  selos.appendChild(seloDe(c.no_ar ? 'ok' : 'neutro', c.no_ar ? 'no ar' : 'fora do ar'));
+  selos.appendChild(seloDe(c.ativo ? 'ok' : 'neutro', c.ativo ? 'ativa' : 'desativada'));
+  if (c.achada_pela_varredura) selos.appendChild(seloDe('neutro', 'achada pela varredura'));
+  if (c.local) selos.appendChild(seloDe('neutro', c.local));
+  if (c.leitores) selos.appendChild(seloDe('neutro', c.leitores + ' assistindo'));
+  caixa.appendChild(selos);
+
+  const enc = c.encoder || {};
+  const alvo = String(c.alvo || '').replace(/k$/i, '');
+  caixa.appendChild(notaDe('fluxo ' + c.fluxo_id + ' · qualidade de envio ' + (alvo || '—') + ' kbps'
+    + (enc.codec ? ' · ' + enc.codec + (enc.resolucao ? ' ' + enc.resolucao : '') + (enc.fps ? ' ' + enc.fps + ' fps' : '') : '')
+    + ' · ' + (c.estado && c.estado.estado ? c.estado.estado
+        + (c.estado.gravando === '1' ? ' (gravando)' : '') : 'sem retorno do bordo')
+    + (c.estado && c.estado.motivo ? ' — ' + c.estado.motivo : '')));
+  const des = (c.config.desejada || []).map((x) => x.chave + '=' + x.valor + ' (v' + x.versao + ')').join(' · ');
+  const apl = (c.config.aplicada || []).map((x) => x.chave + '=' + x.valor + (x.motivo ? ' [' + x.motivo + ']' : '')).join(' · ');
+  caixa.appendChild(notaDe('publicado ao bordo: ' + (des || 'nada ainda') + (apl ? '  |  o bordo aplicou: ' + apl : '')));
+
+  const acoes = document.createElement('div'); acoes.className = 'linha-form';
+  acoes.appendChild(botao(c.ativo ? 'desativar' : 'ativar', 'mini', async () => {
+    if (c.ativo && !confirm('Desativar "' + (c.rotulo || c.id) + '"? Ela sai da tela do cliente; o histórico fica guardado.')) return;
+    const r = await api('/api/cameras/' + encodeURIComponent(c.id) + '/ativo', { method: 'POST', body: JSON.stringify({ ativo: !c.ativo }) });
+    await atualizar();
+    if (!r.ok) mostrarRecado('recusado: ' + JSON.stringify(r.corpo), true);
+  }));
+  const sel = document.createElement('select');
+  for (const a of ALVOS_DE_ENVIO) { const o = document.createElement('option'); o.value = a; o.textContent = a + ' kbps'; sel.appendChild(o); }
+  sel.value = String(c.alvo || '').replace(/k$/i, '');   // `cameras.alvo` guarda "800k"; o menu e' "800"
+  acoes.appendChild(sel);
+  acoes.appendChild(botao('aplicar qualidade', 'mini', async () => {
+    const r = await api('/api/config', { method: 'POST', body: JSON.stringify({
+      embarcacao_id: emb.id, camera_id: c.id, chave: 'alvo_kbps', valor: sel.value }) });
+    await atualizar();
+    if (r.ok) mostrarRecado('qualidade publicada para o PC de captura: ' + sel.value + ' kbps', false);
+    else mostrarRecado('recusado: ' + ((r.corpo && r.corpo.erro) || JSON.stringify(r.corpo)), true);
+  }));
+  acoes.appendChild(botao(c.no_ar ? 'parar o envio' : 'ligar agora', c.no_ar ? 'mini' : 'marca', async () => {
+    const r = await api('/api/cameras/' + (c.no_ar ? 'desligar' : 'ligar'),
+      { method: 'POST', body: JSON.stringify({ camera_id: c.id }) });
+    await atualizar();
+    if (r.ok) mostrarRecado(c.no_ar ? 'ordem de parar enviada ao PC de captura' : 'ordem de ligar enviada ao PC de captura', false);
+    else mostrarRecado('recusado: ' + ((r.corpo && r.corpo.erro) || JSON.stringify(r.corpo)), true);
+  }));
+  caixa.appendChild(acoes);
+  return caixa;
+}
+
 /* --------------------------------------------------------- interface */
 $('form-entrar').addEventListener('submit', entrar);
 $('form-primeiro').addEventListener('submit', primeiroAcesso);
@@ -2163,6 +2433,8 @@ $('btn-sair').addEventListener('click', async () => { await api('/api/sair', { m
 $('btn-atualizar').addEventListener('click', atualizar);
 document.querySelectorAll('.item[data-tela]').forEach((b) => b.addEventListener('click', () => {
   A.tela = b.dataset.tela;
+  A.empresaId = null;   // clicar no menu volta para a LISTA de empresas (sai de dentro do cliente)
+  A.chaveRevelada = null;   // e a chave revelada nao fica pendurada na tela
   document.querySelectorAll('.item[data-tela]').forEach((x) => x.classList.toggle('on', x === b));
   desenhar(true);   // troca de tela pelo menu sempre redesenha
 }));

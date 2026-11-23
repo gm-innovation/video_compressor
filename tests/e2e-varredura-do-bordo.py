@@ -291,6 +291,20 @@ def main() -> int:
         exigir(checada["alvo"] == "800", f"o alvo do admin sobreviveu a varredura ({checada['alvo']!r})")
         exigir(checada["ativo"] == 0, "o 'ativo' do admin sobreviveu a varredura (nao foi religada)")
 
+        # ---- 4b. o NOME que o admin deu sobrevive a varredura (0.12.0, dono 23/11/2026:
+        #      "a captura pega as informacoes e replica no app de captura, inclusive os nomes das
+        #      cameras"). Quem aplica a chave `rotulo` no cadastro local e' o agente do bordo, pela rota
+        #      local — aqui ela e' chamada direto, como o agente chama.
+        c, rn = pedir("POST", f"{base_bordo}/api/config/aplicar",
+                      {"camera_id": alvo_cam, "chave": "rotulo", "valor": "Proa de boreste"}, cookie=tok)
+        exigir(c == 200 and rn.get("ok"), f"a maquina de captura aplicou o nome que veio de terra ({c})")
+        nome_antes = [x for x in cameras_do_banco(bordo_db) if x["id"] == alvo_cam][0]["rotulo"]
+        exigir(nome_antes == "Proa de boreste", f"o cadastro LOCAL ja' mostra o nome do admin ({nome_antes!r})")
+        c, _ = pedir("POST", f"{base_bordo}/api/varredura", {}, cookie=tok)
+        nome_depois = [x for x in cameras_do_banco(bordo_db) if x["id"] == alvo_cam][0]["rotulo"]
+        exigir(nome_depois == "Proa de boreste" and nome_depois != "USB Video Device",
+               f"a varredura NAO reescreve o nome com o do dispositivo (ficou {nome_depois!r})")
+
         # ---- 5. dispositivo que sai da lista NAO e' apagado nem desativado
         escrever_fake_ffmpeg(fake, DEVICES_SEM_UMA)
         c, r3 = pedir("POST", f"{base_bordo}/api/varredura", {}, cookie=tok)

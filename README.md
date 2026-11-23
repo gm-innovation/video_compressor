@@ -30,6 +30,26 @@ comprime na máquina e o vídeo comprimido sobe para o lado terra (`destinoSrt`)
 ## Instaladores prontos (Windows x64) — PLUG & PLAY desde a 0.2.0
 Na página de releases: https://github.com/gm-innovation/video_compressor/releases
 
+### 0.12.0 — **o admin virou uma área só: empresa → embarcação → câmeras (e o nome da câmera desce para o bordo)** (dono, 23/11/2026)
+- **O que o dono pediu:** *"preciso poder configurar cada cliente/embarcação/câmeras de forma unificada e
+  simples... tudo isso poderia ser uma área só, de configuração por cliente e de embarcações pra baixo tudo
+  vinculado ao cliente... as câmeras não aparecem do lado do admin, pelo menos não com o nome que a varredura
+  pegou, e não consigo configurar e ligar as câmeras"*.
+- **A tela de entrada do admin agora é "Empresas e configuração"**: o cliente na raiz, as embarcações
+  vinculadas a ele e, em cada embarcação, as câmeras. O fluxo é o que ele mandou: **criar a empresa →
+  criar a embarcação vinculada → gerar a chave na embarcação → as câmeras da varredura aparecem ali com o
+  nome do dispositivo → configurar**.
+- **Cada câmera é um cartão** (acabou a tabela de 12 colunas que truncava): nome, estado (no ar / fora do ar /
+  desativada / **achada pela varredura**), o que o bordo conta, **desejada × aplicada** da configuração e as
+  ações na mesma linha — ligar/desligar, ativar/desativar, qualidade de envio (1500–300 kbps) e salvar nome.
+- **"Tempo real, produção e câmeras" é uma coisa só** e vive dentro da embarcação; a chave da licença se gera
+  ali mesmo; **Usuários fica fora** da árvore (página própria). As telas antigas continuam alcançáveis pelo
+  grupo **Avançado (telas antigas)** — nenhum link salvo quebra.
+- **O nome da câmera desce para o PC de captura** (chave `rotulo`): o bordo aplica no cadastro local e a
+  varredura **passa a respeitar o nome** escolhido em vez de reescrevê-lo com o nome do dispositivo.
+- **Provas:** `tests/e2e-admin-unificado.py` (nova), `tests/e2e-varredura-do-bordo.py` (bloco 4b novo) e
+  `tools/regressao-0100.py` — **21 provas, tudo verde**.
+
 ### 0.11.1 — **o painel do bordo mostra o que está acontecendo: os processos e o desempenho medido** (dono, 23/11/2026)
 - **O que o dono pediu:** *"após a validação da chave de acesso, o app inicia a sua configuração local
   autônoma e exibe as informações de saúde e desempenho na tela, bem como os processos em andamento, como

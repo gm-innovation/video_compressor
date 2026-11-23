@@ -672,8 +672,14 @@ def pedir_trecho_do_hd(usuario, camera_id: str, arquivo: str) -> dict:
 # app a bordo precisa buscar o tempo todo as atualizacoes". Mesmo desenho da flag: terra PUBLICA (com
 # `versao`), o bordo OLHA, aplica SO' a diferenca e CONFIRMA o que aplicou.
 # --------------------------------------------------------------------------------------------
-CHAVES_DE_CONFIG = ("alvo_kbps", "teto_s", "gravacao_continua", "transmitir")
+CHAVES_DE_CONFIG = ("alvo_kbps", "teto_s", "gravacao_continua", "transmitir", "rotulo")
 VALORES_DE_ALVO = ("1500", "1200", "1000", "800", "500", "300")   # a banda do produto, fechada
+# O NOME da camera (dono, 23/11/2026): "a captura pega as informações e replica no app de captura,
+# inclusive os nomes das câmeras". É a chave `rotulo` — o admin escreve o nome em terra e o bordo
+# APLICA no cadastro local (e a varredura passa a respeitar o nome escolhido, em vez de reescrevê-lo
+# com o nome do dispositivo a cada rodada).
+LIMITE_NOME_CAMERA = 120
+CHAVE_NOME_CAMERA = "rotulo"
 
 
 def config_publicada(embarcacao_id: str) -> dict:
@@ -719,6 +725,17 @@ def publicar_config(embarcacao_id: str, camera_id: str, chave: str, valor: str, 
         if not 60 <= n <= 7200:
             return {"erro": "teto_s fora da faixa do produto (60 a 7200 s)"}
         valor = str(n)
+    if chave == CHAVE_NOME_CAMERA:
+        # O nome vai para o cadastro da camera NO BORDO: recusa o que nao e' nome (vazio, quebra de
+        # linha, grande demais) aqui, na borda de quem publica — nunca "achei que apliquei".
+        if not cam:
+            return {"erro": "o nome e' por camera: informe camera_id"}
+        if "\n" in valor or "\r" in valor or "\t" in valor:
+            return {"erro": "o nome de uma linha so' (sem quebra de linha nem tabulacao)"}
+        if not valor:
+            return {"erro": "o nome nao pode ficar vazio"}
+        if len(valor) > LIMITE_NOME_CAMERA:
+            return {"erro": f"o nome cabe em {LIMITE_NOME_CAMERA} caracteres (veio com {len(valor)})"}
     with conexao() as c:
         if not c.execute("SELECT 1 FROM embarcacoes WHERE id=?", (emb,)).fetchone():
             return {"erro": f"embarcacao inexistente: {emb}"}
@@ -779,6 +796,24 @@ def aplicar_config_local(camera_id: str, chave: str, valor: str) -> dict:
                          ON CONFLICT(camera_id,chave) DO UPDATE SET valor=excluded.valor,
                            atualizado_em=excluded.atualizado_em""", (chave, str(n), em_iso()))
         return {"ok": True, "motivo": f"teto local do bordo em {n} s", "chave": chave, "valor": str(n)}
+    if chave == CHAVE_NOME_CAMERA:
+        # O NOME que o admin escolheu em terra, aplicado no CADASTRO LOCAL desta maquina. Fica em
+        # `config_local` de proposito: e' o que faz a varredura respeitar o nome (ver
+        # `varredura_do_bordo.varrer()`), em vez de reescrever o rotulo com o nome do dispositivo.
+        if not valor or "\n" in valor or len(valor) > LIMITE_NOME_CAMERA:
+            return {"ok": False, "motivo": "nome invalido (vazio, com quebra de linha ou grande demais)"}
+        if not cam:
+            return {"ok": False, "motivo": "o nome e' por camera"}
+        with conexao() as c:
+            if not c.execute("SELECT 1 FROM cameras WHERE id=?", (cam,)).fetchone():
+                return {"ok": False, "motivo": f"a camera {cam} nao existe nesta maquina"}
+            c.execute("UPDATE cameras SET rotulo=? WHERE id=?", (valor, cam))
+            c.execute("""INSERT INTO config_local (camera_id,chave,valor,versao,atualizado_em)
+                         VALUES (?,?,?,0,?)
+                         ON CONFLICT(camera_id,chave) DO UPDATE SET valor=excluded.valor,
+                           atualizado_em=excluded.atualizado_em""", (cam, chave, valor, em_iso()))
+        return {"ok": True, "motivo": "nome aplicado no cadastro desta maquina",
+                "camera_id": cam, "chave": chave, "valor": valor}
     if chave in ("gravacao_continua", "transmitir"):
         return {"ok": False, "motivo": f"{chave}: esta versao do app de captura ainda nao aplica "
                                         f"(a gravacao continua e' ligada pelo servico do bordo)"}
@@ -811,6 +846,142 @@ def guardar_config_aplicada(embarcacao_id: str, versao, aplicadas: list, recusad
                        str(item.get("motivo") or ""), em_iso()))
             gravadas += 1
     return {"ok": True, "gravadas": gravadas, "versao": v}
+
+
+# ---------------------------------------------------------------------------------------------
+# A ARVORE DO ADMIN (0.12.0, aprovado em 23/11/2026): EMPRESA -> EMBARCACAO -> CAMERAS.
+# O dono: "preciso poder configurar cada cliente/embarcacao/cameras de forma unificada e simples, hoje
+# eu tenho muitas paginas: clientes/embarcacoes/cameras/licencas/producao/tempo real/enviar
+# videos/usuarios/configuracoes do bordo, tudo isso poderia ser uma area so, de configuracao por
+# cliente e de embarcacoes pra baixo tudo vinculado ao cliente". E: "tempo real, producao e cameras e'
+# a mesma coisa, nao precisa dividir". Uma leitura so, com o que a tela precisa para desenhar tudo —
+# sem endereco, porta, protocolo ou credencial de camera (a regra de sempre).
+# ---------------------------------------------------------------------------------------------
+def e_camera_da_varredura(camera_id: str) -> bool:
+    """A camera que a VARREDURA do PC de captura criou (o id nasce do dispositivo).
+
+    A varredura monta o id a partir do caminho do dispositivo (`cam-device-pnp-usb-vid-...`), entao o
+    proprio id diz de onde a camera veio — e' o que a tela usa para marcar "achada pela varredura" e
+    separar do que foi cadastrado na mao.
+    """
+    cid = (camera_id or "").lower()
+    return "-device-pnp-" in cid or cid.startswith("cam-device")
+
+
+def _licenca_da_embarcacao(embarcacao_id: str) -> dict:
+    """A licenca que vale hoje para esta embarcacao (a ultima), SEM a chave: a tela mostra os 4
+    ultimos digitos e o admin copia a chave inteira pelo fluxo proprio (`GET /api/licencas`)."""
+    with conexao() as c:
+        x = c.execute("""SELECT id,validade_tipo,validade_em,maquinas_max,status,ultimo_uso_em,revogada_em
+                         FROM licencas WHERE embarcacao_id=? ORDER BY rowid DESC LIMIT 1""",
+                      (embarcacao_id,)).fetchone()
+    return dict(x) if x else {}
+
+
+def _maquinas_da_embarcacao(embarcacao_id: str) -> list:
+    """Quantos PCs de captura usaram a licenca desta embarcacao (e quando) — o dono cobra "quantos
+    PCs usam a mesma licenca"; e' ajustavel e isto e' o medido, nao o combinado."""
+    with conexao() as c:
+        return [dict(x) for x in c.execute(
+            """SELECT l.chave AS licenca, u.maquina, u.primeiro_em, u.ultimo_em
+               FROM licenca_usos u JOIN licencas l ON l.id=u.licenca_id
+               WHERE l.embarcacao_id=? ORDER BY u.ultimo_em DESC""", (embarcacao_id,)).fetchall()]
+
+
+def arvore_do_painel(usuario) -> dict:
+    """Empresa -> embarcacoes -> cameras, com o que cada camera e' e o que da' para fazer com ela."""
+    mt = caminhos_do_mediamtx()
+    with conexao() as c:
+        clientes = [dict(x) for x in c.execute("SELECT id,nome,ativo FROM clientes ORDER BY nome")]
+        embs = [dict(x) for x in c.execute("SELECT * FROM embarcacoes ORDER BY nome")]
+        linhas_cam = c.execute("""SELECT id,embarcacao_id,rotulo,fluxo_id,local,ativo,alvo
+                                  FROM cameras ORDER BY rotulo""").fetchall()
+        estados = {x["camera_id"]: dict(x) for x in c.execute(
+            """SELECT camera_id,estado,motivo,fluxo_id,desde,gravando,atualizado_em
+               FROM estado_bordo""")}
+        desejos = {x["camera_id"]: dict(x) for x in c.execute(
+            """SELECT camera_id,desejo,versao,motivo,manual,atualizado_em FROM desejo_camera""")}
+        desejada: dict = {}
+        for x in c.execute("""SELECT embarcacao_id,camera_id,chave,valor,versao,origem,atualizado_em
+                              FROM config_bordo"""):
+            desejada.setdefault((x["embarcacao_id"], x["camera_id"]), []).append(dict(x))
+        aplicada: dict = {}
+        for x in c.execute("""SELECT embarcacao_id,camera_id,chave,valor,versao,motivo,atualizado_em
+                              FROM config_aplicada_bordo"""):
+            aplicada.setdefault((x["embarcacao_id"], x["camera_id"]), []).append(dict(x))
+
+    por_embarcacao: dict = {}
+    for linha in linhas_cam:
+        if not pode_ver_camera(usuario, linha):
+            continue
+        if usuario is not None and usuario["papel"] == PAPEL_OBSERVADOR and not eh_camera_de_radar(linha):
+            continue  # o observador (Petrobras) ve o radar de oleo, e so' ele
+        cam = dict(linha)
+        p = mt.get(cam["fluxo_id"], {})
+        est = estados.get(cam["id"], {})
+        por_embarcacao.setdefault(cam["embarcacao_id"], []).append({
+            "id": cam["id"], "rotulo": cam["rotulo"], "fluxo_id": cam["fluxo_id"],
+            "ativo": cam["ativo"], "alvo": cam["alvo"], "local": cam["local"],
+            "achada_pela_varredura": e_camera_da_varredura(cam["id"]),
+            "no_ar": bool(p.get("ready")) and bool(p.get("tracks")),
+            "leitores": len(p.get("readers", [])),
+            "encoder": perfil_encoder(cam["fluxo_id"]),
+            "estado": {"estado": est.get("estado") or "sem retorno",
+                       "motivo": est.get("motivo") or "", "desde": est.get("desde") or "",
+                       "gravando": est.get("gravando") or "0",
+                       "atualizado_em": est.get("atualizado_em") or ""},
+            "desejo": desejos.get(cam["id"], {}),
+            "config": {"desejada": desejada.get((cam["embarcacao_id"], cam["id"]), []),
+                       "aplicada": aplicada.get((cam["embarcacao_id"], cam["id"]), [])},
+        })
+
+    def embarcacao_completa(emb: dict) -> dict:
+        cams = por_embarcacao.get(emb["id"], [])
+        achadas = [x for x in cams if x["achada_pela_varredura"]]
+        return {
+            "id": emb["id"], "nome": emb["nome"], "cliente_id": emb["cliente_id"],
+            "imo": emb.get("imo") or "", "estado": emb.get("estado") or "",
+            "radar": {"fonte": emb.get("radar_fonte") or "", "modo": emb.get("radar_modo") or "",
+                      "taxa": emb.get("radar_taxa") or "", "alvo": emb.get("radar_alvo") or ""},
+            "licenca": _licenca_da_embarcacao(emb["id"]),
+            "maquinas": _maquinas_da_embarcacao(emb["id"]),
+            "saude": _saude_resumida(emb["id"]),
+            "cameras": cams,
+            "resumo": {"cameras": len(cams), "no_ar": len([x for x in cams if x["no_ar"]]),
+                       "ativas": len([x for x in cams if x["ativo"]]),
+                       "achadas_pela_varredura": len(achadas),
+                       "com_config_desejada": len([x for x in cams if x["config"]["desejada"]])},
+        }
+
+    empresas = []
+    for cl in clientes:
+        minhas = [embarcacao_completa(e) for e in embs if e["cliente_id"] == cl["id"]]
+        empresas.append({"id": cl["id"], "nome": cl["nome"], "ativo": cl["ativo"],
+                         "embarcacoes": minhas,
+                         "resumo": {"embarcacoes": len(minhas),
+                                    "cameras": sum(e["resumo"]["cameras"] for e in minhas),
+                                    "no_ar": sum(e["resumo"]["no_ar"] for e in minhas),
+                                    "achadas_pela_varredura": sum(e["resumo"]["achadas_pela_varredura"]
+                                                                  for e in minhas)}})
+    # Embarcacao sem empresa nao pode sumir da tela: a hierarquia manda, mas o dado e' do dono.
+    sem_empresa = [embarcacao_completa(e) for e in embs
+                   if not any(e["cliente_id"] == cl["id"] for cl in clientes)]
+    return {"empresas": empresas, "embarcacoes_sem_empresa": sem_empresa, "agora": em_iso()}
+
+
+def _tem_saude(embarcacao_id: str) -> bool:
+    with conexao() as c:
+        return bool(c.execute("SELECT 1 FROM saude_bordo WHERE embarcacao_id=? LIMIT 1",
+                              (embarcacao_id,)).fetchone())
+
+
+def _saude_resumida(embarcacao_id: str) -> dict:
+    """A saude do bordo DAQUELA embarcacao, resumida para o cartao (sem a serie inteira)."""
+    if not _tem_saude(embarcacao_id):
+        return {}
+    at = (saude_de(embarcacao_id, pontos=1) or {}).get("atual") or {}
+    return {"estado": at.get("estado") or "", "em": at.get("recebido_em") or "",
+            "maquina": at.get("maquina") or "", "versao_app": at.get("versao_app") or ""}
 
 
 # ---------------------------------------------------------------------------------------------
@@ -2830,6 +3001,16 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(200, {"varredura": varredura_do_bordo.ultima(),
                                     "intervalo_s": varredura_do_bordo.intervalo()},
                               {"Cache-Control": "no-store"})
+        if rota == "/api/empresas":
+            # A AREA UNICA (0.12.0): empresa -> embarcacoes -> cameras numa leitura so. E' o que
+            # substitui as 8 paginas soltas — e responde de uma vez o que a tela precisa desenhar.
+            if not (u and (u["papel"] in PAPEL_ADMIN or u["papel"] == PAPEL_OBSERVADOR)):
+                return self._json(401, {"erro": "entre no sistema"})
+            try:
+                return self._json(200, arvore_do_painel(u), {"Cache-Control": "no-store"})
+            except Exception as e:  # noqa: BLE001
+                return self._json(500, {"erro": f"nao consegui montar a area do cliente "
+                                                f"({type(e).__name__}: {e})"})
         if rota == "/api/cameras":
             if not u:
                 return self._json(401, {"erro": "entre no sistema"})
@@ -3821,6 +4002,32 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(200, {"ok": True, "id": cid, "fluxo_id": cam["fluxo_id"],
                                     "envio_parado": bool((parado or {}).get("ok")),
                                     "lado_terra": lado, "supabase": banco, "trechos_preservados": True})
+        if rota.startswith("/api/cameras/") and rota.endswith("/nome"):
+            # O NOME da camera (0.12.0, dono 23/11/2026): "a captura pega as informações e replica no
+            # app de captura, inclusive os nomes das câmeras". Aqui o nome muda no cadastro do lado
+            # terra E desce como a chave `rotulo` da config — o PC de captura aplica e confirma. Sem
+            # isto o nome vivia so' aqui: o bordo continuava com o nome do dispositivo e a varredura
+            # seguinte reescrevia o rotulo por cima.
+            if not (u and u["papel"] in PAPEL_ADMIN):
+                return self._json(403, {"erro": "so a operacao da' nome a camera: entre como operador ou admin"})
+            cid = rota[len("/api/cameras/"):-len("/nome")]
+            d = self._corpo()
+            nome = str(d.get("rotulo") or "").strip()
+            with conexao() as c:
+                cam = c.execute("SELECT * FROM cameras WHERE id=?", (cid,)).fetchone()
+            if not cam:
+                return self._json(404, {"erro": "camera inexistente"})
+            publicado = publicar_config(cam["embarcacao_id"], cid, CHAVE_NOME_CAMERA, nome,
+                                        origem=(u["email"] if u else ""))
+            if publicado.get("erro"):
+                return self._json(422, publicado)
+            with conexao() as c:
+                c.execute("UPDATE cameras SET rotulo=? WHERE id=?", (nome, cid))
+            auditar(u, "nome_da_camera", f"{cid} -> {nome!r} (v{publicado.get('versao')})",
+                    self.client_address[0])
+            return self._json(200, {"ok": True, "id": cid, "rotulo": nome, "bordo": publicado,
+                                    "recado": "nome publicado para o PC de captura: ele aplica e "
+                                              "confirma na proxima leitura"})
         if rota.startswith("/api/cameras/") and rota.endswith("/editar"):
             # Editar a camera EM OPERACAO, campo a campo. `POST /api/cameras` e' INSERT OR REPLACE
             # (recria a linha e zera `ativo`): serve para criar, nao para editar. Aqui muda SO' o que
