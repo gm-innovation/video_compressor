@@ -100,6 +100,95 @@ def _cpu_memoria() -> tuple[float | None, float | None, float | None, dict]:
     return None, None, None, nao_medido
 
 
+def _memoria_total_mb() -> float | None:
+    try:
+        import psutil
+        return round(psutil.virtual_memory().total / 1e6, 1)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+# ----------------------------------------------------------------- REDE (global: por interface)
+# A taxa e' a media do intervalo entre DUAS leituras (o retrato sobe de 60 em 60 s), nao um instantaneo:
+# o painel diz "desde a ultima leitura" para nao parecer um medidor ao vivo.
+_REDE_ANTES: dict = {"t": 0.0, "por": {}}
+
+
+def _rede() -> tuple[list, dict, str]:
+    """(interfaces, total, motivo) — bytes acumulados e taxa por interface + o somatorio da maquina.
+
+    Sem `psutil` nao se inventa numero: devolve ([], {}, motivo) e o motivo sobe em `nao_medido`.
+    """
+    try:
+        import psutil
+    except Exception:  # noqa: BLE001
+        return [], {}, "sem psutil: rede nao medida"
+    try:
+        cont = psutil.net_io_counters(pernic=True)
+    except Exception as e:  # noqa: BLE001
+        return [], {}, f"{type(e).__name__}: {e}"
+    agora = time.time()
+    dt_s = agora - float(_REDE_ANTES.get("t") or 0)
+    antes_por = _REDE_ANTES.get("por") or {}
+    interfaces: list = []
+    total = {"enviado_mb": 0.0, "recebido_mb": 0.0, "enviado_mbps": 0.0, "recebido_mbps": 0.0,
+             "taxa_mbps": 0.0, "intervalo_s": round(dt_s, 1) if _REDE_ANTES.get("t") else None}
+    for nome, c in cont.items():
+        linha = {"nome": nome, "enviado_mb": round(c.bytes_sent / 1e6, 2),
+                 "recebido_mb": round(c.bytes_recv / 1e6, 2)}
+        antes = antes_por.get(nome)
+        if antes and dt_s > 0:
+            linha["enviado_mbps"] = round((c.bytes_sent - antes[0]) * 8 / 1e6 / dt_s, 3)
+            linha["recebido_mbps"] = round((c.bytes_recv - antes[1]) * 8 / 1e6 / dt_s, 3)
+        interfaces.append(linha)
+        for k in ("enviado_mb", "recebido_mb", "enviado_mbps", "recebido_mbps"):
+            total[k] += float(linha.get(k) or 0)
+    for k in ("enviado_mb", "recebido_mb", "enviado_mbps", "recebido_mbps"):
+        total[k] = round(total[k], 2)
+    total["taxa_mbps"] = round(total["enviado_mbps"] + total["recebido_mbps"], 2)
+    _REDE_ANTES["t"] = agora
+    _REDE_ANTES["por"] = {n: (c.bytes_sent, c.bytes_recv) for n, c in cont.items()}
+    return interfaces, total, ""
+
+
+def _individual() -> list:
+    """A camada POR CAMERA/encoder: o que cada fluxo desta maquina esta' consumindo agora.
+
+    Uma linha por ingestao no ar, com o que o banco sabe (kbps/fps/estado) e o que o processo do
+    ffmpeg daquele fluxo gasta (CPU, memoria) — o "individual" que o dono pediu (24/11/2026).
+    """
+    try:
+        import psutil
+    except Exception:  # noqa: BLE001
+        psutil = None
+    try:
+        con = sqlite3.connect(str(_banco()), timeout=10)
+        con.row_factory = sqlite3.Row
+        try:
+            regs = con.execute("SELECT id, camera_id, rotulo, estado, bitrate_saida_kbps, fps, pid, codec "
+                               "FROM ingestoes WHERE estado NOT IN ('parado','fim') ORDER BY id").fetchall()
+        finally:
+            con.close()
+    except Exception as e:  # noqa: BLE001
+        return [{"erro": f"{type(e).__name__}: {e}"}]
+    saida = []
+    for r in regs:
+        linha = {"ingestao_id": r["id"], "camera_id": r["camera_id"], "rotulo": r["rotulo"],
+                 "estado": r["estado"], "kbps": r["bitrate_saida_kbps"], "fps": r["fps"],
+                 "codec": r["codec"], "pid": r["pid"], "cpu_pct": None, "memoria_mb": None}
+        if psutil is not None and r["pid"]:
+            try:
+                p = psutil.Process(int(r["pid"]))
+                linha["cpu_pct"] = round(p.cpu_percent(interval=0.1), 1)
+                linha["memoria_mb"] = round(p.memory_info().rss / 1e6, 1)
+            except Exception as e:  # noqa: BLE001
+                linha["processo"] = f"{type(e).__name__}"   # processo ja' morreu: mede quem estiver vivo
+        elif psutil is None:
+            linha["processo"] = "sem psutil"
+        saida.append(linha)
+    return saida
+
+
 def _discos() -> list:
     """Onde o produto grava: a pasta do aplicativo e o HD do radar (o anel de gravacao continua)."""
     alvos = [("aplicativo", RAIZ)]
@@ -246,6 +335,23 @@ def _varredura() -> dict:
 def retrato() -> dict:
     """O retrato completo — sem segredo nenhum. E' isto que sobe para o admin."""
     cpu, mem, mem_livre, nao_medido = _cpu_memoria()
+    discos = _discos()
+    interfaces, rede_total, rede_motivo = _rede()
+    if rede_motivo:
+        nao_medido["rede"] = rede_motivo
+    individual = _individual()
+    # O "GLOBAL" (dono, 24/11/2026): a maquina inteira num lugar so' — CPU, memoria, disco e rede.
+    global_ = {
+        "cpu_pct": cpu,
+        "memoria_pct": mem,
+        # ATENCAO: `memoria_livre_mb` e' o DISPONIVEL do psutil (inclui cache/standby) — o "livre" do
+        # Windows e' ~5 % menor. O rotulo do painel diz "disponivel" (conferido em 24/11/2026).
+        "memoria_disponivel_mb": mem_livre,
+        "memoria_total_mb": _memoria_total_mb(),
+        "discos": discos,
+        "rede": rede_total,
+        "processos": len(individual),
+    }
     r = {
         "gerado_em": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
         "maquina": socket.gethostname(),
@@ -255,7 +361,14 @@ def retrato() -> dict:
         "cpu_pct": cpu,
         "memoria_pct": mem,
         "memoria_livre_mb": mem_livre,
-        "discos": _discos(),
+        "memoria_disponivel_mb": mem_livre,
+        "discos": discos,
+        # TELEMETRIA INDIVIDUAL E GLOBAL (dono, 24/11/2026): "individual" = uma linha por
+        # camera/encoder desta maquina; "global" = a maquina inteira. Os campos de cima continuam
+        # iguais (compatibilidade com o que o admin ja' le).
+        "individual": individual,
+        "global": global_,
+        "rede": {"interfaces": interfaces, "total": rede_total},
         "ffmpeg": _ffmpeg(),
         "dispositivos_video": _dispositivos(),
         "agente": _agente(),

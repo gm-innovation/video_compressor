@@ -24,7 +24,7 @@ PAPEIS = ("Captura", "Terra", "Admin", "Cliente")
 # Ordem de publicacao: o PRIMEIRO e' o `latest` do GitHub. Nova versao entra na frente.
 # A 0.8.0 nunca chegou a virar release: o que ela trazia (config do bordo vinda de terra e saude do
 # bordo no admin) entrou inteiro na 0.9.0, que e' quem publica. A nota dela fica em NOTAS abaixo.
-VERSOES_PUBLICADAS = ("0.13.2", "0.13.1", "0.13.0", "0.12.0", "0.11.1", "0.11.0", "0.10.1", "0.10.0", "0.9.1", "0.9.0", "0.7.0", "0.6.10", "0.6.9", "0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
+VERSOES_PUBLICADAS = ("0.14.0", "0.13.2", "0.13.1", "0.13.0", "0.12.0", "0.11.1", "0.11.0", "0.10.1", "0.10.0", "0.9.1", "0.9.0", "0.7.0", "0.6.10", "0.6.9", "0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
 
 
 def instaladores(versao: str) -> list:
@@ -44,6 +44,23 @@ def instaladores(versao: str) -> list:
     return [DIST / papel.lower() / f"LECSOR-{papel}-{versao}-x64.exe" for papel in PAPEIS]
 
 NOTAS = {
+    "0.14.0": (
+        "**O tamanho da imagem para de mudar, o botao \"Parar transmissao\" volta a funcionar, e o admin ganha dashboard e video ao vivo.**\n\n"
+        "\n\n"
+        "Teste do dono (24/11/2026): \"nao ficou legal o tamanho das imagens e outra coisa, elas ficam mudando o tamanho, diminuem nao entendo o porque. quando eu paro a transmissao e depois reinicio, o botao de parar transmissao fica desativado. preciso tambem que os videos sejam transmitidos no admin para eu acompanhar e monitorar. mais uma, preciso que o computador de captura envie tambem as informacoes de telemetria do computador com cpu, memoria, disco e rede, individual e global\" e \"inclua no plano um dashboard no app de captura, os cards estao horriveis, e tambem confirme se realmente as informacoes estao corretas, e preciso de um dashboard tambem pro admin para monitoramento\".\n\n"
+        "\n\n"
+        "**1. A imagem nao muda mais de tamanho.** Causa medida: a cada redesenho (a cada 5 s, quando algo muda) o `desenharVisualizar()` fazia `limpar(palco)` e RECRIAVA o `<video>`; no elemento novo o `proporcaoDaImagem()` saia cedo (`if (S.proporcao[c.id] === r) return;`) antes de gravar a proporcao, e a area voltava ao 16/9 do CSS — a imagem encolhia. Agora a janela que ja esta na tela e' APROVEITADA (o mesmo `<video>`, sem piscar), a proporcao ja conhecida entra no elemento na hora e so' ha redimensionamento quando a proporcao muda de verdade. A altura da grade passou a usar as LINHAS REAIS (`ceil(cameras/colunas)`): com 2 cameras a imagem usa a altura inteira, nao metade.\n\n"
+        "\n\n"
+        "**2. \"Parar transmissao\" sempre clicavel.** O botao e' desativado enquanto a requisicao corre, mas o MESMO botao voltava a ser usado na sessao seguinte e ninguem devolvia `disabled = false` (so' o \"Iniciar\" era religado). Agora cada passagem do `atualizarControle()` religa \"Parar transmissao\" e \"Gravar\".\n\n"
+        "\n\n"
+        "**3. Dashboard no app de captura.** O painel do bordo (`/bordo`) ganhou a primeira dobra com quatro numeros grandes — CPU, memoria, disco e rede — com o MESMO semaforo do lado terra (cpu 75/90, memoria 80/92, disco 88/95), a barra de cada um, a camada INDIVIDUAL por camera/encoder (kbps, fps, CPU e memoria do processo) e o que nao foi medido declarado com o motivo.\n\n"
+        "\n\n"
+        "**4. Dashboard do admin para monitoramento.** Tela nova \"Monitoramento (frota)\": cada embarcacao numa linha com o pior estado primeiro, CPU/memoria/disco/rede, quando o computador falou por ultimo, a camada individual por camera e o VIDEO AO VIVO — o mesmo player do cliente (WHEP/HLS), somente leitura: aqui nao se liga, nao se para e nao se grava.\n\n"
+        "\n\n"
+        "**5. Telemetria do computador de captura com REDE.** O retrato do bordo ganhou `rede` (bytes acumulados e taxa por interface + o total da maquina), `individual` (uma linha por camera/encoder) e `global` (a maquina inteira num lugar so'). O campo de memoria passou a ser rotulado como DISPONIVEL — e' o `available` do psutil, ~5 % maior que o \"livre\" do Windows (conferido na maquina: 11132 MB no painel contra 10592 MB no sistema; a porcentagem bate, 66,9 % contra 67 %).\n\n"
+        "\n\n"
+        "Provas: `tests/e2e-tamanho-fixo-dashboards-e-telemetria.py` (novo — mede a caixa da imagem duas vezes com um redesenho no meio e exige a MESMA medida, para e reinicia a transmissao conferindo o botao, abre os dois dashboards e o video ao vivo, e confere a telemetria) e `tools/regressao-0130.py` (28 provas).\n"
+    ),
     "0.13.2": (
         "**A imagem da grade entra INTEIRA (sem corte e sem faixa preta) e o rodape baixou para uma linha.**\n\n"
         "\n\n"

@@ -185,13 +185,19 @@ function camerasDaPagina() {
 const LACO_DA_GRADE = 5;
 
 function proporcaoDaImagem(img, v, c) {
+  /* A proporcao JA' CONHECIDA entra no elemento na hora, sem esperar o metadado: quando o <video> e'
+     reaproveitado/remontado, a area nova nascia no 16/9 do CSS e a imagem "mudava de tamanho" — era
+     isto que o dono via (24/11/2026). */
+  if (S.proporcao[c.id]) img.style.aspectRatio = String(S.proporcao[c.id]);
   const aplicar = () => {
     if (!v.videoWidth || !v.videoHeight) return;
     const r = v.videoWidth / v.videoHeight;
-    if (S.proporcao[c.id] === r) return;
+    const mudou = S.proporcao[c.id] !== r;
     S.proporcao[c.id] = r;
+    /* escreve SEMPRE no elemento (o `return` cedo antigo deixava a area nova presa no 16/9) e so'
+       redimensiona a grade quando a proporcao MUDOU — nada de repintar por repintar. */
     img.style.aspectRatio = v.videoWidth + ' / ' + v.videoHeight;
-    ajustarGrade();
+    if (mudou) ajustarGrade();
   };
   v.addEventListener('loadedmetadata', aplicar);
   v.addEventListener('resize', aplicar);
@@ -245,14 +251,25 @@ function desenharVisualizar() {
   const n = porPagina();
   const lista = camerasDaPagina();
   const ids = lista.map((c) => c.id);
+  /* APROVEITA A JANELA QUE JA' ESTA' NA TELA (dono, 24/11/2026: "elas ficam mudando o tamanho").
+     Antes, `limpar(palco)` jogava fora o <video> e a area da imagem a cada 5 s; o elemento novo
+     voltava ao 16/9 do CSS e a imagem encolhia. Agora so' sai quem saiu da lista — quem fica e' o
+     MESMO elemento, com o mesmo <video> ligado. */
+  const jaPostas = new Map();
   for (const antigo of Array.from(palco.querySelectorAll('.janela'))) {
-    if (!ids.includes(antigo.dataset.cam)) { window.Video.parar(antigo.dataset.cam); antigo.remove(); }
+    const id = antigo.dataset.cam;
+    if (!ids.includes(id)) { window.Video.parar(id); antigo.remove(); continue; }
+    jaPostas.set(id, antigo);
+    antigo.remove();
   }
   limpar(palco);
   palco.dataset.montado = '1';
   const grade = document.createElement('div');
   grade.className = 'grade-vms ' + (n === 1 ? 'g1' : n === 2 ? 'g2' : n === 3 ? 'g3' : 'g4');
-  grade.dataset.cols = String(n); grade.dataset.linhas = String(n);
+  grade.dataset.cols = String(n);
+  /* LINHAS REAIS: com 2 cameras em 2 colunas a imagem usa a altura inteira — antes o calculo dividia
+     por `n` linhas mesmo com uma so' ocupada, e a imagem saia pequena. */
+  grade.dataset.linhas = String(Math.max(1, Math.ceil(lista.length / n)));
   palco.appendChild(grade);
   const vazio = document.createElement('div');
   vazio.className = 'vazio oculto';
@@ -265,6 +282,16 @@ function desenharVisualizar() {
     montarPaginacao(); return;
   }
   for (const c of lista) {
+    const pronta = jaPostas.get(c.id);
+    if (pronta) {
+      /* a janela e' a MESMA (nao recria <video>, nao perde a proporcao, nao pisca): so' volta para a
+         grade e o quadro de controle e' repintado com o estado fresco. */
+      grade.appendChild(pronta);
+      const ctr = pronta.querySelector('.controle-transmissao');
+      if (ctr) atualizarControle(c, ctr);
+      desenharCaixas(c.id);
+      continue;
+    }
     const jan = document.createElement('div');
     jan.className = 'janela' + (S.selecionadas.has(c.id) ? ' selecionada' : '');
     jan.dataset.cam = c.id;
@@ -411,7 +438,7 @@ function abrirDestaque(ids) {
   const grade = document.createElement('div');
   grade.className = 'grade-vms g' + (lista.length === 1 ? '1' : lista.length === 2 ? '2' : lista.length === 3 ? '3' : '4');
   grade.dataset.cols = String(lista.length === 1 ? 1 : lista.length === 2 ? 2 : lista.length === 3 ? 3 : 4);
-  grade.dataset.linhas = grade.dataset.cols;
+  grade.dataset.linhas = String(Math.max(1, Math.ceil(lista.length / Number(grade.dataset.cols))));
   caixa.appendChild(grade);
   for (const c of lista) {
     const jan = document.createElement('div');
@@ -942,9 +969,14 @@ function atualizarControle(c, el) {
 
   const gravando = !!minha.gravando || !!(minha.gravacao && minha.gravacao.gravando);
   bGrav.style.display = ''; bGrav.classList.toggle('on', gravando);
+  /* RELIGA os botoes a cada passagem (dono, 24/11/2026: "quando eu paro a transmissao e depois reinicio,
+     o botao de parar transmissao fica desativado"). A acao desativa o botao enquanto a requisicao
+     corre; como o MESMO botao volta a ser usado na sessao seguinte, alguem tinha de devolver o
+     `disabled = false` — so' o "Iniciar" era religado. */
+  bGrav.disabled = false;
   bGrav.textContent = gravando ? 'Parar gravação' : 'Gravar (no lado terra)';
   bGrav.onclick = (ev) => { ev.stopPropagation(); marcarGravando(minha.id, !gravando, bGrav); };
-  bPar.style.display = ''; bPar.textContent = 'Parar transmissão';
+  bPar.style.display = ''; bPar.disabled = false; bPar.textContent = 'Parar transmissão';
   bPar.onclick = (ev) => { ev.stopPropagation(); pararTransmissao(minha.id, bPar); };
 
   /* AVISO DO ULTIMO MINUTO (D1/D2): pergunta se quer continuar. Nao ha resposta "automatica": se o

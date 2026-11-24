@@ -238,6 +238,7 @@ function recado(texto, erro) {
 }
 
 const SUBS = {
+  frota: ['Monitoramento da frota', 'Cada embarcação numa linha, com o pior estado primeiro: CPU, memória, disco e rede do computador de captura (o retrato que ele manda sozinho), quando ele falou por último — e o VÍDEO ao vivo, para acompanhar e monitorar (somente leitura).'],
   empresas: ['Empresas e configuração', 'Uma área só: o cliente na raiz, as embarcações vinculadas a ele e, em cada embarcação, as câmeras que a varredura achou — com nome, ligar/desligar, ativar e a qualidade de envio. A chave da licença nasce na embarcação.'],
   painel: ['Painel do projeto', 'Fases, medições, decisões e estado do link, tudo lido do banco.'],
   fases: ['Fases do projeto', 'Cada fase só fecha com evidência anexada.'],
@@ -296,7 +297,7 @@ function desenhar(forcado) {
     evidencias: telaEvidencias, documentos: telaDocumentos, clientes: telaClientes, embarcacoes: telaEmbarcacoes,
     cameras: telaCameras, usuarios: telaUsuarios, tempo: telaTempoReal, producao: telaProducao, analises: telaAnalises, marcas: telaMarcas, envios: telaEnvios,
     auditoria: telaAuditoria, saude: telaSaude, config_bordo: telaConfigDoBordo,
-    saude_bordo: telaSaudeDoBordo, licencas: telaLicencas };
+    saude_bordo: telaSaudeDoBordo, licencas: telaLicencas, frota: telaFrota };
   (despacho[A.tela] || telaPainel)(tela);
 }
 
@@ -2134,6 +2135,172 @@ function seloDeSaude(estado) {
   s.style.borderColor = CORES_DE_SAUDE[estado] || '#64748b';
   s.style.color = CORES_DE_SAUDE[estado] || '#94a3b8';
   return s;
+}
+
+/* ================================================================ FROTA (dashboard do admin)
+   Dono (24/11/2026): "preciso de um dashboard também pro admin para monitoramento" e "preciso também
+   que os videos sejam transmitidos no admin para eu acompanhar e monitorar". Uma tela só: cada
+   embarcação numa linha, com o pior estado primeiro, os QUATRO números que o computador de captura
+   manda sozinho (CPU, memória, disco e rede), quando ele falou por último, a camada POR CÂMERA — e o
+   vídeo ao vivo, no MESMO player do cliente (`/fronts/video.js`). Aqui não se liga, não se para e não
+   se grava: o admin ACOMPANHA (D3 do dono: "só quem visualiza é o cliente"). */
+const PESO_DE_SAUDE = { problema: 0, alerta: 1, ok: 2, '': 3 };
+
+function piorEstadoDo(s) {
+  const sinais = (s && s.sinais) || [];
+  if (sinais.some((x) => x.estado === 'problema')) return 'problema';
+  if (sinais.some((x) => x.estado === 'alerta')) return 'alerta';
+  if (sinais.length) return 'ok';
+  return (s && s.estado) || '';
+}
+
+function tomDoNumero(v, atencao, problema) {
+  if (v === null || v === undefined || v === '' || !isFinite(Number(v))) return 'neutro';
+  const x = Number(v);
+  return x >= problema ? 'ruim' : (x >= atencao ? 'atencao' : 'ok');
+}
+
+function numeroDaFrota(v, sufixo, casas) {
+  if (v === null || v === undefined || v === '') return '—';
+  return Number(v).toFixed(casas === undefined ? 1 : casas) + (sufixo || '');
+}
+
+function tileDaFrota(rot, valor, pe, tom) {
+  const d = document.createElement('div');
+  d.className = 'frota-num ' + (tom || 'neutro');
+  const r = document.createElement('div'); r.className = 'rot'; r.textContent = rot;
+  const v = document.createElement('div'); v.className = 'val'; v.textContent = valor;
+  const p = document.createElement('div'); p.className = 'pe'; p.textContent = pe || '';
+  d.append(r, v, p);
+  return d;
+}
+
+function fecharAoVivo() {
+  const caixa = document.getElementById('ao-vivo');
+  if (!caixa) return;
+  for (const v of Array.from(caixa.querySelectorAll('video'))) {
+    if (v.dataset.admId) { try { window.Video.parar(v.dataset.admId); } catch (e) { /* sem player */ } }
+  }
+  caixa.remove();
+}
+
+/* O VÍDEO AO VIVO no admin: o MESMO player do cliente. É só assistir — sem ligar, sem parar e sem
+   gravar (o admin ACOMPANHA; quem sustenta a transmissão é quem está vendo). */
+function abrirAoVivo(emb, cameras) {
+  if (document.getElementById('ao-vivo')) { fecharAoVivo(); return; }
+  const noAr = cameras.filter((c) => c.no_ar);
+  const caixa = document.createElement('div'); caixa.id = 'ao-vivo';
+  const topo = document.createElement('div'); topo.className = 'ao-vivo-topo';
+  const titulo = document.createElement('strong');
+  titulo.textContent = 'Ao vivo — ' + (emb.nome || emb.id) + '  (' + noAr.length + ' de ' + cameras.length + ' no ar)';
+  const dica = document.createElement('span'); dica.className = 'nota';
+  dica.textContent = 'somente leitura: aqui não se liga, não se para e não se grava';
+  const b = document.createElement('button'); b.className = 'pil'; b.textContent = 'Fechar'; b.onclick = fecharAoVivo;
+  topo.append(titulo, dica, b);
+  caixa.appendChild(topo);
+  const grade = document.createElement('div'); grade.className = 'grade-adm';
+  caixa.appendChild(grade);
+  if (!cameras.length) {
+    const p = document.createElement('p'); p.className = 'nota';
+    p.textContent = 'esta embarcação não tem câmera cadastrada ainda';
+    caixa.appendChild(p);
+  }
+  for (const c of cameras) {
+    const jan = document.createElement('div'); jan.className = 'janela-adm';
+    const v = document.createElement('video');
+    v.muted = true; v.autoplay = true; v.playsInline = true;
+    const rot = document.createElement('div'); rot.className = 'rotulo-adm';
+    rot.textContent = c.rotulo + (c.no_ar ? '' : '  · fora do ar');
+    jan.append(v, rot);
+    grade.appendChild(jan);
+    if (c.no_ar) {
+      const id = 'admin-' + c.id;
+      v.dataset.admId = id;
+      try { window.Video.ligar(id, c.id, v); } catch (e) { /* sem player: fica o rótulo */ }
+    }
+  }
+  document.body.appendChild(caixa);
+}
+
+async function telaFrota(t) {
+  const r = await api('/api/empresas');
+  if (!r.ok) { t.appendChild(recado('não consegui ler a frota: ' + JSON.stringify(r.corpo), true)); return; }
+  const corpo = r.corpo || {};
+  const linhas = [];
+  for (const e of (corpo.empresas || [])) {
+    for (const b of (e.embarcacoes || [])) linhas.push({ empresa: e.nome, emb: b });
+  }
+  for (const b of (corpo.embarcacoes_sem_empresa || [])) linhas.push({ empresa: 'sem empresa', emb: b });
+  if (!linhas.length) { t.appendChild(recado('nenhuma embarcação cadastrada ainda', true)); return; }
+  linhas.sort((a, b) => ((PESO_DE_SAUDE[piorEstadoDo(a.emb.saude)] ?? 3) - (PESO_DE_SAUDE[piorEstadoDo(b.emb.saude)] ?? 3)));
+
+  const resumo = (estado) => linhas.filter((l) => piorEstadoDo(l.emb.saude) === estado).length;
+  const topo = document.createElement('div'); topo.className = 'cartoes';
+  topo.appendChild(cartao('Embarcações', linhas.length, 'no escopo do seu papel'));
+  topo.appendChild(cartao('Com problema', resumo('problema'), 'pior estado primeiro'));
+  topo.appendChild(cartao('Em atenção', resumo('alerta'), 'perto do limiar'));
+  topo.appendChild(cartao('Ok', resumo('ok'), 'medido e saudável'));
+  t.appendChild(topo);
+
+  for (const { empresa, emb } of linhas) {
+    const s = emb.saude || {};
+    const cams = emb.cameras || [];
+    const caixa = document.createElement('div'); caixa.className = 'caixa-form';
+    const h = document.createElement('h2');
+    h.appendChild(document.createTextNode((emb.nome || emb.id) + '  '));
+    h.appendChild(seloDeSaude(piorEstadoDo(s) || 'problema'));
+    const quem = document.createElement('span'); quem.className = 'nota';
+    quem.textContent = '  ' + empresa + (s.maquina ? ' · máquina ' + s.maquina : '') +
+      (s.versao_app ? ' · versão ' + s.versao_app : '');
+    h.appendChild(quem);
+    caixa.appendChild(h);
+
+    const sub = document.createElement('p'); sub.className = 'sub';
+    sub.textContent = (s.em ? ('último retrato: ' + s.em + (s.so ? ' · ' + s.so : ''))
+                            : 'este computador de captura nunca reportou') +
+      '  ·  câmeras no ar ' + cams.filter((c) => c.no_ar).length + ' de ' + cams.length;
+    caixa.appendChild(sub);
+
+    const discos = s.discos || [];
+    const pior = discos.reduce((a, x) => (Number(x && x.usado_pct) > Number(a && a.usado_pct) ? x : a), null);
+    const rede = s.rede || {};
+    const linha = document.createElement('div'); linha.className = 'frota-linha';
+    linha.appendChild(tileDaFrota('CPU', numeroDaFrota(s.cpu_pct, '%'),
+      (s.nao_medido || {}).cpu_memoria || 'medida instantânea',
+      tomDoNumero(s.cpu_pct, 75, 90)));
+    linha.appendChild(tileDaFrota('Memória', numeroDaFrota(s.memoria_pct, '%'),
+      s.memoria_disponivel_mb === null || s.memoria_disponivel_mb === undefined
+        ? 'sem medida'
+        : ('disponível ' + numeroDaFrota(s.memoria_disponivel_mb / 1000, ' GB') +
+           (s.memoria_total_mb ? ' de ' + numeroDaFrota(s.memoria_total_mb / 1000, ' GB') : '')),
+      tomDoNumero(s.memoria_pct, 80, 92)));
+    linha.appendChild(tileDaFrota('Disco', pior ? numeroDaFrota(pior.usado_pct, '%') : '—',
+      pior ? ((pior.nome || 'volume') + ' — ' + numeroDaFrota(pior.livre_gb, ' GB livres'))
+           : 'nenhum volume medido',
+      tomDoNumero(pior && pior.usado_pct, 88, 95)));
+    linha.appendChild(tileDaFrota('Rede (subindo)', rede.enviado_mbps === undefined ? '—' : numeroDaFrota(rede.enviado_mbps, ' Mbps', 2),
+      rede.enviado_mbps === undefined ? 'não medido neste bordo'
+        : ('baixando ' + numeroDaFrota(rede.recebido_mbps, ' Mbps', 2)), 'neutro'));
+    caixa.appendChild(linha);
+
+    const individuais = s.individual || [];
+    if (individuais.length) {
+      caixa.appendChild(tabela([
+        { rotulo: 'Câmera/encoder', valor: (l) => l.rotulo || l.camera_id || 'fluxo' },
+        { rotulo: 'Estado', valor: (l) => l.estado || (l.processo ? 'sem processo (' + l.processo + ')' : '—') },
+        { rotulo: 'kbps', valor: (l) => (l.kbps === null || l.kbps === undefined ? '—' : Number(l.kbps).toFixed(0)) },
+        { rotulo: 'fps', valor: (l) => (l.fps === null || l.fps === undefined ? '—' : Number(l.fps).toFixed(1)) },
+        { rotulo: 'CPU', valor: (l) => (l.cpu_pct === null || l.cpu_pct === undefined ? '—' : Number(l.cpu_pct).toFixed(1) + '%') },
+        { rotulo: 'Memória', valor: (l) => (l.memoria_mb === null || l.memoria_mb === undefined ? '—' : Number(l.memoria_mb).toFixed(0) + ' MB') },
+      ], individuais, 'nenhum fluxo no ar agora'));
+    } else {
+      caixa.appendChild(notaDe('Nenhum fluxo desta máquina no ar agora (individual por câmera).'));
+    }
+
+    caixa.appendChild(botao('Ver ao vivo (' + cams.filter((c) => c.no_ar).length + ' no ar)', 'mini',
+                            () => abrirAoVivo(emb, cams)));
+    t.appendChild(caixa);
+  }
 }
 
 async function telaSaudeDoBordo(t) {

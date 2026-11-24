@@ -47,6 +47,33 @@
   .aviso.info { display: block; background: #131f36; border: 1px solid #2b3c5e; color: #bcd0f2; }
   button { padding: 8px 12px; font: 600 13px/1 inherit; color: #04122b; background: #6ba6ff; border: 0;
            border-radius: 8px; cursor: pointer; }
+
+  /* ------------------------------------------------ DASHBOARD (dono, 24/11/2026)
+     "os cards estão horríveis". A primeira dobra passa a ser o que se lê DE LONGE: quatro números
+     grandes (CPU, memória, disco, rede) com o estado ao lado, usando os MESMOS limiares do lado terra
+     (cpu 75/90, memória 80/92, disco 88/95 — `LIMIARES_DE_SAUDE` no `ground/api.py`). */
+  .painel { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px;
+            margin-bottom: 14px; }
+  .tf { background: #0f1a2e; border: 1px solid #22304d; border-left: 4px solid #2b3c5e; border-radius: 12px;
+        padding: 12px 14px 10px; }
+  .tf.ok { border-left-color: #2c6d4c; }
+  .tf.atencao { border-left-color: #8a6d1f; }
+  .tf.ruim { border-left-color: #6d2c3f; }
+  .tf .rot { font-size: 11.5px; text-transform: uppercase; letter-spacing: .8px; color: #9fb0d0; }
+  .tf .num { font-size: 40px; font-weight: 800; line-height: 1.03; margin-top: 2px; color: #f2f6ff;
+             font-variant-numeric: tabular-nums; }
+  .tf .num small { font-size: 15px; font-weight: 600; color: #9fb0d0; margin-left: 4px; }
+  .tf .pe { display: block; margin-top: 5px; font-size: 12.5px; color: #9fb0d0; }
+  .tf .barra { height: 6px; border-radius: 999px; background: #1b2740; margin-top: 9px; overflow: hidden; }
+  .tf .barra i { display: block; height: 100%; width: 0; background: #6ba6ff; }
+  .tf.ok .barra i { background: #4bc48b; }
+  .tf.atencao .barra i { background: #e0b45c; }
+  .tf.ruim .barra i { background: #e0738f; }
+  .hd2 { font-size: 12px; text-transform: uppercase; letter-spacing: .7px; color: #9fb0d0; margin: 14px 0 2px; }
+  .tabela { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 6px; }
+  .tabela th, .tabela td { text-align: left; padding: 5px 8px 5px 0; border-bottom: 1px solid #1b2740; }
+  .tabela th { color: #9fb0d0; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; }
+  .tabela td.n, .tabela th.n { text-align: right; font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
@@ -57,6 +84,9 @@
   admin e na tela do cliente, no lado terra.</p>
 
   <div class="aviso" id="recado"></div>
+
+  <!-- DASHBOARD (dono, 24/11/2026): a primeira dobra é o que se lê de longe. -->
+  <div class="painel" id="painel"></div>
 
   <div class="grade">
     <div class="bloco">
@@ -90,6 +120,8 @@
     <div class="bloco">
       <h2>Saúde e desempenho <span id="selo-saude" class="selo neutro">—</span></h2>
       <dl id="ficha-saude"></dl>
+      <!-- INDIVIDUAL (por câmera/encoder) — dono, 24/11/2026 -->
+      <div id="individual"></div>
       <div id="desempenho" class="fraco"></div>
     </div>
 
@@ -285,19 +317,28 @@ async function carregar() {
     av.appendChild(p);
   }
 
-  // ----- saúde ---------------------------------------------------------------------------------
+  // ----- saúde + DASHBOARD (dono, 24/11/2026) ---------------------------------------------------
   const s = d.saude || {};
   const resumo = s.resumo || (s.retrato && s.retrato.resumo) || {};
+  const g = s.global || {};
+  const discos = s.discos || g.discos || [];
+  const piorDisco = discos.reduce((a, x) => (Number(x.usado_pct) > Number(a && a.usado_pct) ? x : a), null);
+  const rede = (s.rede && s.rede.total) || g.rede || {};
   selo($('selo-saude'), s.estado || resumo.estado || '—',
        (s.estado === 'ok' || resumo.estado === 'ok') ? 'ok'
          : ((s.estado === 'problema' || resumo.estado === 'problema') ? 'ruim' : 'neutro'));
   ficha($('ficha-saude'), [
     ['CPU', textoMedida(s, 'cpu_pct', '%')],
     ['Memória', textoMedida(s, 'memoria_pct', '%')],
-    ['Disco', textoMedida(s, 'disco_pct', '%')],
+    ['Disco', piorDisco ? (piorDisco.usado_pct + ' % usado — ' + (piorDisco.nome || 'volume'))
+                        : textoMedida(s, 'disco_pct', '%')],
+    ['Rede (enviado / recebido)', (rede.enviado_mbps === undefined ? '—'
+        : numero(rede.enviado_mbps, 2, ' Mbps') + ' / ' + numero(rede.recebido_mbps, 2, ' Mbps'))],
     ['Câmeras paradas/vivas', resumo.texto || s.texto || '—'],
     ['Gerado em', hora(s.gerado_em)],
   ]);
+  pintarPainel(s);
+  pintarIndividual(s);
 
   // ----- o que está acontecendo agora (os processos) -------------------------------------------
   const proc = d.processos || [];
@@ -377,6 +418,120 @@ async function carregar() {
        faltando === 0 ? 'ok' : (faltando === 1 ? 'neutro' : 'ruim'));
   $('atualizado').textContent = 'Conferido às ' + new Date().toLocaleTimeString('pt-BR') +
                                 '  ·  esta tela se atualiza sozinha a cada 10 s';
+}
+
+/* ------------------------------------------------------------ DASHBOARD (dono, 24/11/2026)
+   "os cards estão horríveis". Quatro números grandes na primeira dobra, com o MESMO semáforo do lado
+   terra (cpu 75/90, memória 80/92, disco 88/95 — LIMIARES_DE_SAUDE, `ground/api.py`). O que não foi
+   medido aparece como "não medido": esta tela nunca inventa número. */
+const LIMIARES = { cpu: [75, 90], memoria: [80, 92], disco: [88, 95] };
+
+function estadoDe(v, par) {
+  if (v === null || v === undefined || v === '' || !isFinite(Number(v))) return 'neutro';
+  const x = Number(v);
+  return x >= par[1] ? 'ruim' : (x >= par[0] ? 'atencao' : 'ok');
+}
+
+function tile(rotulo, valor, unidade, estado, pe, largura) {
+  const d = document.createElement('div');
+  d.className = 'tf ' + estado;
+  const r = document.createElement('div'); r.className = 'rot'; r.textContent = rotulo;
+  const n = document.createElement('div'); n.className = 'num'; n.textContent = valor;
+  if (unidade) { const u = document.createElement('small'); u.textContent = unidade; n.appendChild(u); }
+  const p = document.createElement('span'); p.className = 'pe'; p.textContent = pe || '';
+  d.append(r, n, p);
+  if (largura !== null && largura !== undefined) {
+    const b = document.createElement('div'); b.className = 'barra';
+    const i = document.createElement('i');
+    i.style.width = Math.min(100, Math.max(0, Number(largura))) + '%';
+    b.appendChild(i); d.appendChild(b);
+  }
+  return d;
+}
+
+const um1 = (v) => (v === null || v === undefined || v === '' ? '—' : Number(v).toFixed(1));
+
+function pintarPainel(s) {
+  const painel = $('painel');
+  if (!painel) return;
+  painel.innerHTML = '';
+  s = s || {};
+  const g = s.global || {};
+  const naoMedido = s.nao_medido || {};
+  const discos = s.discos || g.discos || [];
+  const pior = discos.reduce((a, x) => (Number(x.usado_pct) > Number(a && a.usado_pct) ? x : a), null);
+  const rede = (s.rede && s.rede.total) || g.rede || {};
+  const semCpu = naoMedido.cpu_memoria;
+
+  const cpu = s.cpu_pct;
+  painel.appendChild(tile('CPU', cpu === null || cpu === undefined ? '—' : um1(cpu), '%',
+    estadoDe(cpu, LIMIARES.cpu),
+    semCpu ? ('não medido: ' + semCpu) : 'medida instantânea desta máquina',
+    cpu === null || cpu === undefined ? null : cpu));
+
+  const mem = s.memoria_pct;
+  const disp = (s.memoria_disponivel_mb !== undefined ? s.memoria_disponivel_mb : s.memoria_livre_mb);
+  const total = g.memoria_total_mb;
+  painel.appendChild(tile('Memória', mem === null || mem === undefined ? '—' : um1(mem), '%',
+    estadoDe(mem, LIMIARES.memoria),
+    (disp === null || disp === undefined ? 'sem medida'
+      : 'disponível ' + um1(disp / 1000) + ' GB' + (total ? ' de ' + um1(total / 1000) + ' GB' : '')),
+    mem === null || mem === undefined ? null : mem));
+
+  painel.appendChild(tile('Disco', pior ? um1(pior.usado_pct) : '—', '%',
+    estadoDe(pior && pior.usado_pct, LIMIARES.disco),
+    (pior ? (pior.nome || 'volume') + ' — ' + um1(pior.livre_gb) + ' GB livres do total'
+          : 'nenhum volume medido'),
+    pior ? pior.usado_pct : null));
+
+  const env = rede.enviado_mbps;
+  painel.appendChild(tile('Rede (subindo)', env === undefined ? '—' : um1(env), 'Mbps', 'neutro',
+    (env === undefined ? 'sem psutil: rede não medida'
+      : 'baixando ' + um1(rede.recebido_mbps) + ' Mbps · ' +
+        (rede.intervalo_s === null || rede.intervalo_s === undefined ? 'primeira leitura'
+          : 'média de ' + numero(rede.intervalo_s, 0, ' s'))),
+    null));
+}
+
+/* A CAMADA INDIVIDUAL: uma linha por câmera/encoder desta máquina (dono, 24/11/2026). */
+function pintarIndividual(s) {
+  const alvo = $('individual');
+  if (!alvo) return;
+  alvo.innerHTML = '';
+  const linhas = (s && s.individual) || [];
+  if (!linhas.length) {
+    const p = document.createElement('div'); p.className = 'fraco';
+    p.textContent = 'Nenhum fluxo desta máquina no ar agora (individual por câmera).';
+    alvo.appendChild(p);
+    return;
+  }
+  const t = document.createElement('div'); t.className = 'hd2';
+  t.textContent = 'Individual por câmera/encoder';
+  alvo.appendChild(t);
+  const tab = document.createElement('table'); tab.className = 'tabela';
+  const cab = document.createElement('tr');
+  for (const par of [['Câmera', ''], ['Estado', ''], ['kbps', 'n'], ['fps', 'n'], ['CPU', 'n'], ['Memória', 'n']]) {
+    const th = document.createElement('th'); th.textContent = par[0];
+    if (par[1]) th.className = par[1];
+    cab.appendChild(th);
+  }
+  tab.appendChild(cab);
+  for (const l of linhas) {
+    const tr = document.createElement('tr');
+    const cel = (txt, classe) => {
+      const td = document.createElement('td'); td.textContent = txt;
+      if (classe) td.className = classe;
+      tr.appendChild(td);
+    };
+    cel(l.rotulo || l.camera_id || l.fluxo || 'fluxo');
+    cel(l.estado || (l.processo ? ('sem processo (' + l.processo + ')') : '—'));
+    cel(l.kbps === undefined || l.kbps === null ? '—' : numero(l.kbps, 0));
+    cel(l.fps === undefined || l.fps === null ? '—' : numero(l.fps, 1));
+    cel(l.cpu_pct === undefined || l.cpu_pct === null ? '—' : numero(l.cpu_pct, 1, '%'), 'n');
+    cel(l.memoria_mb === undefined || l.memoria_mb === null ? '—' : numero(l.memoria_mb, 0, ' MB'), 'n');
+    tab.appendChild(tr);
+  }
+  alvo.appendChild(tab);
 }
 
 function textoMedida(s, chave, sufixo) {

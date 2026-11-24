@@ -15,6 +15,23 @@
   .cartao-numeros span { color: var(--muted-foreground, #9aa7bd); }
   .tag { font-size: 11px; border-radius: 999px; padding: 2px 8px; border: 1px solid currentColor; }
   .tag.ok { color: #4ade80; } .tag.off { color: #f87171; }
+
+  /* -------- DASHBOARD DA FROTA (dono, 24/11/2026): "um dashboard também pro admin para
+     monitoramento". Os quatro números de cada embarcação, lidos do retrato que o bordo manda. */
+  .frota-linha { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 8px 0 10px; }
+  .frota-num { border: 1px solid var(--border, #2a3550); border-left: 4px solid #475569; border-radius: 8px; padding: 8px 10px; }
+  .frota-num.ok { border-left-color: #22c55e; } .frota-num.atencao { border-left-color: #eab308; }
+  .frota-num.ruim { border-left-color: #ef4444; } .frota-num.neutro { border-left-color: #475569; }
+  .frota-num .rot { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted-foreground, #9aa7bd); }
+  .frota-num .val { font-size: 26px; font-weight: 700; }
+  .frota-num .pe { font-size: 11px; color: var(--muted-foreground, #9aa7bd); }
+  #ao-vivo { position: fixed; inset: 0; background: #060b16ee; z-index: 50; padding: 14px 16px; overflow: auto; }
+  #ao-vivo .ao-vivo-topo { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; }
+  #ao-vivo .ao-vivo-topo .nota { flex: 1; }
+  #ao-vivo .grade-adm { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 10px; }
+  #ao-vivo .janela-adm { border: 1px solid var(--border, #2a3550); border-radius: 10px; overflow: hidden; background: #0b1220; }
+  #ao-vivo video { width: 100%; aspect-ratio: 16 / 9; background: #000; display: block; object-fit: contain; }
+  #ao-vivo .rotulo-adm { padding: 6px 10px; font-size: 13px; }
 </style>
 </head><body>
 
@@ -57,6 +74,8 @@
 
     <div class="grupo">Configuração</div>
     <button class="item on" data-tela="empresas"><span class="ic">🏢</span>Empresas e configuração</button>
+    <!-- DASHBOARD DO ADMIN (dono, 24/11/2026): saúde das máquinas + vídeo ao vivo num lugar só. -->
+    <button class="item" data-tela="frota"><span class="ic">🛰</span>Monitoramento (frota)</button>
 
     <div class="grupo">Projeto</div>
     <button class="item" data-tela="painel"><span class="ic">📈</span>Painel</button>
@@ -111,5 +130,9 @@
   </main>
 </div>
 
+<!-- O MESMO player do cliente (WHEP/HLS) — o admin passa a VER o vídeo que está acompanhando
+     (dono, 24/11/2026: "preciso também que os videos sejam transmitidos no admin"). -->
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js" onerror="window.Hls=null"></script>
+<script src="/fronts/video.js"></script>
 <script src="/admin/admin.js"></script>
 </body></html>

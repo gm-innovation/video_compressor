@@ -20,6 +20,10 @@ RAIZ = pathlib.Path(__file__).resolve().parent.parent
 # `ambiente.json` que esta' no repositorio, e passaria a falar com a producao em vez de responder em casa.
 os.environ["LECSOR_SEM_AMBIENTE"] = "1"
 PROVAS = (
+    # RODADA 0.14.0 — a imagem nao muda de tamanho no redesenho, "Parar transmissao" volta clicavel, os
+    # dois dashboards (bordo e admin) e a telemetria do PC de captura (cpu/memoria/disco/rede, individual
+    # e global)
+    "tests/e2e-tamanho-fixo-dashboards-e-telemetria.py",
     # RODADA 0.13.2 — a imagem da grade nao pode ser cortada (o dono: "preciso das imagens inteiras") e o
     # rodape baixou para so' a linha de direitos
     "tests/e2e-imagem-da-grade-nao-corta.py",

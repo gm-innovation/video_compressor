@@ -1026,6 +1026,13 @@ def _saude_resumida(embarcacao_id: str) -> dict:
         "mediamtx_caminhos": (r.get("mediamtx") or {}).get("caminhos"),
         "dispositivos": dispo.get("quantos"), "dispositivos_nomes": dispo.get("nomes") or [],
         "varredura": varre.get("vistos"), "varredura_ok": varre.get("ok"),
+        # TELEMETRIA INDIVIDUAL E GLOBAL (dono, 24/11/2026): a rede da maquina e a lista POR CAMERA
+        # (o `individual` do retrato) sobem para o painel do admin junto com o resto. Campo ausente
+        # (bordo antigo) sai como None/[] — a tela diz "nao medido" em vez de mostrar zero.
+        "memoria_disponivel_mb": r.get("memoria_disponivel_mb", r.get("memoria_livre_mb")),
+        "memoria_total_mb": (r.get("global") or {}).get("memoria_total_mb"),
+        "rede": (r.get("rede") or {}).get("total") or (r.get("global") or {}).get("rede") or {},
+        "individual": r.get("individual") or [],
         "nao_medido": r.get("nao_medido") or {},
         "sinais": at.get("sinais") or [],
     }
