@@ -148,8 +148,10 @@ Todas as fases foram feitas. O que a prova mede, com o número ao lado:
 | janela (menu recolhido) | antes: imagem / faixa | depois: imagem / faixa | ganho de área |
 |---|---|---|---|
 | **1908x841** (o print do dono) | 582x328 / **176 px de cada lado (38%)** | **643x362** / **1,8 px** (a borda de 1 px) | **+21,8 %** |
-| 1536x700 | 457x257 / 145 px | 507x285 / 1,8 px | +22,8 % |
-| 1920x1080 | 798x449 / 72 px | 921x518 / 1,8 px | +33,3 % |
+| 1536x700 | 457x257 / 145 px | **517x291** / 1,8 px | +28,1 % |
+| 1920x1080 | 798x449 / 72 px | **855x481** / 1,8 px | +15,8 % |
+
+(a célula na janela do dono: 934x364 → **646x364**; nas outras: 748x293 → 521x293 e 940x483 → 859x483.)
 
 - A célula passou a **646x364** (a forma do vídeo) — a "faixa preta dentro da célula" deixou de existir; o
   que sobra é a **margem simétrica do palco** (medida: palco útil 1872, painel 1292, margem 290 de cada
