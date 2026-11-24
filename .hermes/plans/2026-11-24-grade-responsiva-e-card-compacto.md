@@ -1,6 +1,12 @@
-**Status:** aguardando aprovação (o dono disse, 24/11/2026: *"continua diminuindo as telas quando
-reconecta principalmente, e as telas ainda estão pequenas, elas precisam ser mais responsivas e utilizar
-o maior espaço possível"*, com 2 prints da tela do cliente). **Nada é implementado sem "aprovado".**
+**Status (24/11/2026):** Fases **1 a 7 APROVADAS** ("aprovado") e **implementadas** — commit local
+`45bb298` + `ff54ed2` (o botão "Continuar conectado" voltou a receber o clique), regressão **29/29**,
+**ainda NÃO publicadas** (o `git push` está parado no gate Jev, esperando "pode subir" do dono).
+Fases **8, 9 e 10** (grade usando todo o palco, botão de recolher o menu, limpeza das câmeras de teste)
+foram pedidas pelo dono em 24/11/2026 e **aguardam aprovação**. **Nada é implementado sem "aprovado".**
+
+> **O dono está vendo a 0.14.0** (o print da tela do cliente é anterior à 0.15.0): o card de 2 linhas, o
+> aviso amarelo cortado na borda da célula e a grade centralizada com margem morta são da versão
+> publicada, não da rodada que já está commitada aqui.
 
 # A grade do cliente: telas maiores, card que não come a imagem e nada de encolher no reconecta
 
@@ -173,6 +179,64 @@ grava "última + série" e há a tabela `telemetria_minuto`), mas nenhuma tela a
 - Prova: `tests/e2e-dashboard-do-bordo-de-verdade.py` — os gráficos existem e desenham (canvas com
   pontos), os números batem com a série do banco, o modo TV é tela cheia e o que não foi medido continua
   saindo declarado.
+
+## Fase 8 — A grade usa TODO o palco (P0, pedido de 24/11/2026)
+
+Dono, verbatim: *"as imagens continuam ocupando metade do espaço possível na tela"* (print do lado terra,
+`bancada`, 4 câmeras em 2×2).
+
+**Medido no print (1820×900):** o palco vai de x≈310 a 1810 (**1500 px** de largura) e a grade ocupa
+x≈533..1450 (**917 px**) — **39 % da largura fica vazia**, e o vazio é dividido em margem morta dos dois
+lados. Causa: a célula tem `aspect-ratio` do vídeo e a grade é centralizada; **a altura manda** e a coluna
+para de crescer (mesma raiz da tabela da Fase 2). Ou seja: com 2×2 de vídeos 16:9 numa janela 16:9, a
+grade **nunca** vai preencher as duas dimensões enquanto a célula for obrigada a ter a forma do vídeo.
+
+- **P0** O palco vira uma caixa de altura cheia (`height:100%`, `min-height:0`) e a **grade ocupa a área
+  inteira**: `grid-template-columns/rows: repeat(N,1fr)`, `gap` fixo, sem `justify-items:center`.
+- **P0** A **célula** deixa de ter `aspect-ratio` do vídeo: ela preenche a sua área da grade
+  (`min-height:0`) e quem se ajusta é o `<video>` com `object-fit:contain` — a imagem fica do MAIOR
+  tamanho que cabe sem cortar (o dono rejeitou o corte) e o que sobra é faixa **em cima/embaixo** dentro
+  da própria célula, nunca margem morta fora da grade.
+- **P0** O card do controle (34 px, Fase 1) fica **dentro** da célula, no rodapé dela — a imagem usa
+  `altura da célula − 34 px`.
+- **P1** Com a barra lateral recolhida (Fase 9) a grade cresce de novo: `ResizeObserver` no palco
+  (Fase 3) já cobre.
+- Prova: medir, com 4 câmeras em 1820×900, (a) a largura da grade ≥ **95 %** do palco; (b) a grade
+  começa e termina dentro do palco; (c) a imagem de cada janela **maior** que a medida de hoje no mesmo
+  tamanho de janela; (d) a imagem inteira (proporção preservada, sem corte).
+
+## Fase 9 — Botão para recolher a barra lateral (P1, pedido de 24/11/2026)
+
+Dono, verbatim: *"pode inclusive colocar um botão para colapsar o sidemenu e aumentar ainda mais o
+espaço útil"*.
+
+- **P1** Botão (ícone `«`/`»`) no cabeçalho da tela do cliente que **recolhe/abre** a barra lateral, com
+  `title` + `aria-label` ("Recolher menu" / "Abrir menu") e `aria-expanded`.
+- **P1** A escolha **fica guardada** (`localStorage`, por usuário) e a tela abre já no estado escolhido.
+- **P1** Com a barra recolhida sobra só a coluna de ícones (ou nada, com um botão flutuante) — a grade
+  recalcula na hora (`ResizeObserver`, Fase 3), sem medida velha.
+- **P2** Atalho de teclado (ex.: `[`) para alternar, declarado no `title`.
+- Prova: com a barra aberta e recolhida, a grade é maior quando recolhida e o estado volta depois de
+  recarregar a página.
+
+## Fase 10 — Limpar as câmeras de teste do lado terra (P0, pedido de 24/11/2026)
+
+Dono, verbatim: *"você deixou aquele monte de câmeras de teste novamente"*.
+
+**Medido no banco do lado terra (VPS `/opt/pipeline/app/db/pipeline.db`), 11 câmeras na embarcação
+`bancada`:** `cam-01` e `cam-02` (as duas do dono), **5 de varredura** (`cam-device-pnp-usb-*`: `AFN-USB`
+×2 — **o MESMO nome duas vezes**, `USB Video (1)`, `USB Video (2)`, `USB2 Video`) e **4 de prova**
+(`vivo-cam01-1811`, `vivo-cam02-1811`, `vivo-cam1-11-18`, `vivo-cam2-11-18`).
+
+- **P0** Remover as **4 de prova** (`vivo-*`) e a **duplicata** `AFN-USB`; `cam-01`/`cam-02` e as demais de
+  varredura ficam.
+- **P0** Backup do banco antes (`db/pipeline.db.antes-limpeza-2411`), **trilha de auditoria preservada**
+  (`transmissoes` e `auditoria_acesso` **não** são tocadas — regra "nada é apagado").
+- **P1** A varredura **não deve criar linha repetida** para a mesma entrada de vídeo (o `AFN-USB` duplicado
+  é sintoma): a chave da câmera passa a ser a **entrada estável** (device + interface), não o índice que
+  muda entre varreduras.
+- Prova: listar as câmeras da `bancada` depois com o script (contagem e nomes medidos) e conferir que as
+  provas continuam de pé (`transmissoes` com a contagem de antes).
 
 ## O que NÃO entra nesta rodada
 
