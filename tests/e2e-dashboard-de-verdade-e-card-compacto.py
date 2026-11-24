@@ -157,6 +157,16 @@ def estado_da_sessao(banco: pathlib.Path, tid: str) -> tuple[str, str]:
     return (linha[0], linha[1]) if linha else ("", "")
 
 
+def termina_em(banco: pathlib.Path, tid: str):
+    """O `termina_em` da sessao como INSTANTE (o ISO vem com fuso: `-03:00` do semeio, `+00:00` da API)."""
+    con = sqlite3.connect(str(banco))
+    linha = con.execute("SELECT COALESCE(termina_em,'') FROM transmissoes WHERE id=?", (tid,)).fetchone()
+    con.close()
+    if not linha or not linha[0]:
+        return None
+    return dt.datetime.fromisoformat(linha[0])
+
+
 def anotar_serie(pasta: pathlib.Path, quantos: int = 8) -> pathlib.Path:
     """O anel local da saude que ESTA maquina grava (o que o dashboard desenha)."""
     alvo = pasta / "historico-da-saude.jsonl"
@@ -347,6 +357,85 @@ def main() -> int:
             nota = bordo.inner_text("#curva-nota")
             checar("e a serie VOLTA ao vivo quando ela existe", "ponto" in nota.lower(), nota[:90])
             bordo.close()
+
+            # ---------------- 7: o aviso do ULTIMO MINUTO e' CLICAVEL na tela do dono ----------------
+            print("\n== 7. 'Continuar conectado' e' CLICAVEL com TRES cameras em 1600x900 (a tela do dono) ==")
+            # O dono (24/11/2026): "nao da pra clicar no botao para continuar conectado nas duas
+            # cameras". A causa medida foi o aviso cair no CARD (o `.img-cam` ainda nao estava pendurado
+            # no quadro quando o controle foi montado); com o card em uma linha, a caixa do aviso
+            # estourava a largura da janela e o botao ficava FORA da area visivel, cortado pelo
+            # `overflow:hidden`. Aqui se mede o que o clique acerta e se a sessao e' RENOVADA de verdade.
+            con = sqlite3.connect(str(banco))
+            con.execute("""INSERT OR REPLACE INTO cameras (id,embarcacao_id,rotulo,fluxo_id,local,ativo,alvo)
+                           VALUES ('cam-03',?,'USB Video (2)','cam-03','bordo',1,'800k')""", (EMB,))
+            # ATENCAO: o vigia compara os carimbos como TEXTO e a API grava tudo em UTC (`+00:00`).
+            # Semeie em UTC — semear no fuso local (`-03:00`) faz o texto parecer mais ANTIGO que o
+            # limite e o proprio vigia encerra a sessao que a prova quer manter no ar.
+            agora = dt.datetime.now(dt.timezone.utc)
+            for tid in ("t-prova-1", "t-mudo-1"):
+                con.execute("""INSERT OR REPLACE INTO transmissoes
+                               (id,embarcacao_id,camera_id,fluxo_id,usuario_email,segundos_max,criada_em,
+                                batimento_em,termina_em,estado,gravando)
+                               VALUES (?,?,?,?,?,900,?,?,?, 'no_ar', 0)""",
+                            (tid, EMB, CAM if tid == "t-prova-1" else CAM2, CAM, "cliente@lecsor.test",
+                             agora.isoformat(timespec="seconds"), agora.isoformat(timespec="seconds"),
+                             (agora + dt.timedelta(seconds=50)).isoformat(timespec="seconds")))
+            # ... e um bordo VIVO: sem isto o vigia do bordo mudo (Fase 6) encerraria a sessao no meio da
+            # prova e a assercao "segue no ar" mediria a regra do bordo mudo, nao o clique do aviso.
+            con.execute("DELETE FROM saude_bordo WHERE embarcacao_id=?", (EMB,))
+            con.execute("""INSERT INTO saude_bordo (embarcacao_id, recebido_em, maquina, versao_app, estado, retrato)
+                           VALUES (?,?,?,?,?,?)""",
+                        (EMB, agora.isoformat(timespec="seconds"), "PC-CAPTURA-PROVA", "0.15.0", "ok",
+                         json.dumps({"gerado_em": agora.isoformat(timespec="seconds"), "cpu_pct": 10.0,
+                                     "memoria_pct": 20.0, "discos": [], "rede": {}}, ensure_ascii=False)))
+            con.commit(); con.close()
+            pag7 = navegador.new_context(viewport={"width": 1600, "height": 900}).new_page()
+            pag7.on("pageerror", lambda e: erros.append("p7: " + str(e)))
+            pag7.goto(base + "/entrada/")
+            pag7.fill("#email", "cliente@lecsor.test")
+            pag7.fill("#senha", SENHA)
+            pag7.click("form#form-entrar button[type=submit]")
+            pag7.wait_for_selector(".st-aviso.mostra", timeout=ESPERA + 15000)
+            pag7.wait_for_timeout(800)
+            alvo = pag7.evaluate("""() => {
+              const a = document.querySelector('.st-aviso.mostra');
+              const b = a.querySelector('[data-papel="continuar"]');
+              const rb = b.getBoundingClientRect();
+              const cx = rb.left + rb.width / 2, cy = rb.top + rb.height / 2;
+              const img = a.closest('.img-cam');
+              const ri = img ? img.getBoundingClientRect() : null;
+              const jan = a.closest('.janela').getBoundingClientRect();
+              const rj = a.closest('.janela').getBoundingClientRect();
+              const topo = document.elementFromPoint(cx, cy);
+              return {aviso_dentro_da_imagem: !!img,
+                      botao: {l: Math.round(rb.left), t: Math.round(rb.top), r: Math.round(rb.right),
+                              b: Math.round(rb.bottom)},
+                      imagem: ri ? {l: Math.round(ri.left), t: Math.round(ri.top), r: Math.round(ri.right),
+                                    b: Math.round(ri.bottom)} : null,
+                      janela: {l: Math.round(rj.left), t: Math.round(rj.top), r: Math.round(rj.right),
+                               b: Math.round(rj.bottom)},
+                      acerta_no_centro: topo ? (topo.tagName + '.' + String(topo.className || '')) : 'null',
+                      clicavel: !!(topo && topo.getAttribute && topo.getAttribute('data-papel') === 'continuar')};
+            }""")
+            print("       ", json.dumps(alvo, ensure_ascii=False))
+            checar("o aviso mora DENTRO da imagem (nao no card)", alvo["aviso_dentro_da_imagem"])
+            checar("a caixa do aviso cabe na largura da janela",
+                   alvo["janela"] and alvo["botao"]["r"] <= alvo["janela"]["r"]
+                   and alvo["botao"]["l"] >= alvo["janela"]["l"],
+                   f"botao={alvo['botao']} janela={alvo['janela']}")
+            checar("o CENTRO do botao acerta o proprio botao (nao um elemento por cima)",
+                   alvo["clicavel"], alvo["acerta_no_centro"])
+            antes = termina_em(banco, "t-prova-1")
+            botao7 = pag7.locator('.st-aviso [data-papel="continuar"]').first
+            botao7.click(timeout=8000)
+            pag7.wait_for_timeout(1500)
+            depois = termina_em(banco, "t-prova-1")
+            est7, _ = estado_da_sessao(banco, "t-prova-1")
+            print(f"        termina_em: {antes} -> {depois} | estado: {est7}")
+            checar("o clique RENOVOU a sessao (termina_em foi empurrado para frente)",
+                   bool(antes and depois and depois > antes), f"{antes} -> {depois}")
+            checar("e a sessao segue no ar (nao encerrou com o clique)", est7 == "no_ar", est7)
+            pag7.close()
             navegador.close()
 
         print("\n" + "=" * 72)

@@ -378,7 +378,7 @@ function desenharVisualizar() {
     ctrlS.className = 'controle-transmissao';
     ctrlS.dataset.st = c.id;
     card.appendChild(ctrlS);
-    montarControle(c, ctrlS, jan);
+    montarControle(c, ctrlS, jan, img);
     const linhaT = document.createElement('div'); linhaT.className = 'trecho-linha'; linhaT.style.display = 'none';
     img.appendChild(linhaT);
     card.appendChild(rot);
@@ -946,16 +946,24 @@ function _btIc(papel, icone, texto, classe) {
 }
 
 /* Monta o quadro de controle UMA vez; o criador de texto fica em atualizarControle (roda a cada 1 s). */
-function montarControle(c, el, jan) {
+function montarControle(c, el, jan, imgDaCamera) {
   el.innerHTML = '';
   const est = document.createElement('span'); est.dataset.papel = 'estado'; est.className = 'st-estado';
   const cont = document.createElement('span'); cont.dataset.papel = 'contagem'; cont.className = 'st-contagem';
   const aviso = document.createElement('div'); aviso.dataset.papel = 'aviso'; aviso.className = 'st-aviso';
   el.append(est, cont, _btIc('iniciar', '▶', 'Iniciar transmissão'),
             _btIc('gravar', '⏺', 'Gravar (no lado terra)'), _btIc('parar', '⏹', 'Parar transmissão'));
-  /* o AVISO do ultimo minuto mora DENTRO da imagem: o card e' de uma linha so' e nao pode crescer
-     quando o aviso aparece (era o card que encolhia/empurrava a imagem — dono, 24/11/2026). */
-  (jan && jan.querySelector('.img-cam') ? jan.querySelector('.img-cam') : el).appendChild(aviso);
+  /* O AVISO DO ULTIMO MINUTO mora DENTRO da imagem (o card tem UMA linha e nao pode crescer — dono,
+     24/11/2026). O elemento da imagem vem por ARGUMENTO: quando esta funcao roda, o `.img-cam` ainda
+     NAO foi pendurado no quadro (`jan.appendChild(img)` vem depois), entao o `querySelector` devolvia
+     null e o aviso caia no card — e ali, com o card em uma linha, a caixa do aviso estourava a largura
+     da janela e os botoes (o "Continuar conectado") ficavam FORA da area visivel, cortados pelo
+     `overflow:hidden` do quadro. Medido na sonda: botao em x=852..967 numa janela que termina em 906 —
+     o centro do botao cai fora dela e o clique nao chega (dono, 24/11/2026: "nao da pra clicar no botao
+     para continuar conectado nas duas cameras"). */
+  ((imgDaCamera && imgDaCamera.classList.contains('img-cam') ? imgDaCamera : null)
+    || (jan && jan.querySelector('.img-cam')) || el).appendChild(aviso);
+  el._aviso = aviso;          // o aviso NAO e' filho do `el`: a referencia evita procura-lo a cada 1 s
   atualizarControle(c, el);
 }
 
@@ -965,7 +973,14 @@ function montarControle(c, el, jan) {
 function atualizarControle(c, el) {
   const { minha, quantos, jaViu } = sessaoDaCamera(c.id);
   const q = (p) => el.querySelector(`[data-papel="${p}"]`);
-  const est = q('estado'), cont = q('contagem'), aviso = q('aviso');
+  /* O aviso do ultimo minuto mora DENTRO da imagem — IRMAO do card, nao filho do `el`. Quem monta o
+     controle guarda a referencia em `el._aviso` (o `el` e' reaproveitado entre repinturas); a procura
+     no quadro cobre qualquer caminho antigo, e a rede de seguranca (elemento solto) garante que um
+     `aviso` inexistente NUNCA derrube a pintura da grade inteira. */
+  const aviso = el._aviso || q('aviso')
+    || (el.closest && el.closest('.janela') ? el.closest('.janela').querySelector('[data-papel="aviso"]') : null)
+    || document.createElement('div');
+  const est = q('estado'), cont = q('contagem');
   const bIni = q('iniciar'), bGrav = q('gravar'), bPar = q('parar');
   const avisoSeg = (S.transmissao && S.transmissao.aviso_segundos) || 60;
   const restante = minha && minha.termina_em
