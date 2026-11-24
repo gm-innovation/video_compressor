@@ -48,26 +48,25 @@ select.pil{padding:7px 9px}
    overflow:hidden do palco corta o contorno da janela selecionada (outline 2px + offset 1px
    ficam acima do topo do palco). Medido em 18/11/2026: padding-top 0 -> 2,6 px cortados. */
 .palco{flex:1;padding:12px 18px 8px;overflow:hidden;min-height:0;display:flex;flex-direction:column}
-.grade-vms{display:grid;gap:5px;grid-auto-rows:minmax(0,1fr);align-content:center}
+/* A CELULA NAO E' MAIS ESTICADA PARA 1fr DA TELA (dono, 24/11/2026: "nao cortar ... preciso das imagens
+   inteiras"): esticar a celula e usar `cover` obrigava a CORTAR a imagem, porque a area nunca tinha a
+   proporcao da camera. Agora a grade e' dimensionada pelo app.js a partir da PROPORCAO DA CAMERA — a
+   imagem entra inteira, sem corte e sem faixa preta; a sobra da tela vira margem do painel. */
+.grade-vms{display:grid;gap:5px;grid-auto-rows:auto;align-content:center;align-items:center;height:100%}
 .g3{grid-template-columns:repeat(3,1fr)}
 .g4{grid-template-columns:repeat(4,1fr)}
 .g2{grid-template-columns:repeat(2,1fr)}
 .g1{grid-template-columns:1fr}
-/* a janela preenche a celula: a grade ocupa a altura toda (como num VMS de verdade) */
-.grade-vms{height:100%;align-content:stretch}
-.g1{grid-template-rows:1fr}.g2{grid-template-rows:repeat(2,1fr)}
-.g3{grid-template-rows:repeat(3,1fr)}.g4{grid-template-rows:repeat(4,1fr)}
 /* A IMAGEM E' DA IMAGEM; INFORMACAO/ACAO VAI NO CARD ABAIXO (dono, 24/11/2026): "remover as informacoes e
-   botoes de cima da imagem, criar card abaixo da imagem da camera" + "a imagem deve ocupar todo o espaco
-   destinado a ela, removendo as faixas pretas laterais". Antes tudo era `position:absolute` SOBRE o video
-   e o video entrava `object-fit:contain` numa janela 16:9 -> sobravam faixas pretas nas laterais. */
-.janela{position:relative;display:flex;flex-direction:column;background:#000;border:1px solid #16202f;
-  border-radius:5px;overflow:hidden;min-height:0;width:100%;height:100%;margin:auto}
+   botoes de cima da imagem, criar card abaixo da imagem da camera". */
+.janela{position:relative;display:flex;flex-direction:column;background:transparent;border:1px solid #16202f;
+  border-radius:5px;overflow:hidden;min-height:0;width:100%;margin:auto}
 .janela.selecionada{outline:2px solid var(--azul);outline-offset:1px}
-/* a area DA IMAGEM: e' ela que a imagem preenche (o card nao entra nesta conta) */
-.img-cam{position:relative;flex:1 1 auto;min-height:0;overflow:hidden;background:#000}
-/* `cover`: a imagem ocupa TODA a area reservada a ela (fim das faixas pretas laterais) */
-.janela video{width:100%;height:100%;object-fit:cover;display:block;background:#000}
+/* a area DA IMAGEM: a PROPORCAO e' a da camera — 16/9 so' ate o metadado do video chegar (o app.js troca
+   pela proporcao real assim que ela e' conhecida) */
+.img-cam{position:relative;flex:0 0 auto;aspect-ratio:16/9;min-height:0;overflow:hidden;background:var(--fundo)}
+/* `contain`: a imagem entra INTEIRA (a area ja esta na proporcao dela, entao nao sobra faixa) */
+.janela video{width:100%;height:100%;object-fit:contain;display:block;background:#000}
 /* o CARD: nome/estado da camera + os botoes (energia, trecho, transmissao) ABAIXO da imagem */
 .card-cam{flex:0 0 auto;display:flex;flex-wrap:wrap;align-items:center;gap:5px 8px;padding:5px 8px;
   background:#0d1420;border-top:1px solid var(--borda);min-width:0}
@@ -123,11 +122,13 @@ select.pil{padding:7px 9px}
 .paginacao{display:flex;align-items:center;justify-content:center;gap:9px;padding:9px 18px;color:var(--texto2);font-size:12.5px}
 .paginacao button{background:#131c2b;border:1px solid var(--borda2);border-radius:7px;min-width:29px;padding:5px 8px}
 .paginacao button.on{background:var(--marca);border-color:var(--marca);color:#fff;font-weight:700}
-.rodape{display:flex;align-items:center;gap:12px;padding:10px 18px 12px;border-top:1px solid var(--borda);background:var(--painel2)}
+/* RODAPE BAIXO (dono, 24/11/2026: "diminua o rodape para dar mais espaco na tela"): uma linha so',
+   centrada, sem botoes — o espaco ganho vai para as imagens. */
+.rodape{display:flex;align-items:center;justify-content:center;padding:3px 12px;border-top:1px solid var(--borda);
+  background:var(--painel2);font-size:11px;line-height:1.35;color:var(--texto2)}
+.rodape .direitos{letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rodape .esq{display:flex;gap:10px}
 .rodape .dir{margin-left:auto;display:flex;align-items:center;gap:14px;color:var(--texto2);font-size:12.5px}
-.rodape button.acao{background:#1b2330;border:1px solid var(--borda2);border-radius:9px;padding:9px 14px;font-weight:600;font-size:13px}
-.rodape .icone{color:var(--aviso);margin-right:6px}
 .limpar{background:none;border:0;color:var(--texto2);text-decoration:underline}
 
 /* ---------- entrada ---------- */

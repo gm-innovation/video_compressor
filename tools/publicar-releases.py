@@ -24,7 +24,7 @@ PAPEIS = ("Captura", "Terra", "Admin", "Cliente")
 # Ordem de publicacao: o PRIMEIRO e' o `latest` do GitHub. Nova versao entra na frente.
 # A 0.8.0 nunca chegou a virar release: o que ela trazia (config do bordo vinda de terra e saude do
 # bordo no admin) entrou inteiro na 0.9.0, que e' quem publica. A nota dela fica em NOTAS abaixo.
-VERSOES_PUBLICADAS = ("0.13.1", "0.13.0", "0.12.0", "0.11.1", "0.11.0", "0.10.1", "0.10.0", "0.9.1", "0.9.0", "0.7.0", "0.6.10", "0.6.9", "0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
+VERSOES_PUBLICADAS = ("0.13.2", "0.13.1", "0.13.0", "0.12.0", "0.11.1", "0.11.0", "0.10.1", "0.10.0", "0.9.1", "0.9.0", "0.7.0", "0.6.10", "0.6.9", "0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
 
 
 def instaladores(versao: str) -> list:
@@ -44,6 +44,19 @@ def instaladores(versao: str) -> list:
     return [DIST / papel.lower() / f"LECSOR-{papel}-{versao}-x64.exe" for papel in PAPEIS]
 
 NOTAS = {
+    "0.13.2": (
+        "**A imagem da grade entra INTEIRA (sem corte e sem faixa preta) e o rodape baixou para uma linha.**\n\n"
+        "\n\n"
+        "Teste do dono (24/11/2026): \"agora com o card abaixo das imagens e a remoção das faixas pretas laterais, as imagens estão sendo cortadas\" e \"não cortar, diminua o rodapé para dar mais espaço na tela, mantenha apenas 'Lecsor - Todos os direitos reservados - 20##'. preciso das imagens inteiras\".\n\n"
+        "\n\n"
+        "**1. A causa medida.** A area da imagem era `1fr` da TELA (`.grade-vms{height:100%}` + `repeat(N,1fr)`): nunca tinha a proporcao da camera, e o `object-fit:cover` preenchia essa area **cortando** a sobra. Acabaram as faixas pretas porque a imagem passou a ser cortada — efeito colateral direto do D-D.\n\n"
+        "\n\n"
+        "**2. A correcao.** A area da imagem recebe a **proporcao REAL do video** (`videoWidth/videoHeight`, lida no `loadedmetadata`; 16:9 so' ate o metadado chegar) e a grade e' dimensionada por ela: `.img-cam` com `aspect-ratio`, `.janela video` com `object-fit:contain`, e a coluna calculada para o conjunto (imagem + card em N linhas) caber na altura disponivel. A imagem entra inteira, sem corte e sem barra; a sobra da tela vira margem. Vale na grade e no destaque; recalcula ao redimensionar a janela.\n\n"
+        "\n\n"
+        "**3. Rodape baixo, so' a linha de direitos.** O `<footer>` perdeu \"Ver todos os alertas\", \"Relatorios\" e \"Limpar selecao\" e ficou com uma linha centrada: \"Lecsor - Todos os direitos reservados - <ano>\" (o ano vem do relogio da maquina). A altura caiu de ~50 px para ~22 px — o espaco vai para as imagens. As telas de alertas e relatorios continuam na lateral esquerda.\n\n"
+        "\n\n"
+        "Provas: `tests/e2e-imagem-da-grade-nao-corta.py` (novo, com DOIS videos gerados dentro do teste — 640x480 e 1280x720: a area da imagem acompanha a camera em 1,333 e 1,778 e o quadro entra inteiro) e `tools/regressao-0130.py` (27 provas).\n"
+    ),
     "0.13.1": (
         "**A transmissao so' vive enquanto a tela do video esta' aberta: sair e voltar em ate' 60 s nao derruba a sessao — e a grade ficou com a imagem limpa.**\n\n"
         "\n\n"

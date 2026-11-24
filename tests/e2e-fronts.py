@@ -73,7 +73,10 @@ def verificar_cliente(navegador) -> None:
     checar("rotulo da camera na janela", "PSV" in rotulo or "câmera" in rotulo, rotulo)
     relogio = pag.locator(".janela .marca-dagua").first.inner_text() if janelas else ""
     checar("relogio na janela", len(relogio) >= 19, relogio)
-    checar("rodape com câmeras selecionadas", "câmeras selecionadas" in pag.locator("#contagem-selecao").inner_text())
+    # 0.13.2: o rodape ficou SO' com a linha de direitos (dono, 24/11/2026) — a contagem de selecionadas
+    # saiu da tela (nao existe mais #contagem-selecao).
+    checar("rodape com a linha de direitos",
+           "Todos os direitos reservados" in pag.locator(".rodape").inner_text())
     pag.screenshot(path=str(SAIDA / "_front-cliente-live.png"))
     for tela in ("Alertas", "Relatórios", "Câmeras"):
         pag.click(f"button.item[data-tela]:has-text('{tela}')")

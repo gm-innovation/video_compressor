@@ -4,6 +4,9 @@ const S = {
   usuario: null, embarcacoes: [], cameras: [], embarcacaoId: null,
   tela: 'visualizar', layout: 3, auto: true, pagina: 1, selecionadas: new Set(), ia: false, destaque: [],
   podeCamera: false, trechoEmCurso: false,
+  /* a PROPORCAO real de cada camera (videoWidth/videoHeight, lida do video): e' ela que dimensiona a
+     area da imagem e a grade — o dono exige a imagem INTEIRA, sem corte e sem faixa preta (24/11/2026) */
+  proporcao: {},
   eventos: [], contagens: [], relatorios: null, timer: null,
   analises: { agentes: [], contagens: [], eventos: [] }, agentesPorCamera: {},
   /* transmissao a pedido do cliente: o que esta' no ar, o historico e o tempo configurado */
@@ -174,6 +177,69 @@ function camerasDaPagina() {
   return lista.slice(inicio, inicio + n * n);
 }
 
+/* ------------------------------------------------- a imagem INTEIRA na grade (dono, 24/11/2026)
+   "não cortar ... preciso das imagens inteiras". Com o card abaixo e a célula esticada, o `cover`
+   cortava a imagem (a área nunca tinha a proporção da câmera). Aqui a área da imagem recebe a
+   proporção REAL do vídeo (`videoWidth/videoHeight`) e a grade é dimensionada por ela: a imagem
+   entra inteira, sem corte e sem faixa preta; a sobra da tela vira margem do painel. */
+const LACO_DA_GRADE = 5;
+
+function proporcaoDaImagem(img, v, c) {
+  const aplicar = () => {
+    if (!v.videoWidth || !v.videoHeight) return;
+    const r = v.videoWidth / v.videoHeight;
+    if (S.proporcao[c.id] === r) return;
+    S.proporcao[c.id] = r;
+    img.style.aspectRatio = v.videoWidth + ' / ' + v.videoHeight;
+    ajustarGrade();
+  };
+  v.addEventListener('loadedmetadata', aplicar);
+  v.addEventListener('resize', aplicar);
+  aplicar();
+}
+
+/* A proporção da grade é a MENOR das conhecidas: assim nenhuma linha fica mais alta que o cálculo. */
+function proporcaoDaGrade(grade) {
+  const vistas = Array.from(grade.querySelectorAll('.janela'))
+    .map((j) => S.proporcao[j.dataset.cam])
+    .filter((r) => r > 0);
+  return vistas.length ? Math.min.apply(null, vistas) : 16 / 9;
+}
+
+/* Dimensiona a grade para a imagem caber INTEIRA: a coluna é a largura que cabe na tela E que faz a
+   altura da célula (imagem + card, em `linhas` linhas) caber na altura disponível. */
+function ajustarGrade() {
+  for (const grade of document.querySelectorAll('.grade-vms')) {
+    const janelas = grade.querySelectorAll('.janela');
+    const alvo = grade.parentElement;
+    if (!janelas.length || !alvo) continue;
+    const cols = Number(grade.dataset.cols || 0) || janelas.length;
+    const linhas = Number(grade.dataset.linhas || 0) || cols;
+    const est = getComputedStyle(alvo);
+    const aw = alvo.clientWidth - (parseFloat(est.paddingLeft) || 0) - (parseFloat(est.paddingRight) || 0);
+    let ah = alvo.clientHeight - (parseFloat(est.paddingTop) || 0) - (parseFloat(est.paddingBottom) || 0);
+    /* o que divide a altura com a grade (o topo do destaque, a tarja de vazio) sai da conta */
+    for (const irmao of alvo.children) if (irmao !== grade && irmao.offsetHeight) ah -= irmao.offsetHeight;
+    const card = grade.querySelector('.card-cam');
+    const cardH = card ? card.offsetHeight : 0;
+    const r = proporcaoDaGrade(grade);
+    const porLargura = (aw - (cols - 1) * LACO_DA_GRADE) / cols;
+    const porAltura = r * (ah - (linhas - 1) * LACO_DA_GRADE - linhas * cardH) / linhas;
+    const largura = Math.floor(Math.min(porLargura, porAltura));
+    if (!(largura > 40)) continue;   // sem espaço: não mexe (a janela é pequena demais para calcular)
+    grade.style.gridTemplateColumns = 'repeat(' + cols + ', ' + largura + 'px)';
+    grade.style.gridTemplateRows = 'auto';
+    grade.style.justifyContent = 'center';
+    grade.style.alignContent = 'center';
+    for (const j of janelas) {
+      const img = j.querySelector('.img-cam');
+      if (img && !S.proporcao[j.dataset.cam]) {   // sem metadado ainda: assume a proporção da grade
+        img.style.aspectRatio = String(r);
+      }
+    }
+  }
+}
+
 function desenharVisualizar() {
   const palco = $('palco');
   const n = porPagina();
@@ -186,6 +252,7 @@ function desenharVisualizar() {
   palco.dataset.montado = '1';
   const grade = document.createElement('div');
   grade.className = 'grade-vms ' + (n === 1 ? 'g1' : n === 2 ? 'g2' : n === 3 ? 'g3' : 'g4');
+  grade.dataset.cols = String(n); grade.dataset.linhas = String(n);
   palco.appendChild(grade);
   const vazio = document.createElement('div');
   vazio.className = 'vazio oculto';
@@ -222,6 +289,7 @@ function desenharVisualizar() {
        imagem; o card fica FORA dela, abaixo. */
     const img = document.createElement('div'); img.className = 'img-cam';
     img.appendChild(v);
+    proporcaoDaImagem(img, v, c);   // a área da imagem recebe a proporção REAL da câmera
     if (S.podeCamera) {
       // botao de energia da camera: desligar solta o dispositivo de captura (a camera "desliga"),
       // ligar reabre com o ultimo ajuste. Sem precisar desconectar nada fisicamente.
@@ -285,6 +353,7 @@ function desenharVisualizar() {
   }
   montarPaginacao();
   pintarEstados();
+  ajustarGrade();   // a grade é dimensionada depois de montada (imagem inteira, sem corte)
 }
 
 function selecionar(id) {
@@ -341,6 +410,8 @@ function abrirDestaque(ids) {
   caixa.appendChild(topo);
   const grade = document.createElement('div');
   grade.className = 'grade-vms g' + (lista.length === 1 ? '1' : lista.length === 2 ? '2' : lista.length === 3 ? '3' : '4');
+  grade.dataset.cols = String(lista.length === 1 ? 1 : lista.length === 2 ? 2 : lista.length === 3 ? 3 : 4);
+  grade.dataset.linhas = grade.dataset.cols;
   caixa.appendChild(grade);
   for (const c of lista) {
     const jan = document.createElement('div');
@@ -348,6 +419,7 @@ function abrirDestaque(ids) {
     const v = document.createElement('video');
     v.id = 'vdestaque-' + c.id; v.muted = true; v.autoplay = true; v.playsInline = true;
     const img = document.createElement('div'); img.className = 'img-cam'; img.appendChild(v);
+    proporcaoDaImagem(img, v, c);   // a área da imagem recebe a proporção REAL da câmera
     const card = document.createElement('div'); card.className = 'card-cam';
     const rot = document.createElement('div'); rot.className = 'rotulo-cam';
     rot.textContent = c.rotulo;
@@ -358,6 +430,7 @@ function abrirDestaque(ids) {
   }
   document.body.appendChild(caixa);
   S.destaque = lista.map((c) => c.id);
+  ajustarGrade();
 }
 
 function fecharDestaque(silencioso) {
@@ -1218,7 +1291,10 @@ function atualizarRodape() {
   const total = S.cameras.length, sel = S.selecionadas.size;
   const inicio = total ? 1 : 0;
   const fim = Math.min(porPagina() * porPagina() * (S.pagina - 1) + porPagina() * porPagina(), sel);
-  $('contagem-selecao').textContent = `Mostrando ${inicio}-${fim} de ${sel} câmeras selecionadas (total ${total})`;
+  /* o rodape agora e' so' a linha de direitos (dono, 24/11/2026): a contagem so' existe se o elemento
+     estiver na tela — sem ele, nada quebra. */
+  const alvo = $('contagem-selecao');
+  if (alvo) alvo.textContent = `Mostrando ${inicio}-${fim} de ${sel} câmeras selecionadas (total ${total})`;
 }
 function relogios() {
   const d = new Date();
@@ -1311,6 +1387,8 @@ window.addEventListener('beforeunload', (ev) => {
 });
 
 window.addEventListener('pagehide', avisarQueSaio);
+/* a janela mudou de tamanho: a grade é recalculada (a imagem da câmera continua inteira, sem corte) */
+window.addEventListener('resize', () => ajustarGrade());
 
 $('btn-sair').addEventListener('click', async () => {
   avisarQueSaio();                                        /* apaga o que foi gravado para ele */
@@ -1321,9 +1399,17 @@ $('embarcacao').addEventListener('change', (ev) => {
   S.embarcacaoId = ev.target.value; S.cameras = []; S.selecionadas = new Set(); S.pagina = 1;
   atualizar();
 });
-$('limpar').addEventListener('click', () => { S.selecionadas = new Set(); S.pagina = 1; desenharVisualizar(); atualizarRodape(); });
-$('todos-alertas').addEventListener('click', () => trocarTela('alertas'));
-$('ir-relatorios').addEventListener('click', () => trocarTela('relatorios'));
+/* Os botoes do rodape SAIRAM na 0.13.2 (dono, 24/11/2026: "diminua o rodape ... mantenha apenas
+   'Lecsor - Todos os direitos reservados'"): os listeners ficam ligados SO' se o elemento existir,
+   para o app nao quebrar no boot com um rodape enxuto. */
+const bLimpar = $('limpar');
+if (bLimpar) bLimpar.addEventListener('click', () => { S.selecionadas = new Set(); S.pagina = 1; desenharVisualizar(); atualizarRodape(); });
+const bAlertas = $('todos-alertas');
+if (bAlertas) bAlertas.addEventListener('click', () => trocarTela('alertas'));
+const bRelat = $('ir-relatorios');
+if (bRelat) bRelat.addEventListener('click', () => trocarTela('relatorios'));
+/* o ano da linha de direitos vem do relogio da maquina (nunca fica velho na tela) */
+const elAno = $('ano'); if (elAno) elAno.textContent = String(new Date().getFullYear());
 $('hd-filtrar').addEventListener('click', () => desenharTela());
 $('hd-tudo').addEventListener('click', () => { $('hd-de').value = ''; $('hd-ate').value = ''; desenharTela(); });
 

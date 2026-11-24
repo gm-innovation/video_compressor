@@ -178,9 +178,11 @@ def main() -> int:
                 return Array.from(j.children).map((e) => e.className).sort().join('|');
             }""")
             checar("so' a area da imagem e o card sao filhos da janela", filhos == "card-cam|img-cam", filhos)
-            checar("a imagem entra com object-fit:cover (sem faixas pretas laterais)",
+            # 0.13.1 -> 0.13.2: o `cover` CORTava a imagem (dono, 24/11/2026) — a area da imagem passou a
+            # ter a proporcao da camera e o video entra por `contain` (imagem inteira, sem faixa preta).
+            checar("a imagem entra com object-fit:contain (imagem inteira, sem corte)",
                    pag.evaluate("() => getComputedStyle(document.querySelector('.janela video')).objectFit")
-                   == "cover")
+                   == "contain")
 
             print("\n== 2. iniciar a transmissao, sair para OUTRA tela e o batimento PARA ==")
             pag.locator('.controle-transmissao [data-papel="iniciar"]').click()
