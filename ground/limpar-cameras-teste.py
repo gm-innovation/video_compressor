@@ -7,13 +7,22 @@ com relatório do que sai antes de sair.
 
 O que sai (lista fechada — nada fora dela é tocado):
 
-  câmeras de teste da bancada : cam-01, cam-02, cam-conves, cam-teste-ip, vivo-webcam
-  envios de teste             : envio-clipe-do-dono-mp4, envio-clipe-do-youtube,
-                                envio-youtube-link-de-p-gina, teste-latencia
+  bancada "Bancada de testes (propria)" (19): as 3 cam-* (cam-01, cam-02, cam-09), as 6
+      cam-device-pnp-* (a varredura do PC de captura), as 8 vivo-* (nome dos fluxos das provas) e as
+      2 vps-* (vps-sintetica, vps-webcam-bancada);
+  psv-exemplo "PSV Exemplo (demo)" (6): cam-01-demo..cam-04-demo e os 2 envio-*-teste;
+  cliente armador-e2e "Armador E2E (criado pela tela)" — sem usuário, sem embarcação, sem câmera.
 
-O que fica:
+Não sobra câmera de campanha em nenhuma das duas embarcações de teste (decisão do dono, 24/11/2026).
 
-  vps-webcam-bancada          (a que funciona) e as 4 câmeras demo do "PSV Exemplo (demo)"
+A TRILHA DE AUDITORIA fica: `transmissoes` (histórico das sessões) e `ordens_do_bordo` NÃO são tocados —
+"nada é apagado" (dono, 16/11/2026). O que sai COM a câmera é o que é dela: a telemetria/ingestão do
+fluxo (ingestoes, telemetria_minuto, compressoes, medicoes_qualidade, latencia_medicoes), a analítica
+por câmera e o que faria a câmera reaparecer nas telas (desejo_camera, config_*, estado_bordo, hd_*).
+
+Cuidado: o PC de captura RE-VARRE a cada 5 min e recadastra o dispositivo que estiver plugado
+(`varredura_do_bordo.varrer`). Câmera do bordo REMOVIDA volta na próxima varredura — a lista fecha só
+o que os TESTES criaram.
 
 Uso:
   python ground/limpar-cameras-teste.py                      # só mostra o que sairia
@@ -21,6 +30,7 @@ Uso:
   python ground/limpar-cameras-teste.py --db /opt/pipeline/app/db/pipeline.db --aplicar
   python ground/limpar-cameras-teste.py --orfaos --aplicar   # + histórico de fluxo que não é câmera
                                                              # (as "câmeras fantasma" da tela Produção)
+  python ground/limpar-cameras-teste.py --sem-cliente --aplicar   # + o cliente armador-e2e
 """
 from __future__ import annotations
 
@@ -32,10 +42,26 @@ from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parents[1]
 
-# câmeras que saem (id da tabela `cameras`)
-CAMERAS_ALVO = ["cam-01", "cam-02", "cam-conves", "cam-teste-ip", "vivo-webcam",
-                "envio-clipe-do-dono-mp4", "envio-clipe-do-youtube",
-                "envio-youtube-link-de-p-gina", "teste-latencia"]
+# câmeras que saem (id da tabela `cameras`) — lista fechada da campanha (24/11/2026)
+CAMERAS_ALVO = [
+    # --- bancada (Bancada de testes (propria)) — 19
+    "cam-01", "cam-02", "cam-09",
+    "cam-device-pnp-usb-vid-0001-pid-a001-mi-00-6-21c",     # AFN-USB
+    "cam-device-pnp-usb-vid-0408-pid-403d-mi-00-7-210",     # ACER HD User Facing
+    "cam-device-pnp-usb-vid-1bcf-pid-2c99-01-65e8773d",     # USB Video Device
+    "cam-device-pnp-usb-vid-345f-pid-2131-mi-00-6-f69",     # USB2 Video
+    "cam-device-pnp-usb-vid-534d-pid-2109-mi-00-6-253",     # USB Video (2)
+    "cam-device-pnp-usb-vid-534d-pid-2109-mi-00-6-37f",     # USB Video (1)
+    "vivo-cam-01", "vivo-cam-02", "vivo-cam01-1811", "vivo-cam02-1811",
+    "vivo-cam1-11-18", "vivo-cam2-11-18", "vivo-usb-video", "vivo-webcam-da-bancada-prova",
+    "vps-sintetica", "vps-webcam-bancada",
+    # --- psv-exemplo (PSV Exemplo (demo)) — 6
+    "cam-01-demo", "cam-02-demo", "cam-03-analitico", "cam-04-demo",
+    "envio-envio-pela-tela-teste", "envio-envio-por-link-teste",
+]
+
+# cliente de teste que sai junto (id da tabela `clientes`); só com --sem-cliente
+CLIENTE_ALVO = "armador-e2e"
 
 # o que é da câmera e vai junto (coluna que aponta para o fluxo da câmera)
 DEPENDENTES = [
@@ -46,12 +72,21 @@ DEPENDENTES = [
     ("medicoes_qualidade", "fluxo_id"),
     ("latencia_medicoes", "fluxo_id"),
 ]
-# tabelas que apontam para o id da câmera (não para o fluxo)
+# tabelas que apontam para o id da câmera (não para o fluxo). As de CONFIGURACAO/ESTADO saem com a
+# câmera (senão ela reaparece nas telas); os HISTORICOS (transmissoes, ordens_do_bordo, ingestoes,
+# telemetria_minuto, gravacoes) ficam — a trilha de auditoria não é apagada (decisão do dono).
 DEPENDENTES_POR_CAMERA = [
     ("analytics_eventos", "camera_id"),
     ("analytics_contagens", "camera_id"),
     ("analytics_agentes", "camera_id"),
     ("analytics_marcas", "camera_id"),
+    ("desejo_camera", "camera_id"),
+    ("config_bordo", "camera_id"),
+    ("config_aplicada_bordo", "camera_id"),
+    ("config_local", "camera_id"),
+    ("estado_bordo", "camera_id"),
+    ("hd_catalogo", "camera_id"),
+    ("hd_pedidos", "camera_id"),
 ]
 
 
@@ -93,6 +128,8 @@ def main() -> int:
     p.add_argument("--orfaos", action="store_true",
                    help="também apaga o histórico de fluxo que não é mais câmera (as linhas fantasma da Produção)")
     p.add_argument("--forcar", action="store_true", help="permite mexer em fluxo que está no ar")
+    p.add_argument("--sem-cliente", action="store_true",
+                   help=f"também apaga o cliente de teste {CLIENTE_ALVO} (sem usuário/embarcação/câmera)")
     a = p.parse_args()
 
     if not os.path.exists(a.db):
@@ -142,6 +179,18 @@ def main() -> int:
         if cam not in CAMERAS_ALVO:
             print(f"  {linha['rotulo']}  ({cam})")
 
+    cliente_sai = ""
+    if a.sem_cliente:
+        cli = c.execute("SELECT id, nome FROM clientes WHERE id=?", (CLIENTE_ALVO,)).fetchone()
+        if cli:
+            embs = [r[0] for r in c.execute("SELECT id FROM embarcacoes WHERE cliente_id=?", (CLIENTE_ALVO,))]
+            usus = [r[0] for r in c.execute("SELECT id FROM usuarios WHERE cliente_id=?", (CLIENTE_ALVO,))]
+            if embs or usus:
+                print(f"\n  (o cliente {CLIENTE_ALVO} tem embarcação/usuário — NÃO sai: {embs} {usus})")
+            else:
+                cliente_sai = CLIENTE_ALVO
+                print(f"\nCLIENTE QUE SAI ({CLIENTE_ALVO}): {cli['nome']} — sem usuário, sem embarcação")
+
     if pulados:
         print("\nNÃO MEXIDO:")
         for cam, motivo in pulados:
@@ -186,6 +235,8 @@ def main() -> int:
                 apagar_in(c, "ingestoes_amostras", "ingestao_id", ids)
             apagar_in(c, "ingestoes", "fluxo_id", lista)
             apagar_in(c, "telemetria_minuto", "fluxo_id", lista)
+        if cliente_sai:
+            c.execute("DELETE FROM clientes WHERE id=?", (cliente_sai,))
 
     sobrou = [r["rotulo"] for r in c.execute("SELECT rotulo FROM cameras ORDER BY id")]
     print(f"\nAPAGADO: {len(plano)} câmera(s)" + (f" e {len(orfaos)} histórico(s) órfão(s)" if orfaos else ""))

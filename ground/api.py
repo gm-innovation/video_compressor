@@ -376,7 +376,11 @@ def eh_camera_de_radar(camera) -> bool:
 #  * `transmissoes` e' o historico: nada e' apagado.
 TEMPOS_DE_TRANSMISSAO = (300, 900, 1800, 3600, 7200)      # 5, 15, 30, 60 e 120 minutos (lista FECHADA)
 TEMPO_MAXIMO_PADRAO = 900
-SEGUNDOS_SEM_BATIMENTO = 60        # tela fechada / computador desligado: sem "estou aqui", a sessao morre
+# SAIDA DA TELA AO VIVO (dono, 24/11/2026): ao sair da tela das cameras e voltar em ate' 60 s a sessao
+# continua de pe (o cliente ve outras coisas sem reconectar); passando disso a sessao morre sozinha. O
+# batimento ("estou aqui") passou a ser mandado SO' pela tela do video — antes ele corria em qualquer tela
+# e a sessao nunca expirava. Cobre tambem tela fechada / computador desligado.
+SEGUNDOS_SEM_BATIMENTO = 60
 SEGUNDOS_SEM_RESPOSTA = 30         # a maquina de captura nao respondeu a ordem (nunca foi entregue)
 # AVISO DE 1 MINUTO ANTES DE CORTAR (dono, 24/11/2026, D1/D2): a tela pergunta "quer continuar
 # conectado?" no ultimo minuto da sessao; sem o clique em "continuar" a sessao expira no prazo
@@ -1269,6 +1273,10 @@ def _vigiar_uma_vez(agora: dt.datetime | None = None) -> dict:
     limite_entrega = (agora - dt.timedelta(seconds=SEGUNDOS_ENTREGA_LENTA)).isoformat(timespec="seconds")
     feitas = {"sem_batimento": [], "por_tempo": [], "sem_resposta": []}
     with conexao() as c:
+        # D-A (dono, 24/11/2026): a janela de 60 s vale tambem GRAVANDO — ao sair da tela e nao voltar em
+        # 60 s a sessao morre (e a gravacao do lado terra encerra junto; o cliente e' avisado a baixar
+        # antes). Por isso aqui NAO se filtra `gravando`: e' o contrario da expiracao POR TEMPO, que
+        # espera a gravacao acabar (l. abaixo, `gravando=0`).
         sem_bat = [dict(x) for x in c.execute(
             "SELECT * FROM transmissoes WHERE estado IN ('pedida','no_ar') AND batimento_em < ?",
             (limite_bat,)).fetchall()]
@@ -1283,7 +1291,9 @@ def _vigiar_uma_vez(agora: dt.datetime | None = None) -> dict:
                       OR (o.estado='entregue' AND o.entregue_em <> '' AND o.entregue_em < ?))""",
             (limite_resp, limite_entrega)).fetchall()]
     for t in sem_bat:
-        if fechar_transmissao(t["id"], "encerrada", "a tela foi fechada ou o computador foi desligado"):
+        if fechar_transmissao(t["id"], "encerrada",
+                              "voce saiu da tela ao vivo por mais de 60 s (ou a tela foi fechada) — "
+                              "a transmissao foi encerrada"):
             feitas["sem_batimento"].append(t["id"])
             parar_se_ninguem_vendo(t["embarcacao_id"], t["camera_id"], t["fluxo_id"],
                                    "nao havia mais ninguem vendo")
@@ -2136,6 +2146,8 @@ class Handler(SimpleHTTPRequestHandler):
                 d["segundos_restantes"] = 0
         # a tela do cliente pergunta "quer continuar conectado?" quando faltam AVISO_SEGUNDOS
         d["aviso_segundos"] = AVISO_SEGUNDOS
+        # quanto tempo fora da tela ao vivo ainda mantem a sessao de pe (a tela mostra "voce tem 60 s")
+        d["janela_sem_tela"] = SEGUNDOS_SEM_BATIMENTO
         return d
 
     # ---- trecho de 1 minuto (prova da compressao)
@@ -2712,6 +2724,7 @@ class Handler(SimpleHTTPRequestHandler):
                                     "tempo_maximo_s": meu_tempo,
                                     "teto_do_produto_s": teto,
                                     "aviso_segundos": AVISO_SEGUNDOS,
+                                    "janela_sem_tela": SEGUNDOS_SEM_BATIMENTO,
                                     "papel": u["papel"],
                                     # o CLIENTE recebe o AVISO (o que ele pode baixar, so' o dele); a
                                     # operacao recebe a TRILHA (o que foi gravado na embarcacao, com o

@@ -215,7 +215,13 @@ function desenharVisualizar() {
     nome.textContent = nome.dataset.base + (c.no_ar ? '' : ' · fora do ar');
     rot.appendChild(ponto); rot.appendChild(nome);
     const caixas = document.createElement('div'); caixas.className = 'caixas'; caixas.id = 'caixas-' + c.id;
-    jan.appendChild(v);
+    /* CARD ABAIXO DA IMAGEM (dono, 24/11/2026): nome/estado e TODOS os botoes moram aqui, nao mais por
+       cima do video. A imagem fica limpa; sobre ela so' a marca d'agua e as caixas da IA. */
+    const card = document.createElement('div'); card.className = 'card-cam';
+    /* a imagem e seus avisos (marca d'agua, caixas da IA, tarja de "fora do ar") vivem na area da
+       imagem; o card fica FORA dela, abaixo. */
+    const img = document.createElement('div'); img.className = 'img-cam';
+    img.appendChild(v);
     if (S.podeCamera) {
       // botao de energia da camera: desligar solta o dispositivo de captura (a camera "desliga"),
       // ligar reabre com o ultimo ajuste. Sem precisar desconectar nada fisicamente.
@@ -228,7 +234,7 @@ function desenharVisualizar() {
                         : 'Liga a câmera de novo com o último ajuste';
       b.onclick = (ev) => { ev.stopPropagation(); energia(c.id, !c.no_ar); };
       ctrl.appendChild(b);
-      jan.appendChild(ctrl);
+      card.appendChild(ctrl);
     }
     // aviso no lugar da tela preta: sem isso o operador nao sabe se a camera caiu, foi desligada
     // ou falhou. Fica sempre no DOM e o pintarEstados() atualiza o texto a cada 5 s.
@@ -236,7 +242,7 @@ function desenharVisualizar() {
     aviso.style.cssText = 'position:absolute;left:8%;right:8%;top:34%;text-align:center;padding:0 6px;' +
       'color:#ffb4b4;font-size:12px;line-height:1.3;pointer-events:none;text-shadow:0 1px 2px #000;' +
       'max-height:3.9em;overflow:hidden';
-    jan.appendChild(aviso);
+    img.appendChild(aviso);
     pintarAviso(c, jan);
     // ---- Baixar 1 minuto: baixa 60 s do vídeo COMO ELE CHEGA no lado terra (o servidor grava em
     // -c copy, sem reencodar) para conferir o TAMANHO do arquivo. O comparativo de Mbps (declarado
@@ -258,7 +264,7 @@ function desenharVisualizar() {
     bD.onclick = (ev) => { ev.stopPropagation(); abrirDestaque([c.id]); };
     ctrlT.appendChild(bD);
     jan.ondblclick = (ev) => { ev.stopPropagation(); abrirDestaque([c.id]); };
-    jan.appendChild(ctrlT);
+    card.appendChild(ctrlT);
     /* TRANSMISSAO NO PROPRIO QUADRO (dono, 24/11/2026): o cliente inicia/para a transmissao AQUI,
        ve a contagem regressiva, recebe o aviso do ultimo minuto ("quer continuar conectado?"), tem o
        botao de gravar e o "Reconectar" quando a sessao cai. Antes isso so' existia na tela
@@ -266,11 +272,13 @@ function desenharVisualizar() {
     const ctrlS = document.createElement('span');
     ctrlS.className = 'controle-transmissao';
     ctrlS.dataset.st = c.id;
-    jan.appendChild(ctrlS);
+    card.appendChild(ctrlS);
     montarControle(c, ctrlS, jan);
     const linhaT = document.createElement('div'); linhaT.className = 'trecho-linha'; linhaT.style.display = 'none';
-    jan.appendChild(linhaT);
-    jan.appendChild(marca); jan.appendChild(caixas); jan.appendChild(rot);
+    img.appendChild(linhaT);
+    card.appendChild(rot);
+    img.appendChild(marca); img.appendChild(caixas);
+    jan.appendChild(img); jan.appendChild(card);
     grade.appendChild(jan);
     window.Video.ligar(c.id, c.id, v);
     desenharCaixas(c.id);
@@ -339,10 +347,12 @@ function abrirDestaque(ids) {
     jan.className = 'janela'; jan.dataset.camDestaque = c.id;
     const v = document.createElement('video');
     v.id = 'vdestaque-' + c.id; v.muted = true; v.autoplay = true; v.playsInline = true;
-    jan.appendChild(v);
+    const img = document.createElement('div'); img.className = 'img-cam'; img.appendChild(v);
+    const card = document.createElement('div'); card.className = 'card-cam';
     const rot = document.createElement('div'); rot.className = 'rotulo-cam';
     rot.textContent = c.rotulo;
-    jan.appendChild(rot);
+    card.appendChild(rot);
+    jan.appendChild(img); jan.appendChild(card);
     grade.appendChild(jan);
     window.Video.ligar('destaque-' + c.id, c.id, v);
   }
@@ -843,6 +853,10 @@ function atualizarControle(c, el) {
     else { est.className = 'st-estado' + (c.no_ar ? ' ok' : ''); est.textContent = c.no_ar ? 'no ar agora' : 'parada'; }
     bIni.style.display = ''; bIni.disabled = false;
     bIni.textContent = jaViu ? 'Reconectar' : 'Iniciar transmissão';
+    /* a janela de fora-da-tela vem do servidor: se voce sair da tela e voltar dentro dela, a sessao
+       continua de pe — sem precisar reconectar. */
+    const jan = (S.transmissao && S.transmissao.janela_sem_tela) || 60;
+    bIni.title = 'A transmissão segue no ar por ' + jan + ' s se você sair desta tela e voltar';
     bIni.onclick = (ev) => { ev.stopPropagation(); pedirTransmissao(c.id, bIni); };
     return;
   }
@@ -1037,8 +1051,14 @@ async function pararTransmissao(tid, botao) {
 }
 
 /* O "estou aqui": enquanto esta' tela estiver aberta a sessao vive. E' o que faz fechar a tela (ou
-   desligar o computador) interromper a transmissao sem ninguem precisar clicar em nada. */
+   desligar o computador) interromper a transmissao sem ninguem precisar clicar em nada.
+
+   SAIDA DA TELA (dono, 24/11/2026): o batimento vale SO' na tela das cameras e com a aba visivel. Antes
+   ele corria em qualquer tela, entao a sessao nunca expirava. Agora, saindo da tela, o lado terra deixa
+   de receber o "estou aqui" e encerra a sessao depois da janela (SEGUNDOS_SEM_BATIMENTO = 60 s) — o
+   cliente pode sair, ver outras coisas e VOLTAR dentro de 60 s sem precisar reconectar. */
 async function baterPonto() {
+  if (S.tela !== 'visualizar' || document.visibilityState !== 'visible') return;
   const minhas = S.minhas || [];
   for (const id of minhas) {
     try { await api('/api/transmissao/' + id + '/batimento', { method: 'POST', body: '{}' }); } catch (e) { /* volta na proxima */ }
@@ -1210,7 +1230,12 @@ function trocarTela(tela) {
   S.tela = tela; S.pagina = 1;
   document.querySelectorAll('.item[data-tela]').forEach((b) => b.classList.toggle('on', b.dataset.tela === tela));
   if (tela === 'transmissao' || tela === 'configuracao' || tela === 'gravacoes') { carregarTransmissao().then(desenharTela); }
-  if (tela === 'visualizar') { desenharVisualizar(); }
+  if (tela === 'visualizar') {
+    desenharVisualizar();
+    /* voltou para a tela do video: bate o "estou aqui" NA HORA (nao espera o tick de 10 s) — assim o
+       retorno dentro da janela de 60 s nunca perde a sessao por atraso. */
+    baterPonto();
+  }
   else if (S.eventos.length === 0) dadosExtras().then(desenharTela);
   else desenharTela();
   desenharTela();

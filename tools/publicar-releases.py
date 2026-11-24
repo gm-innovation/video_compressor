@@ -24,7 +24,7 @@ PAPEIS = ("Captura", "Terra", "Admin", "Cliente")
 # Ordem de publicacao: o PRIMEIRO e' o `latest` do GitHub. Nova versao entra na frente.
 # A 0.8.0 nunca chegou a virar release: o que ela trazia (config do bordo vinda de terra e saude do
 # bordo no admin) entrou inteiro na 0.9.0, que e' quem publica. A nota dela fica em NOTAS abaixo.
-VERSOES_PUBLICADAS = ("0.13.0", "0.12.0", "0.11.1", "0.11.0", "0.10.1", "0.10.0", "0.9.1", "0.9.0", "0.7.0", "0.6.10", "0.6.9", "0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
+VERSOES_PUBLICADAS = ("0.13.1", "0.13.0", "0.12.0", "0.11.1", "0.11.0", "0.10.1", "0.10.0", "0.9.1", "0.9.0", "0.7.0", "0.6.10", "0.6.9", "0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
 
 
 def instaladores(versao: str) -> list:
@@ -44,6 +44,17 @@ def instaladores(versao: str) -> list:
     return [DIST / papel.lower() / f"LECSOR-{papel}-{versao}-x64.exe" for papel in PAPEIS]
 
 NOTAS = {
+    "0.13.1": (
+        "**A transmissao so' vive enquanto a tela do video esta' aberta: sair e voltar em ate' 60 s nao derruba a sessao — e a grade ficou com a imagem limpa.**\n\n"
+        "\n\n"
+        "Teste do dono (24/11/2026): \"eu saio da pagina de transmissao ao vivo, retorno a ela e a transmissao continua ativa, tem algum espaco de tempo para encerrar a transmissao? seria bom determinarmos, talvez, 60s apos sairmos da pagina, encerrar a transmissao, assim, se o cliente precisar ver outras coisas enquanto acompanha o video do radar, ele nao tem que ficar reconectando\".\n\n"
+        "\n\n"
+        "**1. A janela de 60 s ao sair da tela.** O \"estou aqui\" (batimento) passou a valer SO' na tela das cameras: sair para outra tela e VOLTAR dentro de 60 s mantem a sessao de pe (nada de reconectar, o botao segue em \"Parar transmissao\"); passando de 60 s fora, o lado terra encerra a sessao sozinho e o bordo para. Medido na tela: 13 s fora NAO adiantam o batimento; a volta bate o batimento na hora; e o vigia do lado terra encerra a sessao sem ninguem clicar (motivo no historico: \"voce saiu da tela ao vivo por mais de 60 s\").\n\n"
+        "\n\n"
+        "**2. A grade: card ABAIXO da imagem e imagem ocupando o espaco.** O nome/estado da camera e os botoes (energia, baixar 1 minuto, destaque, iniciar/gravar/parar) sairam de cima da imagem e foram para um CARTAO logo abaixo dela; sobre o video ficaram so' a marca d'agua e as caixas da IA. A imagem passou a entrar com `object-fit: cover`, ocupando toda a area e acabando com as faixas pretas laterais.\n\n"
+        "\n\n"
+        "**3. Limpeza das cameras de teste.** Saem 23 cameras de campanha das duas embarcacoes de teste (\"Bancada de testes\" e \"PSV Exemplo (demo)\") e o cliente \"Armador E2E (criado pela tela)\". A TRILHA DE AUDITORIA fica (transmissoes e ordens do bordo nao sao tocadas). Continuam na bancada os 2 dispositivos reais do PC de captura, que estavam no ar — a varredura do bordo os recadastra sozinha, por desenho.\n"
+    ),
     "0.13.0": (
         "**A transmissao ao vivo passa a ser do CLIENTE: contagem, aviso, reconectar e gravar — e a "
         "saude do bordo na area unica.**\n\n"

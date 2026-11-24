@@ -20,7 +20,10 @@ RAIZ = pathlib.Path(__file__).resolve().parent.parent
 # `ambiente.json` que esta' no repositorio, e passaria a falar com a producao em vez de responder em casa.
 os.environ["LECSOR_SEM_AMBIENTE"] = "1"
 PROVAS = (
-    # AS NOVAS DESTA RODADA
+    # RODADA 0.13.1 (ja' entra na suite)
+    # a janela de 60 s ao sair da tela ao vivo (o batimento so' vale na GRADE) + o card ABAIXO da imagem
+    "tests/e2e-janela-ao-sair-da-tela.py",
+    # AS NOVAS DA 0.13.0
     # D3 do dono: a flag de transmissao se sustenta so' na sessao de quem assiste (nao ha "ligar" do admin)
     "tests/e2e-flag-de-audiencia.py",
     # saude e desempenho na area unica, e a chave da licenca NUNCA sai inteira (P0 de seguranca)
