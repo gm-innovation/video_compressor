@@ -382,5 +382,65 @@ def retrato() -> dict:
     return r
 
 
+# ------------------------------------------------------------------ HISTORICO DA SAUDE (dono, 24/11/2026)
+# "preciso de um dashboard real no pc de captura ... so tem um monte de cards". Um painel de verdade
+# mostra a EVOLUCAO da medida, nao so' o numero de agora: esta maquina guarda uma linha por rodada da
+# saude (60 s) num anel de 2 dias e a pagina `/bordo` desenha as curvas. Nada de segredo: CPU, memoria,
+# disco e rede — os mesmos numeros que ja' sobem para o lado terra.
+MAX_PONTOS_DO_HISTORICO = 2880          # 2 dias a 60 s
+
+
+def caminho_do_historico() -> pathlib.Path:
+    """Onde fica o anel da saude (`LECSOR_SAUDE_HISTORICO` troca o caminho — usado nos testes)."""
+    trocado = (os.environ.get("LECSOR_SAUDE_HISTORICO") or "").strip()
+    return pathlib.Path(trocado) if trocado else (RAIZ / "saude" / "historico-da-saude.jsonl")
+
+
+def ponto_do_retrato(r: dict) -> dict:
+    """O retrato inteiro reduzido a UMA linha — e' o ponto que o grafico do painel desenha."""
+    discos = [d for d in (r.get("discos") or []) if isinstance(d, dict)]
+    hd = next((d for d in discos if d.get("nome") == "hd do radar"), None) or (discos[0] if discos else {})
+    total = ((r.get("rede") or {}).get("total") or {})
+    return {"t": r.get("gerado_em") or dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "cpu": r.get("cpu_pct"), "mem": r.get("memoria_pct"),
+            "disco": hd.get("usado_pct"), "disco_livre_gb": hd.get("livre_gb"),
+            "disco_nome": hd.get("nome") or "",
+            "rede_mbps": total.get("taxa_mbps"), "rede_env_mb": total.get("enviado_mb"),
+            "rede_rec_mb": total.get("recebido_mb"), "up_s": r.get("uptime_s")}
+
+
+def registrar_historico(r: dict, limite: int = MAX_PONTOS_DO_HISTORICO) -> dict:
+    """Grava o ponto desta rodada no anel. Falhar aqui NUNCA derruba a captura (quem chama ignora)."""
+    try:
+        alvo = caminho_do_historico()
+        alvo.parent.mkdir(parents=True, exist_ok=True)
+        linhas = []
+        if alvo.exists():
+            linhas = [x for x in alvo.read_text(encoding="utf-8").splitlines() if x.strip()]
+        linhas.append(json.dumps(ponto_do_retrato(r), ensure_ascii=False))
+        linhas = linhas[-max(1, int(limite)):]
+        alvo.write_text("\n".join(linhas) + "\n", encoding="utf-8")
+        return {"ok": True, "pontos": len(linhas)}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "motivo": f"{type(e).__name__}: {e}"}
+
+
+def historico(limite: int = 720) -> list:
+    """A serie recente (padrao 720 pontos = 12 h a 60 s), do mais ANTIGO para o mais NOVO."""
+    try:
+        linhas = caminho_do_historico().read_text(encoding="utf-8").splitlines()
+    except Exception:  # noqa: BLE001  (sem historico ainda: a pagina sabe dizer "sem serie")
+        return []
+    pontos = []
+    for linha in linhas[-max(1, int(limite)):]:
+        try:
+            d = json.loads(linha)
+            if isinstance(d, dict) and d.get("t"):
+                pontos.append(d)
+        except Exception:  # noqa: BLE001  (linha torta nao derruba a serie inteira)
+            continue
+    return pontos
+
+
 if __name__ == "__main__":
     print(json.dumps(retrato(), ensure_ascii=False, indent=2))

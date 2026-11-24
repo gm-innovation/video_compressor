@@ -74,6 +74,35 @@
   .tabela th, .tabela td { text-align: left; padding: 5px 8px 5px 0; border-bottom: 1px solid #1b2740; }
   .tabela th { color: #9fb0d0; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; }
   .tabela td.n, .tabela th.n { text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* ------------------------------------------------ AS CURVAS (dono, 24/11/2026)
+     "preciso de um dashboard real no pc de captura, só tem um monte de cards, mas eu quero um dashboard
+     de verdade!" — números sozinhos não mostram EVOLUÇÃO. Cada rodada de saúde (60 s) já vira uma linha
+     no anel local desta máquina; aqui ela vira GRÁFICO (CPU, memória, disco e rede no tempo). */
+  .curvas { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px;
+            margin-bottom: 14px; }
+  .curva { background: #0f1a2e; border: 1px solid #22304d; border-radius: 12px; padding: 10px 12px 8px; }
+  .curva-topo { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .curva-topo .rot { font-size: 11.5px; text-transform: uppercase; letter-spacing: .8px; color: #9fb0d0; }
+  .curva-topo .agora { font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .curva-topo .agora small { font-size: 12px; font-weight: 600; color: #9fb0d0; margin-left: 3px; }
+  .grafico { width: 100%; height: 96px; display: block; margin-top: 4px; }
+  .grafico .linha { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round;
+                    vector-effect: non-scaling-stroke; }
+  .grafico .area { stroke: none; opacity: .16; }
+  .grafico .vazio { fill: #7d8cab; font-size: 12px; }
+  .curva-pe { display: flex; justify-content: space-between; color: #7d8cab; font-size: 11.5px; margin-top: 4px; }
+  .curva-nota { color: #9fb0d0; font-size: 12.5px; margin: -4px 0 14px; }
+
+  /* MODO TV: no PC de captura o monitor fica ligado o dia todo — este modo deixa SÓ o dashboard, grande,
+     para ser lido de longe do quadro. O resto da página continua a um clique. */
+  body.tv .carta { width: 100%; max-width: none; }
+  body.tv h1 { font-size: 26px; }
+  body.tv p.sub, body.tv .grade, body.tv .aviso, body.tv .curva-nota { display: none; }
+  body.tv .tf .num { font-size: 64px; }
+  body.tv .curva-topo .agora { font-size: 30px; }
+  body.tv .grafico { height: 150px; }
+  body.tv .pe { margin-top: 10px; }
 </style>
 </head>
 <body>
@@ -87,6 +116,37 @@
 
   <!-- DASHBOARD (dono, 24/11/2026): a primeira dobra é o que se lê de longe. -->
   <div class="painel" id="painel"></div>
+
+  <!-- AS CURVAS (dono, 24/11/2026): "quero um dashboard de verdade!" — a EVOLUÇÃO no tempo. Cada rodada
+       de saúde (60 s) é um ponto da série que ESTA máquina grava; aqui ela vira gráfico. Sem série ainda,
+       a tela diz "sem série" — nunca inventa curva. -->
+  <div class="curvas" id="curvas">
+    <div class="curva">
+      <div class="curva-topo"><span class="rot">CPU</span><span class="agora" id="agora-cpu">—</span></div>
+      <svg class="grafico" id="g-cpu" viewBox="0 0 600 120" preserveAspectRatio="none" role="img"
+           aria-label="CPU no tempo"></svg>
+      <div class="curva-pe"><span id="pe-cpu">—</span><span id="j-cpu"></span></div>
+    </div>
+    <div class="curva">
+      <div class="curva-topo"><span class="rot">Memória</span><span class="agora" id="agora-mem">—</span></div>
+      <svg class="grafico" id="g-mem" viewBox="0 0 600 120" preserveAspectRatio="none" role="img"
+           aria-label="Memória no tempo"></svg>
+      <div class="curva-pe"><span id="pe-mem">—</span><span id="j-mem"></span></div>
+    </div>
+    <div class="curva">
+      <div class="curva-topo"><span class="rot">Disco</span><span class="agora" id="agora-disco">—</span></div>
+      <svg class="grafico" id="g-disco" viewBox="0 0 600 120" preserveAspectRatio="none" role="img"
+           aria-label="Disco no tempo"></svg>
+      <div class="curva-pe"><span id="pe-disco">—</span><span id="j-disco"></span></div>
+    </div>
+    <div class="curva">
+      <div class="curva-topo"><span class="rot">Rede (subindo)</span><span class="agora" id="agora-rede">—</span></div>
+      <svg class="grafico" id="g-rede" viewBox="0 0 600 120" preserveAspectRatio="none" role="img"
+           aria-label="Rede no tempo"></svg>
+      <div class="curva-pe"><span id="pe-rede">—</span><span id="j-rede"></span></div>
+    </div>
+  </div>
+  <div class="curva-nota" id="curva-nota">—</div>
 
   <div class="grade">
     <div class="bloco">
@@ -133,7 +193,7 @@
 
   <div class="pe">
     <span id="atualizado">—</span>
-    <span><button id="agora">Atualizar agora</button></span>
+    <span><button id="tv">Modo TV</button> <button id="agora">Atualizar agora</button></span>
   </div>
 </div>
 
@@ -539,9 +599,111 @@ function textoMedida(s, chave, sufixo) {
   return (v === undefined || v === null || v === '') ? '—' : (v + sufixo);
 }
 
-$('agora').addEventListener('click', carregar);
+/* --------------------------------------------------------- AS CURVAS (dono, 24/11/2026)
+   O painel de verdade: a EVOLUÇÃO. Esta máquina grava um ponto de saúde a cada 60 s (anel local de 2
+   dias — `saude/historico-da-saude.jsonl`, servido por `GET /api/bordo/serie`); aqui ele vira gráfico.
+   Escala FIXA de 0 a 100 % para CPU/memória/disco (o formato da curva é o que importa) e 0..máximo para
+   a rede. Sem série, a tela escreve "sem série" — ela nunca inventa curva. */
+const CURVAS = [
+  { chave: 'cpu', rotulo: 'cpu', unidade: '%', teto: 100, cor: '#6ba6ff' },
+  { chave: 'mem', rotulo: 'mem', unidade: '%', teto: 100, cor: '#8b7cf6' },
+  { chave: 'disco', rotulo: 'disco', unidade: '%', teto: 100, cor: '#e0b45c' },
+  { chave: 'rede_mbps', rotulo: 'rede', unidade: ' Mbps', teto: null, cor: '#4bc48b' },
+];
+const NS_SVG = 'http://www.w3.org/2000/svg';
+
+function vazio(svg, texto) {
+  svg.innerHTML = '';
+  const t = document.createElementNS(NS_SVG, 'text');
+  t.setAttribute('x', '10'); t.setAttribute('y', '64'); t.setAttribute('class', 'vazio');
+  t.textContent = texto;
+  svg.appendChild(t);
+}
+
+function desenharCurva(cfg, pontos) {
+  const svg = $('g-' + cfg.rotulo);
+  if (!svg) return;
+  const L = 600, A = 120, M = 8;
+  const agora = $('agora-' + cfg.rotulo), pe = $('pe-' + cfg.rotulo), jan = $('j-' + cfg.rotulo);
+  const vals = pontos.map((p) => Number(p[cfg.chave])).filter((v) => isFinite(v));
+  if (agora) {
+    agora.innerHTML = '';
+    agora.textContent = vals.length ? vals[vals.length - 1].toFixed(1) : '—';
+    if (vals.length && cfg.unidade) {
+      const s = document.createElement('small'); s.textContent = cfg.unidade; agora.appendChild(s);
+    }
+  }
+  if (vals.length < 2) {
+    if (pe) pe.textContent = 'sem série ainda';
+    if (jan) jan.textContent = '';
+    vazio(svg, 'sem série ainda — a curva aparece com a máquina rodando');
+    return;
+  }
+  const teto = cfg.teto || (Math.max.apply(null, vals) * 1.15 || 1);
+  const x = (i) => M + (i / (pontos.length - 1)) * (L - 2 * M);
+  const y = (v) => A - M - (Math.max(0, Math.min(teto, v)) / teto) * (A - 2 * M);
+  const pts = [];
+  for (let i = 0; i < pontos.length; i++) {
+    const v = Number(pontos[i][cfg.chave]);
+    if (isFinite(v)) pts.push([x(i), y(v)]);
+  }
+  svg.innerHTML = '';
+  if (pts.length < 2) { vazio(svg, 'sem série ainda'); return; }
+  const d = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
+  const base = (A - M).toFixed(1);
+  const area = document.createElementNS(NS_SVG, 'path');
+  area.setAttribute('d', d + ' L' + pts[pts.length - 1][0].toFixed(1) + ' ' + base +
+                          ' L' + pts[0][0].toFixed(1) + ' ' + base + ' Z');
+  area.setAttribute('class', 'area'); area.setAttribute('fill', cfg.cor);
+  const linha = document.createElementNS(NS_SVG, 'path');
+  linha.setAttribute('d', d); linha.setAttribute('class', 'linha'); linha.setAttribute('stroke', cfg.cor);
+  svg.append(area, linha);
+  if (pe) {
+    pe.textContent = 'mín ' + Math.min.apply(null, vals).toFixed(1) + cfg.unidade +
+                     ' · máx ' + Math.max.apply(null, vals).toFixed(1) + cfg.unidade;
+  }
+  if (jan) jan.textContent = vals.length + ' pontos (' + pontos.length + ')';
+}
+
+async function carregarCurvas() {
+  let d = {};
+  try {
+    const r = await fetch('/api/bordo/serie?pontos=720', { cache: 'no-store' });
+    d = await r.json();
+  } catch (e) {
+    return;  // o painel de números já avisa que o servidor local caiu; a curva só fica como estava
+  }
+  const pontos = (d && d.pontos) || [];
+  for (const cfg of CURVAS) desenharCurva(cfg, pontos);
+  const nota = $('curva-nota');
+  if (nota) {
+    nota.textContent = pontos.length
+      ? ('Evolução da saúde desta máquina — um ponto a cada 60 s, ' + pontos.length + ' ponto(s) na ' +
+         'série' + (d.origem ? '  ·  ' + d.origem : '') + '. O anel guarda 2 dias.')
+      : ('Sem série ainda: esta máquina grava um ponto a cada 60 s e a curva aparece na primeira hora ' +
+         'de operação. Nada aqui é inventado.');
+  }
+}
+
+/* MODO TV (dono, 24/11/2026): o monitor do PC de captura fica ligado o dia todo. Este modo deixa só o
+   dashboard, grande, para ser lido de longe — e volta ao normal num clique. */
+const botaoTV = $('tv');
+if (botaoTV) {
+  botaoTV.addEventListener('click', async () => {
+    const ligado = document.body.classList.toggle('tv');
+    botaoTV.textContent = ligado ? 'Sair do modo TV' : 'Modo TV';
+    try {
+      if (ligado && !document.fullscreenElement) { await document.documentElement.requestFullscreen(); }
+      else if (!ligado && document.fullscreenElement) { await document.exitFullscreen(); }
+    } catch (e) { /* sem tela cheia o modo TV continua valendo */ }
+  });
+}
+
+$('agora').addEventListener('click', () => { carregar(); carregarCurvas(); });
 carregar();
+carregarCurvas();
 setInterval(carregar, 10000);
+setInterval(carregarCurvas, 30000);
 </script>
 </body>
 </html>

@@ -46,6 +46,16 @@ CAM = "cam-01"
 ESPERA = 25000
 
 
+def rotulo(pag, sel: str) -> str:
+    """O NOME ACESSIVEL do botao (o cliente le no `title`/`aria-label`; o `innerText` so' tem o glifo)."""
+    return pag.evaluate("""(s) => { const e = document.querySelector(s);
+        return e ? ((e.getAttribute('title') || '') + ' ' + (e.getAttribute('aria-label') || '')
+                    + ' ' + e.innerText) : ''; }""", sel)
+
+
+_SEL_GRAVAR = '.controle-transmissao [data-papel="gravar"]'
+
+
 def checar(nome: str, cond: bool, detalhe: str = "") -> None:
     print(("  OK   " if cond else "  FALHA") + f" {nome}" + (f" — {detalhe}" if detalhe else ""))
     if not cond:
@@ -178,17 +188,17 @@ def main() -> int:
             pag.wait_for_selector('.controle-transmissao [data-papel="gravar"]:visible', timeout=ESPERA)
 
             print("\n== 1. o botao de GRAVAR aparece na GRADE, com a sessao ==")
+            # Os botoes da grade sao ICONES com o nome em `title`/`aria-label`: mede-se o NOME ACESSIVEL.
             checar("o botao 'Gravar (no lado terra)' esta' visivel",
-                   "gravar" in pag.inner_text('.controle-transmissao [data-papel="gravar"]').lower(),
-                   pag.inner_text('.controle-transmissao [data-papel="gravar"]'))
+                   "gravar" in rotulo(pag, _SEL_GRAVAR).lower(), rotulo(pag, _SEL_GRAVAR))
 
             print("\n== 2. clicar LIGA a gravacao (o arquivo nasce com bytes) ==")
             pag.locator('.controle-transmissao [data-papel="gravar"]').dispatch_event("click")
-            pag.wait_for_function("() => document.querySelector('.controle-transmissao [data-papel=\"gravar\"]')"
-                                  ".innerText.toLowerCase().includes('parar')", timeout=ESPERA + 25000)
+            pag.wait_for_function("() => { const b = document.querySelector('.controle-transmissao [data-papel=\"gravar\"]');"
+                                  " return !!(b && ((b.getAttribute('title') || '') + ' ' + (b.getAttribute('aria-label') || '')"
+                                  " + ' ' + b.innerText).toLowerCase().includes('parar')); }", timeout=ESPERA + 25000)
             checar("o botao virou 'Parar gravacao'",
-                   "parar" in pag.inner_text('.controle-transmissao [data-papel="gravar"]').lower(),
-                   pag.inner_text('.controle-transmissao [data-papel="gravar"]'))
+                   "parar" in rotulo(pag, _SEL_GRAVAR).lower(), rotulo(pag, _SEL_GRAVAR))
             time.sleep(2.5)
             arquivos = list(grav.glob("*.mp4"))
             checar("nasceu arquivo de gravacao no disco", bool(arquivos), f"{[a.name for a in arquivos]}")
@@ -202,8 +212,9 @@ def main() -> int:
 
             print("\n== 4. clicar de novo PARA e o mp4 fica no disco (so' o que chegou) ==")
             pag.locator('.controle-transmissao [data-papel="gravar"]').dispatch_event("click")
-            pag.wait_for_function("() => document.querySelector('.controle-transmissao [data-papel=\"gravar\"]')"
-                                  ".innerText.toLowerCase().includes('gravar (no lado')", timeout=ESPERA + 25000)
+            pag.wait_for_function("() => { const b = document.querySelector('.controle-transmissao [data-papel=\"gravar\"]');"
+                                  " return !!(b && ((b.getAttribute('title') || '') + ' ' + (b.getAttribute('aria-label') || '')"
+                                  " + ' ' + b.innerText).toLowerCase().includes('gravar (no lado')); }", timeout=ESPERA + 25000)
             time.sleep(2.0)
             finais = [a for a in grav.glob("*.mp4") if ".parcial." not in a.name]
             checar("o mp4 final ficou no disco, com tamanho > 0",

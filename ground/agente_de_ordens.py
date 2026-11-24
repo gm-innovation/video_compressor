@@ -660,6 +660,17 @@ def enviar_saude(base: str, token: str, emb: str) -> dict:
     global ULTIMA_SAUDE
     ULTIMA_SAUDE = time.time()
     retrato = retrato_de_saude()
+    # O DASHBOARD DO PROPRIO PC DE CAPTURA (dono, 24/11/2026): a mesma rodada que sobe para o lado terra
+    # alimenta o anel local que a pagina `/bordo` desenha como curva. Guardar o ponto NUNCA atrapalha o
+    # envio (o erro fica só no log).
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import saude_do_bordo
+        guardado = saude_do_bordo.registrar_historico(retrato)
+        if not guardado.get("ok"):
+            _log(f"aviso: nao guardei o ponto do historico da saude ({guardado.get('motivo')})")
+    except Exception as e:  # noqa: BLE001
+        _log(f"aviso: historico da saude indisponivel ({type(e).__name__}: {e})")
     try:
         s, r = _http("POST", f"{base}/api/saude-do-bordo", {"embarcacao_id": emb, "retrato": retrato},
                      token=token, timeout=60)

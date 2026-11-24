@@ -48,6 +48,18 @@ CAM = "cam-01"
 ESPERA = 20000
 
 
+def rotulo(pag, sel: str) -> str:
+    """O NOME ACESSIVEL do botao (o que o cliente le no `title`/`aria-label`).
+
+    Desde 24/11/2026 os botoes da grade sao ICONES com o nome completo em `title`/`aria-label` — o
+    `innerText` so' traz o glifo. A prova mede o nome acessivel, que e' o que o leitor de tela e o
+    proprio cliente usam.
+    """
+    return pag.evaluate("""(s) => { const e = document.querySelector(s);
+        return e ? ((e.getAttribute('title') || '') + ' ' + (e.getAttribute('aria-label') || '')
+                    + ' ' + e.innerText) : ''; }""", sel)
+
+
 def checar(nome: str, cond: bool, detalhe: str = "") -> None:
     print(("  OK   " if cond else "  FALHA") + f" {nome}" + (f" — {detalhe}" if detalhe else ""))
     if not cond:
@@ -195,13 +207,15 @@ def main() -> int:
 
             print("\n== 5. silencio DESLIGA (D2): sem resposta, a sessao expira e vira 'Reconectar' ==")
             ajustar_termina(banco, 3)
-            pag.wait_for_function("() => document.querySelector('.controle-transmissao [data-papel=\"iniciar\"]')"
-                                  ".innerText.toLowerCase().includes('reconectar')", timeout=ESPERA + 10000)
+            # O botao e' um ICONE (⟳) com o nome em `title`/`aria-label` -> mede-se o NOME ACESSIVEL.
+            pag.wait_for_function("() => { const b = document.querySelector('.controle-transmissao [data-papel=\"iniciar\"]');"
+                                  " return !!(b && ((b.getAttribute('title') || '') + ' ' + (b.getAttribute('aria-label') || '')"
+                                  " + ' ' + b.innerText).toLowerCase().includes('reconectar')); }", timeout=ESPERA + 10000)
             checar("a sessao expirou sozinha (nenhuma aberta)", sessoes_abertas(banco) == 0,
                    f"{sessoes_abertas(banco)} abertas")
             checar("e o botao virou 'Reconectar'",
-                   "reconectar" in pag.inner_text('.controle-transmissao [data-papel="iniciar"]').lower(),
-                   pag.inner_text('.controle-transmissao [data-papel="iniciar"]'))
+                   "reconectar" in rotulo(pag, '.controle-transmissao [data-papel="iniciar"]').lower(),
+                   rotulo(pag, '.controle-transmissao [data-papel="iniciar"]'))
 
             print("\n== 6. 'Reconectar' poe a camera no ar de novo ==")
             pag.locator('.controle-transmissao [data-papel="iniciar"]').click()

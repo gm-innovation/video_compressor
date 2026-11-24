@@ -48,6 +48,13 @@ CAM = "cam-01"
 ESPERA = 20000
 
 
+def rotulo(pag, sel: str) -> str:
+    """O NOME ACESSIVEL do botao (o cliente le no `title`/`aria-label`; o `innerText` so' tem o glifo)."""
+    return pag.evaluate("""(s) => { const e = document.querySelector(s);
+        return e ? ((e.getAttribute('title') || '') + ' ' + (e.getAttribute('aria-label') || '')
+                    + ' ' + e.innerText) : ''; }""", sel)
+
+
 def checar(nome: str, cond: bool, detalhe: str = "") -> None:
     print(("  OK   " if cond else "  FALHA") + f" {nome}" + (f" — {detalhe}" if detalhe else ""))
     if not cond:
@@ -114,8 +121,11 @@ def envelhecer_batimento(banco: pathlib.Path, segundos: int) -> None:
 # precisa de aspas no CSS, e assim a string do Python nao carrega aspas escapadas.
 JS_PARAR_VISIVEL = ("() => { const b = document.querySelector('.controle-transmissao [data-papel=parar]');"
                     " return b && getComputedStyle(b).display !== 'none'; }")
+# Desde 24/11/2026 o botao e' um ICONE (⟳) com o nome em `title`/`aria-label`: a prova olha o NOME
+# ACESSIVEL (o `innerText` so' traz o glifo).
 JS_INICIAR_RECONECTAR = ("() => { const b = document.querySelector('.controle-transmissao [data-papel=iniciar]');"
-                         " return !!b && b.innerText.toLowerCase().includes('reconectar'); }")
+                         " return !!(b && ((b.getAttribute('title') || '') + ' ' + (b.getAttribute('aria-label') || '')"
+                         " + ' ' + b.innerText).toLowerCase().includes('reconectar')); }")
 
 
 def main() -> int:
@@ -205,8 +215,8 @@ def main() -> int:
                    f"antes={t0} agora={batimento_em(banco)}")
             checar("a sessao seguiu aberta", sessoes_abertas(banco) == 1)
             checar("o botao NAO virou 'Reconectar'",
-                   "parar transmiss" in pag.inner_text('.controle-transmissao [data-papel="parar"]').lower(),
-                   pag.inner_text('.controle-transmissao [data-papel="parar"]'))
+                   "parar transmiss" in rotulo(pag, '.controle-transmissao [data-papel="parar"]').lower(),
+                   rotulo(pag, '.controle-transmissao [data-papel="parar"]'))
 
             print("\n== 4. fora da tela por mais que a janela: o lado terra encerra sozinho ==")
             pag.click('.item[data-tela="relatorios"]')
@@ -224,8 +234,8 @@ def main() -> int:
             except Exception:  # noqa: BLE001
                 pass
             checar("e ao voltar o botao esta 'Reconectar'",
-                   "reconectar" in pag.inner_text('.controle-transmissao [data-papel="iniciar"]').lower(),
-                   pag.inner_text('.controle-transmissao [data-papel="iniciar"]'))
+                   "reconectar" in rotulo(pag, '.controle-transmissao [data-papel="iniciar"]').lower(),
+                   rotulo(pag, '.controle-transmissao [data-papel="iniciar"]'))
 
             print("\n== 5. o motivo do encerramento explica a saida da tela ==")
             con = sqlite3.connect(str(banco))

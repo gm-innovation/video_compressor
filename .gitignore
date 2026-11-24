@@ -65,3 +65,8 @@ desktop/ambiente.json
 # evidencia gerada pelo smoke de ponta a ponta (dado de rodada, nao de repositorio).
 # So a pasta da RAIZ: `tools/smoke/` e' codigo e PRECISA entrar no git.
 /smoke/
+
+# anel local da saude do PC de captura (dado da MAQUINA, nao do codigo) — a serie que o dashboard desenha
+/saude/
+# provas visuais geradas na bancada
+.hermes/*.png

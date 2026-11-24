@@ -20,6 +20,11 @@ RAIZ = pathlib.Path(__file__).resolve().parent.parent
 # `ambiente.json` que esta' no repositorio, e passaria a falar com a producao em vez de responder em casa.
 os.environ["LECSOR_SEM_AMBIENTE"] = "1"
 PROVAS = (
+    # RODADA 0.15.0 — o card do controle vira UMA linha de 34 px e a imagem para de encolher (inclusive ao
+    # reconectar), a grade passa a aproveitar o espaco e a remedir sozinha (ResizeObserver), o BORDO MUDO
+    # (> 180 s sem sinal) encerra a sessao no lado terra, e o /bordo ganha o DASHBOARD DE VERDADE (as 4
+    # curvas: cpu, memoria, disco e rede)
+    "tests/e2e-dashboard-de-verdade-e-card-compacto.py",
     # RODADA 0.14.0 — a imagem nao muda de tamanho no redesenho, "Parar transmissao" volta clicavel, os
     # dois dashboards (bordo e admin) e a telemetria do PC de captura (cpu/memoria/disco/rede, individual
     # e global)

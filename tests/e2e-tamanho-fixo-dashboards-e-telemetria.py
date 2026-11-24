@@ -56,6 +56,13 @@ ESPERA = 20000
 FFMPEG = RAIZ / "tools" / "ffmpeg" / "ffmpeg.exe"
 
 
+def rotulo(pag, sel: str) -> str:
+    """O NOME ACESSIVEL do botao (o cliente le no `title`/`aria-label`; o `innerText` so' tem o glifo)."""
+    return pag.evaluate("""(s) => { const e = document.querySelector(s);
+        return e ? ((e.getAttribute('title') || '') + ' ' + (e.getAttribute('aria-label') || '')
+                    + ' ' + e.innerText) : ''; }""", sel)
+
+
 def checar(nome: str, cond: bool, detalhe: str = "") -> None:
     print(("  OK   " if cond else "  FALHA") + f" {nome}" + (f" — {detalhe}" if detalhe else ""))
     if not cond:
@@ -293,8 +300,9 @@ def main() -> int:
             checar("depois de parar e reiniciar o botao NAO fica desativado",
                    not depois2.get("semBotao") and not depois2.get("desativado"),
                    json.dumps(depois2, ensure_ascii=False))
-            checar("e o texto volta a ser 'Parar transmissao'",
-                   (depois2.get("texto") or "").startswith("Parar transmiss"), str(depois2.get("texto")))
+            # O botao e' um ICONE (⏹) com o nome em `title`/`aria-label` -> mede-se o NOME ACESSIVEL.
+            checar("e o nome volta a ser 'Parar transmissao'",
+                   rotulo(pag, sel_parar).lower().startswith("parar transmiss"), rotulo(pag, sel_parar))
             pag.close()
 
             # ---------------- 3: o dashboard do app de captura ----------------

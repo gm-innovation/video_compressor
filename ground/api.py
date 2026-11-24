@@ -72,7 +72,11 @@ ROTAS_CAPTURA_LOCAIS = ("/api/entrar", "/api/eu", "/api/sair", "/api/cameras",
                         # autônomo". A tela de ENTRADA desta máquina é este painel — servido pelo próprio
                         # bordo, sem login — e é ele que diz se a licença, o token, o agente, a varredura
                         # e a publicação estão de pé.
-                        "/bordo", "/api/bordo")
+                        "/bordo", "/api/bordo",
+                        # A SERIE da saude (dono, 24/11/2026): o historico e' LOCAL desta maquina (e' o
+                        # proprio bordo que mede). Sem esta entrada o pedido do grafico era encaminhado
+                        # ao lado terra, que nao tem o anel deste PC de captura.
+                        "/api/bordo/serie")
 ORIGENS_CAPTURA_PADRAO = ("http://187.127.60.250:8085", "http://127.0.0.1:8085",
                           "http://127.0.0.1:8765", "http://localhost:8765")
 
@@ -382,6 +386,13 @@ TEMPO_MAXIMO_PADRAO = 900
 # e a sessao nunca expirava. Cobre tambem tela fechada / computador desligado.
 SEGUNDOS_SEM_BATIMENTO = 60
 SEGUNDOS_SEM_RESPOSTA = 30         # a maquina de captura nao respondeu a ordem (nunca foi entregue)
+# BORDO MUDO (Fase 6, P0 — dono, 24/11/2026: "acabei de desinstalar o app de captura ... e a transmissao
+# continua, como continua transmitindo se eu desinstalei o app?"). O batimento de 60 s acima e' do
+# CLIENTE: enquanto o navegador dele estiver aberto a sessao fica de pe, mesmo que a maquina de captura a
+# bordo tenha morrido — e a tela mente ("no ar") com a imagem parada. O bordo da' sinal de vida pela
+# SAUDE (a cada 60 s) e pelo ESTADO REAL das cameras; silencio maior que isto ENCERRA as sessoes abertas
+# daquela embarcacao, com o motivo real. Instalacao sem nenhum sinal conhecido nao conta como silencio.
+SEGUNDOS_SEM_BORDO = 180
 # AVISO DE 1 MINUTO ANTES DE CORTAR (dono, 24/11/2026, D1/D2): a tela pergunta "quer continuar
 # conectado?" no ultimo minuto da sessao; sem o clique em "continuar" a sessao expira no prazo
 # normal (o padrao e' desligar; seguir exige a acao do cliente).
@@ -1278,7 +1289,8 @@ def _vigiar_uma_vez(agora: dt.datetime | None = None) -> dict:
     limite_bat = (agora - dt.timedelta(seconds=SEGUNDOS_SEM_BATIMENTO)).isoformat(timespec="seconds")
     limite_resp = (agora - dt.timedelta(seconds=SEGUNDOS_SEM_RESPOSTA)).isoformat(timespec="seconds")
     limite_entrega = (agora - dt.timedelta(seconds=SEGUNDOS_ENTREGA_LENTA)).isoformat(timespec="seconds")
-    feitas = {"sem_batimento": [], "por_tempo": [], "sem_resposta": []}
+    limite_bordo = (agora - dt.timedelta(seconds=SEGUNDOS_SEM_BORDO)).isoformat(timespec="seconds")
+    feitas = {"sem_batimento": [], "por_tempo": [], "sem_resposta": [], "bordo_mudo": []}
     with conexao() as c:
         # D-A (dono, 24/11/2026): a janela de 60 s vale tambem GRAVANDO — ao sair da tela e nao voltar em
         # 60 s a sessao morre (e a gravacao do lado terra encerra junto; o cliente e' avisado a baixar
@@ -1297,6 +1309,36 @@ def _vigiar_uma_vez(agora: dt.datetime | None = None) -> dict:
                  AND ((o.estado='pedido' AND t.criada_em < ?)
                       OR (o.estado='entregue' AND o.entregue_em <> '' AND o.entregue_em < ?))""",
             (limite_resp, limite_entrega)).fetchall()]
+        # FASE 6 (P0): de quem e' o ultimo sinal de vida? Vale o mais recente entre a SAUDE que o bordo
+        # manda (60 s) e o ESTADO REAL das cameras que ele reporta. Silencio maior que SEGUNDOS_SEM_BORDO
+        # em TODOS os sinais = a maquina de captura morreu (desinstalada, desligada, sem rede).
+        mudo = []
+        for linha in c.execute(
+                "SELECT DISTINCT embarcacao_id FROM transmissoes WHERE estado IN ('pedida','no_ar')"
+        ).fetchall():
+            emb = linha["embarcacao_id"]
+            sinais = []
+            for sql in ("SELECT MAX(recebido_em) AS t FROM saude_bordo WHERE embarcacao_id=?",
+                        "SELECT MAX(atualizado_em) AS t FROM estado_bordo WHERE embarcacao_id=?"):
+                row = c.execute(sql, (emb,)).fetchone()
+                if row and row["t"]:
+                    sinais.append(row["t"])
+            ultimo = max(sinais) if sinais else ""
+            # sem NENHUM sinal conhecido (bordo novo, instalacao recente) nao e' silencio: nao encerra.
+            if not ultimo or ultimo >= limite_bordo:
+                continue
+            for t in c.execute(
+                    "SELECT * FROM transmissoes WHERE embarcacao_id=? AND estado IN ('pedida','no_ar')",
+                    (emb,)).fetchall():
+                mudo.append((dict(t), ultimo))
+    for t, ultimo in mudo:
+        # `sem_sinal` e' o estado que ja' existe para "a maquina de captura nao respondeu" (schema).
+        if fechar_transmissao(t["id"], "sem_sinal",
+                              "o computador de captura a bordo parou de responder (ultimo sinal "
+                              + ultimo.replace("T", " ")[:19] + " UTC) — a transmissao foi encerrada"):
+            feitas["bordo_mudo"].append(t["id"])
+            parar_se_ninguem_vendo(t["embarcacao_id"], t["camera_id"], t["fluxo_id"],
+                                   "o computador de captura a bordo ficou mudo")
     for t in sem_bat:
         if fechar_transmissao(t["id"], "encerrada",
                               "voce saiu da tela ao vivo por mais de 60 s (ou a tela foi fechada) — "
@@ -2666,6 +2708,49 @@ class Handler(SimpleHTTPRequestHandler):
             return self._estado_da_licenca()
         if rota == "/bordo":
             return self._pagina_do_bordo()
+        if rota == "/api/bordo/serie":
+            # A SERIE da saude — o que o dashboard de verdade desenha (dono, 24/11/2026: "preciso de um
+            # dashboard real no pc de captura ... so' tem um monte de cards"). Duas origens, na ordem:
+            #  1) o ANEL LOCAL desta maquina (`saude/historico-da-saude.jsonl`), que e' o do proprio PC
+            #     de captura — quem mede e' ele;
+            #  2) `?embarcacao=<id>`: a serie que o lado terra guardou (para o `/bordo` aberto NO TERRA),
+            #     lida do banco. Sem nenhuma das duas, devolve `pontos: []` — a tela diz "sem serie",
+            #     nunca inventa curva.
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                limite = max(2, min(2880, int((q.get("pontos", ["720"])[0] or "720"))))
+            except Exception:  # noqa: BLE001
+                limite = 720
+            pontos, origem = [], ""
+            try:
+                import saude_do_bordo
+                pontos = saude_do_bordo.historico(limite)
+                origem = "anel local" if pontos else ""
+            except Exception as e:  # noqa: BLE001
+                pontos, origem = [], f"anel local indisponivel ({type(e).__name__})"
+            emb = (q.get("embarcacao", [""])[0] or "").strip()
+            if not pontos and emb:
+                try:
+                    with conexao() as c:
+                        linhas = c.execute(
+                            """SELECT recebido_em,retrato FROM saude_bordo WHERE embarcacao_id=?
+                               ORDER BY recebido_em DESC LIMIT ?""", (emb, limite)).fetchall()
+                    import saude_do_bordo
+                    for linha in reversed(linhas):
+                        try:
+                            r = json.loads(linha["retrato"] or "{}")
+                        except Exception:  # noqa: BLE001
+                            continue
+                        p = saude_do_bordo.ponto_do_retrato(r)
+                        p["t"] = p.get("t") or linha["recebido_em"]
+                        pontos.append(p)
+                    if pontos:
+                        origem = "serie do lado terra"
+                except Exception as e:  # noqa: BLE001
+                    origem = f"serie do lado terra indisponivel ({type(e).__name__})"
+            return self._json(200, {"ok": True, "pontos": pontos, "limite": limite,
+                                    "origem": origem, "embarcacao_id": emb},
+                              {"Cache-Control": "no-store"})
         if rota == "/api/bordo":
             return self._estado_do_bordo()
         if rota == "/api/licencas":

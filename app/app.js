@@ -219,8 +219,6 @@ function ajustarGrade() {
     const janelas = grade.querySelectorAll('.janela');
     const alvo = grade.parentElement;
     if (!janelas.length || !alvo) continue;
-    const cols = Number(grade.dataset.cols || 0) || janelas.length;
-    const linhas = Number(grade.dataset.linhas || 0) || cols;
     const est = getComputedStyle(alvo);
     const aw = alvo.clientWidth - (parseFloat(est.paddingLeft) || 0) - (parseFloat(est.paddingRight) || 0);
     let ah = alvo.clientHeight - (parseFloat(est.paddingTop) || 0) - (parseFloat(est.paddingBottom) || 0);
@@ -229,14 +227,28 @@ function ajustarGrade() {
     const card = grade.querySelector('.card-cam');
     const cardH = card ? card.offsetHeight : 0;
     const r = proporcaoDaGrade(grade);
-    const porLargura = (aw - (cols - 1) * LACO_DA_GRADE) / cols;
-    const porAltura = r * (ah - (linhas - 1) * LACO_DA_GRADE - linhas * cardH) / linhas;
-    const largura = Math.floor(Math.min(porLargura, porAltura));
-    if (!(largura > 40)) continue;   // sem espaço: não mexe (a janela é pequena demais para calcular)
-    grade.style.gridTemplateColumns = 'repeat(' + cols + ', ' + largura + 'px)';
+    const n = janelas.length;
+    /* QUANTAS COLUNAS DAO' A MAIOR IMAGEM (dono, 24/11/2026: "as telas ainda estao pequenas ... utilizem
+       o maior espaco possivel"). Antes o numero de colunas vinha de fora (2/3/4 por faixa de cameras) e
+       a imagem sobrava largura: em "Automatico" a grade passa a TESTAR de 1 a 4 colunas e fica com a que
+       der a maior imagem que cabe na tela. O modo manual (2x2 / 3x3 / 4x4) continua mandando sozinho. */
+    const manuais = S.auto ? 0 : (Number(grade.dataset.cols) || 0);
+    const hipoteses = manuais ? [manuais] : [1, 2, 3, 4].filter((k) => k <= n);
+    let melhor = null;
+    for (const cols of hipoteses) {
+      const linhas = Math.max(1, Math.ceil(n / cols));
+      const porLargura = (aw - (cols - 1) * LACO_DA_GRADE) / cols;
+      const porAltura = r * (ah - (linhas - 1) * LACO_DA_GRADE - linhas * cardH) / linhas;
+      const largura = Math.floor(Math.min(porLargura, porAltura));
+      if (!(largura > 40)) continue;   // sem espaço: não mexe (a janela é pequena demais para calcular)
+      if (!melhor || largura > melhor.largura) melhor = { cols: cols, linhas: linhas, largura: largura };
+    }
+    if (!melhor) continue;
+    grade.style.gridTemplateColumns = 'repeat(' + melhor.cols + ', ' + melhor.largura + 'px)';
     grade.style.gridTemplateRows = 'auto';
     grade.style.justifyContent = 'center';
     grade.style.alignContent = 'center';
+    grade.dataset.escolhidas = String(melhor.cols);
     for (const j of janelas) {
       const img = j.querySelector('.img-cam');
       if (img && !S.proporcao[j.dataset.cam]) {   // sem metadado ainda: assume a proporção da grade
@@ -347,15 +359,13 @@ function desenharVisualizar() {
     ctrlT.className = 'controle-trecho';
     const bT = document.createElement('button');
     bT.className = 'botao-trecho';
-    bT.textContent = 'Baixar 1 minuto';
-    bT.title = 'Baixa 60 s do vídeo como ele chega no lado terra, sem reencodar, para conferir o tamanho';
+    _icone(bT, '⤓', 'Baixar 1 minuto — 60 s do vídeo como ele chega no lado terra, sem reencodar');
     bT.onclick = (ev) => { ev.stopPropagation(); baixarTrecho(c, bT); };
     ctrlT.appendChild(bT);
     // ver ESTA câmera em destaque (1 clique) — o duplo clique na janela faz o mesmo
     const bD = document.createElement('button');
     bD.className = 'botao-trecho';
-    bD.textContent = 'Destaque';
-    bD.title = 'Ver esta câmera em destaque (tela cheia)';
+    _icone(bD, '⤢', 'Ver esta câmera em destaque (tela cheia)');
     bD.onclick = (ev) => { ev.stopPropagation(); abrirDestaque([c.id]); };
     ctrlT.appendChild(bD);
     jan.ondblclick = (ev) => { ev.stopPropagation(); abrirDestaque([c.id]); };
@@ -921,14 +931,31 @@ function _bt(papel, texto, classe) {
   return b;
 }
 
+/* Botao do CARD, so' ICONE (dono, 24/11/2026: o card tem de ser UMA linha — o texto longo era o que
+   empilhava os botoes e encolhia a imagem). O nome completo NUNCA se perde: vai no `title` (mouse) e
+   no `aria-label` (leitor de tela) — e' por eles que as provas de tela reconhecem o botao. */
+function _icone(b, icone, texto) {
+  if (!b) return b;
+  b.textContent = icone;
+  b.title = texto; b.setAttribute('aria-label', texto);
+  return b;
+}
+function _btIc(papel, icone, texto, classe) {
+  const b = _bt(papel, '', classe);
+  return _icone(b, icone, texto);
+}
+
 /* Monta o quadro de controle UMA vez; o criador de texto fica em atualizarControle (roda a cada 1 s). */
 function montarControle(c, el, jan) {
   el.innerHTML = '';
   const est = document.createElement('span'); est.dataset.papel = 'estado'; est.className = 'st-estado';
   const cont = document.createElement('span'); cont.dataset.papel = 'contagem'; cont.className = 'st-contagem';
   const aviso = document.createElement('div'); aviso.dataset.papel = 'aviso'; aviso.className = 'st-aviso';
-  el.append(est, cont, _bt('iniciar', 'Iniciar transmissão'), _bt('gravar', 'Gravar (no lado terra)'),
-            _bt('parar', 'Parar transmissão'), aviso);
+  el.append(est, cont, _btIc('iniciar', '▶', 'Iniciar transmissão'),
+            _btIc('gravar', '⏺', 'Gravar (no lado terra)'), _btIc('parar', '⏹', 'Parar transmissão'));
+  /* o AVISO do ultimo minuto mora DENTRO da imagem: o card e' de uma linha so' e nao pode crescer
+     quando o aviso aparece (era o card que encolhia/empurrava a imagem — dono, 24/11/2026). */
+  (jan && jan.querySelector('.img-cam') ? jan.querySelector('.img-cam') : el).appendChild(aviso);
   atualizarControle(c, el);
 }
 
@@ -951,12 +978,25 @@ function atualizarControle(c, el) {
     aviso.dataset.sig = '';
     if (quantos > 0) { est.className = 'st-estado ok'; est.textContent = 'no ar — outro cliente assistindo'; }
     else { est.className = 'st-estado' + (c.no_ar ? ' ok' : ''); est.textContent = c.no_ar ? 'no ar agora' : 'parada'; }
+    /* FASE 6 (dono, 24/11/2026: "desinstalei o app e a transmissao continua"): quando a ultima sessao
+       desta camera morreu porque o BORDO ficou mudo, a tela diz o MOTIVO REAL — e nao "no ar agora"
+       com a imagem parada. So' vale para o bordo mudo/sem sinal (nao para a parada pedida pelo
+       proprio cliente) e so' enquanto isso for recente. */
+    const ultima = (S.transmissao && S.transmissao.historico ? S.transmissao.historico : [])
+      .filter((x) => x.camera_id === c.id && x.encerrada_em && ['sem_sinal', 'erro'].indexOf(x.estado) >= 0)[0];
+    const fim = ultima ? Date.parse(ultima.encerrada_em) : NaN;
+    est.title = '';
+    if (ultima && ultima.motivo && isFinite(fim) && (Date.now() - fim) < 10 * 60000) {
+      est.className = 'st-estado ruim';
+      est.textContent = 'última: ' + ultima.motivo;
+      est.title = ultima.motivo;
+    }
     bIni.style.display = ''; bIni.disabled = false;
-    bIni.textContent = jaViu ? 'Reconectar' : 'Iniciar transmissão';
     /* a janela de fora-da-tela vem do servidor: se voce sair da tela e voltar dentro dela, a sessao
        continua de pe — sem precisar reconectar. */
     const jan = (S.transmissao && S.transmissao.janela_sem_tela) || 60;
-    bIni.title = 'A transmissão segue no ar por ' + jan + ' s se você sair desta tela e voltar';
+    _icone(bIni, jaViu ? '⟳' : '▶', (jaViu ? 'Reconectar' : 'Iniciar transmissão')
+      + ' — a transmissão segue no ar por ' + jan + ' s se você sair desta tela e voltar');
     bIni.onclick = (ev) => { ev.stopPropagation(); pedirTransmissao(c.id, bIni); };
     return;
   }
@@ -974,9 +1014,11 @@ function atualizarControle(c, el) {
      corre; como o MESMO botao volta a ser usado na sessao seguinte, alguem tinha de devolver o
      `disabled = false` — so' o "Iniciar" era religado. */
   bGrav.disabled = false;
-  bGrav.textContent = gravando ? 'Parar gravação' : 'Gravar (no lado terra)';
+  /* o icone e' sempre o mesmo (a COR — classe `on` — diz que esta gravando): o nome muda no
+     `title`/`aria-label`, sem mexer no tamanho do botao. */
+  _icone(bGrav, '⏺', gravando ? 'Parar gravação' : 'Gravar (no lado terra)');
   bGrav.onclick = (ev) => { ev.stopPropagation(); marcarGravando(minha.id, !gravando, bGrav); };
-  bPar.style.display = ''; bPar.disabled = false; bPar.textContent = 'Parar transmissão';
+  bPar.style.display = ''; bPar.disabled = false; _icone(bPar, '⏹', 'Parar transmissão');
   bPar.onclick = (ev) => { ev.stopPropagation(); pararTransmissao(minha.id, bPar); };
 
   /* AVISO DO ULTIMO MINUTO (D1/D2): pergunta se quer continuar. Nao ha resposta "automatica": se o
@@ -1421,6 +1463,14 @@ window.addEventListener('beforeunload', (ev) => {
 window.addEventListener('pagehide', avisarQueSaio);
 /* a janela mudou de tamanho: a grade é recalculada (a imagem da câmera continua inteira, sem corte) */
 window.addEventListener('resize', () => ajustarGrade());
+/* O palco muda de tamanho SEM a janela mudar: barra lateral recolhida, tela cheia/Destaque, zoom e o
+   proprio primeiro calculo (a janela ainda esta' montando quando a grade nasce). E' o ResizeObserver
+   que faz a grade ser RESPONSIVA de verdade — sem ele a grade so' se reajustava no `resize` da janela
+   (dono, 24/11/2026: "as telas precisam ser mais responsivas e utilizar o maior espaco possivel"). */
+if (typeof ResizeObserver === 'function') {
+  const palcoVivo = document.getElementById('palco');
+  if (palcoVivo) new ResizeObserver(() => ajustarGrade()).observe(palcoVivo);
+}
 
 $('btn-sair').addEventListener('click', async () => {
   avisarQueSaio();                                        /* apaga o que foi gravado para ele */
