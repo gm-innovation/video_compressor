@@ -22,7 +22,7 @@
 </section>
 
 <div class="sistema oculto" id="sistema">
-  <aside class="lateral">
+  <aside class="lateral" id="lateral">
     <div class="marca"><span class="simbolo">L</span><span class="nome">LECSOR</span></div>
 
     <div class="grupo">Eventos</div>
@@ -54,6 +54,10 @@
 
   <main class="principal">
     <header class="cabecalho">
+      <!-- RECOLHER/ABRIR O MENU (dono, 24/11/2026): devolve a largura da barra para a grade. O estado
+           fica guardado no navegador e a grade se recalcula sozinha (ResizeObserver no palco). -->
+      <button class="pil" id="btn-menu" type="button" title="Recolher menu" aria-label="Recolher menu"
+              aria-expanded="true" aria-controls="lateral">«</button>
       <div>
         <h1 id="titulo-tela">Transmissões ao vivo</h1>
         <div class="sub" id="sub-tela">Monitoramento em tempo real das câmeras selecionadas.</div>

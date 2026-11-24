@@ -185,18 +185,17 @@ function camerasDaPagina() {
 const LACO_DA_GRADE = 5;
 
 function proporcaoDaImagem(img, v, c) {
-  /* A proporcao JA' CONHECIDA entra no elemento na hora, sem esperar o metadado: quando o <video> e'
-     reaproveitado/remontado, a area nova nascia no 16/9 do CSS e a imagem "mudava de tamanho" — era
-     isto que o dono via (24/11/2026). */
-  if (S.proporcao[c.id]) img.style.aspectRatio = String(S.proporcao[c.id]);
+  /* A proporcao REAL da camera e' guardada para ESCOLHER a grade (quantas colunas dao a MAIOR imagem)
+     e para o `<video>` se ajustar sozinho com `object-fit:contain`. A area da imagem NAO e' mais
+     TRAVADA na proporcao do video (dono, 24/11/2026: "as imagens continuam ocupando metade do espaco
+     possivel na tela"): quem manda no tamanho agora e' o espaco da grade — a celula preenche a area e
+     a imagem entra inteira, do maior tamanho que cabe. */
   const aplicar = () => {
     if (!v.videoWidth || !v.videoHeight) return;
     const r = v.videoWidth / v.videoHeight;
     const mudou = S.proporcao[c.id] !== r;
     S.proporcao[c.id] = r;
-    /* escreve SEMPRE no elemento (o `return` cedo antigo deixava a area nova presa no 16/9) e so'
-       redimensiona a grade quando a proporcao MUDOU — nada de repintar por repintar. */
-    img.style.aspectRatio = v.videoWidth + ' / ' + v.videoHeight;
+    /* so' redimensiona a grade quando a proporcao MUDOU — nada de repintar por repintar */
     if (mudou) ajustarGrade();
   };
   v.addEventListener('loadedmetadata', aplicar);
@@ -212,8 +211,10 @@ function proporcaoDaGrade(grade) {
   return vistas.length ? Math.min.apply(null, vistas) : 16 / 9;
 }
 
-/* Dimensiona a grade para a imagem caber INTEIRA: a coluna é a largura que cabe na tela E que faz a
-   altura da célula (imagem + card, em `linhas` linhas) caber na altura disponível. */
+/* A GRADE OCUPA O PALCO INTEIRO (dono, 24/11/2026: "as imagens continuam ocupando metade do espaco
+   possivel na tela"). O que a grade faz e' escolher QUANTAS COLUNAS dao a MAIOR imagem (medindo a
+   area da imagem que cada hipotese entrega) e entregar as celulas em `1fr` — a sobra fica nas
+   celulas, nao em margem morta; quem se ajusta e' o `<video>` (`contain`, sem cortar). */
 function ajustarGrade() {
   for (const grade of document.querySelectorAll('.grade-vms')) {
     const janelas = grade.querySelectorAll('.janela');
@@ -237,24 +238,27 @@ function ajustarGrade() {
     let melhor = null;
     for (const cols of hipoteses) {
       const linhas = Math.max(1, Math.ceil(n / cols));
-      const porLargura = (aw - (cols - 1) * LACO_DA_GRADE) / cols;
-      const porAltura = r * (ah - (linhas - 1) * LACO_DA_GRADE - linhas * cardH) / linhas;
-      const largura = Math.floor(Math.min(porLargura, porAltura));
-      if (!(largura > 40)) continue;   // sem espaço: não mexe (a janela é pequena demais para calcular)
-      if (!melhor || largura > melhor.largura) melhor = { cols: cols, linhas: linhas, largura: largura };
-    }
-    if (!melhor) continue;
-    grade.style.gridTemplateColumns = 'repeat(' + melhor.cols + ', ' + melhor.largura + 'px)';
-    grade.style.gridTemplateRows = 'auto';
-    grade.style.justifyContent = 'center';
-    grade.style.alignContent = 'center';
-    grade.dataset.escolhidas = String(melhor.cols);
-    for (const j of janelas) {
-      const img = j.querySelector('.img-cam');
-      if (img && !S.proporcao[j.dataset.cam]) {   // sem metadado ainda: assume a proporção da grade
-        img.style.aspectRatio = String(r);
+      const celW = (aw - (cols - 1) * LACO_DA_GRADE) / cols;
+      const celH = (ah - (linhas - 1) * LACO_DA_GRADE) / linhas;
+      const areaH = celH - cardH;                  // a imagem e' o que sobra do card na celula
+      if (!(celW > 40) || !(areaH > 20)) continue; // sem espaço: não mexe (a janela é pequena demais)
+      /* a IMAGEM (com `contain`) e' a maior que CABE na celula sem cortar: ou a largura manda, ou a
+         altura manda — e' o produto das duas que se compara entre as hipoteses. */
+      const imgL = Math.min(celW, areaH * r);
+      const imgA = imgL / r;
+      const area = imgL * imgA;
+      if (!melhor || area > melhor.area) {
+        melhor = { cols: cols, linhas: linhas, area: area, l: imgL, a: imgA };
       }
     }
+    if (!melhor) continue;
+    /* a grade VAI ATE' A BORDA: celulas em 1fr (a sobra fica dentro da celula, junto da imagem) */
+    grade.style.gridTemplateColumns = 'repeat(' + melhor.cols + ', 1fr)';
+    grade.style.gridTemplateRows = 'repeat(' + melhor.linhas + ', 1fr)';
+    grade.style.justifyContent = 'stretch';
+    grade.style.alignContent = 'stretch';
+    grade.dataset.escolhidas = String(melhor.cols);
+    grade.dataset.imagem = Math.round(melhor.l) + 'x' + Math.round(melhor.a);
   }
 }
 
@@ -1453,6 +1457,36 @@ $('btn-destaque').addEventListener('click', () => {
 $('btn-cheia').addEventListener('click', () => {
   const alvo = $('palco');
   if (document.fullscreenElement) document.exitFullscreen(); else if (alvo.requestFullscreen) alvo.requestFullscreen();
+});
+/* RECOLHER/ABRIR O MENU (dono, 24/11/2026: "pode inclusive colocar um botao para colapsar o sidemenu e
+   aumentar ainda mais o espaco util"). O estado fica guardado no navegador, a barra fica `inert`
+   (nada de tabular por dentro de uma barra de 0 px) e a grade se recalcula sozinha. */
+const CHAVE_MENU = 'lecsor-menu-recolhido';
+function aplicarMenu(recolhido) {
+  document.body.classList.toggle('recolhido', recolhido);
+  const b = $('btn-menu'), lat = $('lateral');
+  if (b) {
+    b.textContent = recolhido ? '»' : '«';
+    const nome = recolhido ? 'Abrir menu' : 'Recolher menu';
+    b.title = nome + ' (atalho: [)';
+    b.setAttribute('aria-label', nome);
+    b.setAttribute('aria-expanded', String(!recolhido));
+  }
+  if (lat) {
+    lat.setAttribute('aria-hidden', String(recolhido));
+    if ('inert' in lat) lat.inert = recolhido;
+  }
+  ajustarGrade();
+}
+try { aplicarMenu(localStorage.getItem(CHAVE_MENU) === '1'); } catch (e) { /* sem memoria local */ }
+$('btn-menu').addEventListener('click', () => {
+  const proximo = !document.body.classList.contains('recolhido');
+  try { localStorage.setItem(CHAVE_MENU, proximo ? '1' : '0'); } catch (e) { /* sem memoria local */ }
+  aplicarMenu(proximo);
+});
+document.addEventListener('keydown', (ev) => {
+  const alvo = (ev.target && ev.target.tagName) || '';
+  if (ev.key === '[' && !/^(INPUT|TEXTAREA|SELECT)$/.test(alvo)) $('btn-menu').click();
 });
 /* O cliente saiu da tela (fechou, desligou o computador): avisa o lado terra na hora — e' o que faz o
    arquivo da gravacao ser apagado. Sem isto, a varredura do lado terra apaga sozinha depois do prazo. */

@@ -1,8 +1,10 @@
-**Status (24/11/2026):** Fases **1 a 7 APROVADAS** ("aprovado") e **implementadas** — commit local
-`45bb298` + `ff54ed2` (o botão "Continuar conectado" voltou a receber o clique), regressão **29/29**,
-**ainda NÃO publicadas** (o `git push` está parado no gate Jev, esperando "pode subir" do dono).
-Fases **8, 9 e 10** (grade usando todo o palco, botão de recolher o menu, limpeza das câmeras de teste)
-foram pedidas pelo dono em 24/11/2026 e **aguardam aprovação**. **Nada é implementado sem "aprovado".**
+**Status (24/11/2026):** Fases **1 a 10 APROVADAS** ("aprovado") e **implementadas** — 1–7 no commit local
+`45bb298` + `ff54ed2` (o botão "Continuar conectado" voltou a receber o clique); **8, 9 e 10 implementadas e
+MEDIDAS** por `tests/e2e-grade-usa-todo-o-palco-e-menu.py` (a grade usa **100%** da largura útil do palco, a
+imagem **635×357** contra as **460×259** da 0.14.0, o menu recolhe e o estado volta ao recarregar) e pela
+limpeza do banco da VPS (`bancada` **11 → 6 câmeras**, trilha `transmissoes` intacta em **107**).
+Regressão completa: `tools/regressao-0130.py`. **Nada publicado** — o `git push` está parado no gate Jev,
+esperando "pode subir" do dono. **Nada é implementado sem "aprovado".**
 
 > **O dono está vendo a 0.14.0** (o print da tela do cliente é anterior à 0.15.0): o card de 2 linhas, o
 > aviso amarelo cortado na borda da célula e a grade centralizada com margem morta são da versão

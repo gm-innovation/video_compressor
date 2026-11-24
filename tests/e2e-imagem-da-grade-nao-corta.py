@@ -5,16 +5,17 @@ Dono, verbatim: *"agora com o card abaixo das imagens e a remoção das faixas p
 estão sendo cortadas"* e, na sequencia, *"não cortar ... preciso das imagens inteiras"*.
 
 A causa: a area da imagem era `1fr` da TELA (`.grade-vms{height:100%}` + `repeat(N,1fr)`) — nunca tinha a
-proporcao da camera — e o `object-fit:cover` preenchia essa area CORTANDO a sobra. Agora a area da imagem
-recebe a PROPORCAO REAL do video (`videoWidth/videoHeight`) e a grade e' dimensionada por ela.
+proporcao da camera — e o `object-fit:cover` preenchia essa area CORTANDO a sobra. O que o dono pediu depois
+(24/11/2026: *"as imagens continuam ocupando metade do espaco possivel na tela"*) mudou o desenho: a CELULA
+passou a ocupar a area da grade (o palco inteiro) e quem tem a forma do video e' o QUADRO RENDERIZADO (o
+`<video>` e' `contain`: a imagem entra inteira, do MAIOR tamanho que cabe, sem cortar).
 
 O que se prova, num Chromium de verdade contra a API de verdade, com DOIS videos de proporcoes diferentes
 (4:3 e 16:9) gerados aqui dentro:
 
-  1) a area da imagem TEM a proporcao da camera (medida nos dois casos) — nao e' mais 16/9 fixo;
-  2) `object-fit:contain` + a area na proporcao da camera => o quadro inteiro aparece (nada e' cortado e
-     nao sobra barra escura: a imagem preenche a area exatamente);
-  3) a grade continua INTEIRA dentro do palco (o calculo da coluna cabe na altura disponivel);
+  1) a IMAGEM que o olho ve tem a proporcao da camera (medida nos dois casos) — nada esticado, nada cortado;
+  2) `object-fit:contain` => o quadro inteiro aparece e ocupa o maior tamanho que cabe na celula;
+  3) a grade continua INTEIRA dentro do palco;
   4) o card segue ABAIXO da imagem.
 
     python tests/e2e-imagem-da-grade-nao-corta.py
@@ -99,10 +100,17 @@ JS_MEDIR = """() => {
   const img = jan.querySelector('.img-cam');
   const v = jan.querySelector('video');
   const caixa = img.getBoundingClientRect();
+  /* A IMAGEM QUE O OLHO VE: com a celula ocupando a area da grade, quem tem a forma do video e' o
+     QUADRO RENDERIZADO (o `<video>` e' `contain` dentro da caixa) — nao mais a caixa. */
+  const r = (v.videoWidth && v.videoHeight) ? (v.videoWidth / v.videoHeight) : (16 / 9);
+  const l = Math.min(caixa.width, caixa.height * r);
+  const a = l / r;
   return {
     videoW: v.videoWidth, videoH: v.videoHeight,
     caixaL: caixa.width, caixaA: caixa.height,
     proporcaoDaArea: caixa.width / caixa.height,
+    imagemL: l, imagemA: a,
+    proporcaoDaImagem: l / a,
     proporcaoDoVideo: v.videoWidth / v.videoHeight,
     fit: getComputedStyle(v).objectFit,
     cardTopo: jan.querySelector('.card-cam').getBoundingClientRect().top,
@@ -167,31 +175,33 @@ def main() -> int:
             fit = pag.evaluate("() => getComputedStyle(document.querySelector('.janela video')).objectFit")
             checar("o video NAO usa mais `object-fit:cover`", fit == "contain", f"object-fit={fit}")
 
-            print("\n== 2. camera 4:3 (640x480): a AREA DA IMAGEM acompanha a camera ==")
+            print("\n== 2. camera 4:3 (640x480): a IMAGEM RENDERIZADA acompanha a camera ==")
             url43 = video_de_prova(tmp, 640, 480)
             pag.evaluate(JS_POR_VIDEO, url43)
             m43 = pag.evaluate(JS_MEDIR)
             print("      ", m43)
             checar("o app leu a proporcao REAL do video (4:3 = 1,333)", abs(m43["proporcaoDoVideo"] - 4 / 3) < 0.02,
                    f"{m43['proporcaoDoVideo']:.3f}")
-            checar("a AREA DA IMAGEM tem a proporcao da camera (nao 16:9 fixo)",
-                   abs(m43["proporcaoDaArea"] - m43["proporcaoDoVideo"]) < 0.03,
-                   f"area={m43['proporcaoDaArea']:.3f} video={m43['proporcaoDoVideo']:.3f}")
-            checar("com a area na proporcao da camera + `contain` o quadro entra INTEIRO (sem corte)",
-                   m43["fit"] == "contain"
-                   and abs(m43["proporcaoDaArea"] - m43["proporcaoDoVideo"]) < 0.03)
+            checar("a IMAGEM que o olho ve tem a proporcao da camera (nada esticado)",
+                   abs(m43["proporcaoDaImagem"] - m43["proporcaoDoVideo"]) < 0.03,
+                   f"imagem={m43['proporcaoDaImagem']:.3f} video={m43['proporcaoDoVideo']:.3f}")
+            checar("com `contain` o quadro entra INTEIRO (sem corte) e do MAIOR tamanho que cabe",
+                   m43["fit"] == "contain" and m43["imagemL"] <= m43["caixaL"] + 1
+                   and m43["imagemA"] <= m43["caixaA"] + 1
+                   and (m43["imagemL"] >= m43["caixaL"] - 1 or m43["imagemA"] >= m43["caixaA"] - 1),
+                   f"imagem={m43['imagemL']:.0f}x{m43['imagemA']:.0f} caixa={m43['caixaL']:.0f}x{m43['caixaA']:.0f}")
             checar("o card continua ABAIXO da imagem", m43["cardTopo"] >= m43["imgBase"] - 1.5,
                    f"card={m43['cardTopo']:.1f} imagem={m43['imgBase']:.1f}")
 
-            print("\n== 3. camera 16:9 (1280x720): a area acompanha de novo ==")
+            print("\n== 3. camera 16:9 (1280x720): a imagem acompanha de novo ==")
             url169 = video_de_prova(tmp, 1280, 720)
             pag.evaluate(JS_POR_VIDEO, url169)
             m169 = pag.evaluate(JS_MEDIR)
             print("      ", m169)
-            checar("a AREA DA IMAGEM foi para 16:9 (1,778) com o video 16:9",
-                   abs(m169["proporcaoDaArea"] - 16 / 9) < 0.03, f"area={m169['proporcaoDaArea']:.3f}")
-            checar("e a area segue a camera, nao o tamanho da tela",
-                   abs(m169["proporcaoDaArea"] - m169["proporcaoDoVideo"]) < 0.03)
+            checar("a IMAGEM foi para 16:9 (1,778) com o video 16:9",
+                   abs(m169["proporcaoDaImagem"] - 16 / 9) < 0.03, f"imagem={m169['proporcaoDaImagem']:.3f}")
+            checar("e a imagem segue a camera, nao o tamanho da tela",
+                   abs(m169["proporcaoDaImagem"] - m169["proporcaoDoVideo"]) < 0.03)
 
             print("\n== 4. a grade inteira cabe no palco (nada estoura por baixo) ==")
             caixa = pag.evaluate("""() => {

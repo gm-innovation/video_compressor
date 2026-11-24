@@ -25,6 +25,7 @@ PROVAS = (
     # (> 180 s sem sinal) encerra a sessao no lado terra, e o /bordo ganha o DASHBOARD DE VERDADE (as 4
     # curvas: cpu, memoria, disco e rede)
     "tests/e2e-dashboard-de-verdade-e-card-compacto.py",
+    "tests/e2e-grade-usa-todo-o-palco-e-menu.py",
     # RODADA 0.14.0 — a imagem nao muda de tamanho no redesenho, "Parar transmissao" volta clicavel, os
     # dois dashboards (bordo e admin) e a telemetria do PC de captura (cpu/memoria/disco/rede, individual
     # e global)

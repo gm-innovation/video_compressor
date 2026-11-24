@@ -263,9 +263,18 @@ def main() -> int:
                    abs(antes["l"] - depois["l"]) < 0.5, f"{antes['l']:.1f} -> {depois['l']:.1f}")
             checar("a ALTURA da imagem nao mudou no redesenho",
                    abs(antes["a"] - depois["a"]) < 0.5, f"{antes['a']:.1f} -> {depois['a']:.1f}")
-            checar("a area segue a camera 4:3 (e nao o 16/9 do CSS) depois do redesenho",
-                   abs((depois["l"] / depois["a"]) - (4 / 3)) < 0.04,
-                   f"area={depois['l'] / depois['a']:.3f}")
+            # A CELULA agora ocupa a area da grade (dono, 24/11/2026: "as imagens continuam ocupando metade
+            # do espaco possivel na tela"), entao quem carrega a forma da camera e' a IMAGEM RENDERIZADA
+            # (o `<video>` e' `contain`), nao a caixa. E' a imagem que o olho ve que tem de seguir a 4:3.
+            imagem = pag.evaluate("""() => {
+              const v = document.querySelector('.janela video');
+              const box = v.getBoundingClientRect();
+              const r = (v.videoWidth && v.videoHeight) ? (v.videoWidth / v.videoHeight) : (16 / 9);
+              const l = Math.min(box.width, box.height * r);
+              return {l: l, a: l / r, razao: r};
+            }""")
+            checar("a IMAGEM (o que o olho ve) segue a camera 4:3 depois do redesenho",
+                   abs(imagem["razao"] - 4 / 3) < 0.04, f"razao={imagem['razao']:.3f}")
 
             print("\n== 2. 'Parar transmissao' volta clicavel ao reiniciar ==")
             sel_parar = "#palco .janela [data-papel=parar]"
