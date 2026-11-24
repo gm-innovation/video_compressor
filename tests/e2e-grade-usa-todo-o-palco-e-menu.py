@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
-"""A GRADE USA O PALCO INTEIRO e o MENU RECOLHE (dono, 24/11/2026).
+"""A CELULA TEM A FORMA DO VIDEO (sem faixa preta) e o MENU RECOLHE (dono, 24/11/2026).
 
-Dono, verbatim, com o print da tela do cliente (1820x900, 4 cameras em 2x2):
+Dono, verbatim, com o print da tela do cliente (1908x841, 4 cameras em 2x2, menu recolhido):
+
+> deve haver outra forma de exibir as imagens sem ficar com essas faixas laterais pretas, sem cortar as
+> imagens e sem deixar os videos pequenos na tela
 
 > as imagens continuam ocupando metade do espaco possivel na tela, pode inclusive colocar um botao para
 > colapsar o sidemenu e aumentar ainda mais o espaco util
 
+CONTRATO VELHO (0.15.0, agora ERRADO de proposito): "a grade usa 95% da largura util do palco". Era a
+metrica que PRODUZIA a queixa desta rodada — a grade esticada ate' a borda deixava 176 px de preto de
+cada lado DENTRO da celula (medido no print de 1908x841). O contrato agora e' o que o dono pediu.
+
 O que se MEDE aqui (Chromium de verdade, 4 cameras com video real, janela 1820x900):
 
- 1. a largura da GRADE em relacao a area util do PALCO (a queixa e' largura vira margem morta);
- 2. a imagem renderizada de cada janela e' a MAIOR que cabe sem cortar (o `<video>` e' `contain`) e a
-    proporcao da imagem e' a do video (sem corte);
+ 1. a CELULA tem a forma do VIDEO: a imagem enche a celula (ate' 2px de cada lado = a borda) e o painel
+    fica CENTRADO no palco (margem esquerda = direita) — a sobra vira margem, nunca tarja por imagem;
+ 2. a proporcao da imagem e' a do video (sem corte) e o CARD flutua SOBRE a imagem (nao come altura);
  3. a imagem e' MAIOR que a da versao publicada (460x259, medido no print do dono nesse mesmo tamanho);
  4. o botao de recolher o menu devolve a largura da barra para o palco e o estado VOLTA depois de
     recarregar a pagina.
@@ -123,13 +130,25 @@ JS_MEDIR = """() => {
     const l = Math.min(box.width, box.height * r);
     const a = l / r;
     const card = j.querySelector('.card-cam');
+    const rj = j.getBoundingClientRect();
+    /* A CELULA TEM A FORMA DO VIDEO (dono, 24/11/2026): aqui mede-se a FAIXA que sobra DENTRO da
+       celula, dos dois lados — e' ela que o dono chamou de "faixas laterais pretas". */
+    const faixaL = (rj.width - l) / 2, faixaA = (rj.height - a) / 2;
     return {l: Math.round(l), a: Math.round(a), caixaL: Math.round(box.width), caixaA: Math.round(box.height),
-            razao: Number((l / a).toFixed(3)), cardA: card ? Math.round(card.getBoundingClientRect().height) : 0};
+            razao: Number((l / a).toFixed(3)), cardA: card ? Math.round(card.getBoundingClientRect().height) : 0,
+            celulaL: Math.round(rj.width), celulaA: Math.round(rj.height),
+            faixaCadaLado: Math.round(faixaL), faixaCadaLadoA: Math.round(faixaA),
+            cardSobreAImagem: card ? (card.getBoundingClientRect().bottom <= rj.bottom + 1
+                                      && card.getBoundingClientRect().top < rj.bottom) : false};
   };
   return {
     palcoL: Math.round(rp.width), uteisL: Math.round(uteis), gradeL: Math.round(rg.width),
     gradeEsq: Math.round(rg.left), gradeDir: Math.round(rg.right),
     palcoEsq: Math.round(rp.left), palcoDir: Math.round(rp.right),
+    gradeTopo: Math.round(rg.top), gradeBase: Math.round(rg.bottom),
+    palcoTopo: Math.round(rp.top), palcoBase: Math.round(rp.bottom),
+    margemEsq: Math.round(rg.left - rp.left), margemDir: Math.round(rp.right - rg.right),
+    margemTopo: Math.round(rg.top - rp.top), margemBaixo: Math.round(rp.bottom - rg.bottom),
     fracao: Number((rg.width / uteis).toFixed(3)),
     colunas: grade.dataset.escolhidas, projecao: grade.dataset.imagem,
     imagens: janelas.map(medirImagem),
@@ -187,31 +206,37 @@ def main() -> int:
             pag.evaluate(JS_POE_VIDEO, url)
             pag.wait_for_timeout(900)
 
-            print("\n== 1. a grade ocupa o PALCO (4 cameras em 1820x900 — a tela do dono) ==")
+            print("\n== 1. a CELULA tem a forma do VIDEO e o painel fica CENTRADO (4 cameras em 1820x900) ==")
             m = pag.evaluate(JS_MEDIR)
-            print("       ", json.dumps({k: m[k] for k in ("palcoL", "uteisL", "gradeL", "fracao", "colunas",
-                                                           "projecao", "lateralL")}, ensure_ascii=False))
+            print("       ", json.dumps({k: m[k] for k in ("palcoL", "uteisL", "gradeL", "colunas",
+                                                           "projecao", "lateralL", "margemEsq", "margemDir")},
+                                        ensure_ascii=False))
             print("        imagens:", json.dumps(m["imagens"], ensure_ascii=False))
-            checar("a GRADE usa pelo menos 95% da largura util do palco", m["fracao"] >= 0.95,
-                   f"{m['gradeL']} de {m['uteisL']} = {m['fracao']:.1%}")
             checar("a grade comeca e termina DENTRO do palco",
                    m["gradeEsq"] >= m["palcoEsq"] and m["gradeDir"] <= m["palcoDir"] + 1,
                    f"grade {m['gradeEsq']}..{m['gradeDir']} | palco {m['palcoEsq']}..{m['palcoDir']}")
+            # o que o dono pediu: sem faixa preta em volta de cada imagem. A sobra do palco vira margem
+            # SIMETRICA do painel — nunca tarja dentro da celula.
+            checar("o PAINEL esta CENTRADO no palco (margem esquerda = direita, ate' 2px)",
+                   abs(m["margemEsq"] - m["margemDir"]) <= 2,
+                   f"esquerda {m['margemEsq']} | direita {m['margemDir']}")
             checar("as QUATRO cameras estao na grade", len([i for i in m["imagens"] if i]) == 4,
                    str(len([i for i in m["imagens"] if i])))
 
-            print("\n== 2. a imagem e' a MAIOR que cabe, e INTEIRA (sem corte) ==")
+            print("\n== 2. a imagem ENCHE a celula, entra INTEIRA e e' MAIOR que a publicada ==")
             for i, im in enumerate(m["imagens"]):
                 if not im:
                     continue
-                cabe_na_largura = im["l"] <= im["caixaL"] + 1
-                checar(f"imagem {i + 1}: {im['l']}x{im['a']} nao passa da caixa e usa a altura ou a largura",
-                       cabe_na_largura and (im["l"] >= im["caixaL"] - 1 or im["a"] >= im["caixaA"] - 1),
-                       f"caixa {im['caixaL']}x{im['caixaA']}")
+                checar(f"imagem {i + 1}: ZERO faixa preta dentro da celula (ate' 2px de cada lado)",
+                       im["faixaCadaLado"] <= 2 and im["faixaCadaLadoA"] <= 2,
+                       f"celula {im['celulaL']}x{im['celulaA']} | imagem {im['l']}x{im['a']} | "
+                       f"faixa {im['faixaCadaLado']}x{im['faixaCadaLadoA']}")
                 checar(f"imagem {i + 1}: proporcao do VIDEO preservada (nada cortado)",
                        abs(im["razao"] - 16 / 9) < 0.02, str(im["razao"]))
                 checar(f"imagem {i + 1}: MAIOR que a da versao publicada ({ANTES_L}x{ANTES_A})",
                        im["l"] > ANTES_L * 1.2 and im["a"] > ANTES_A, f"{im['l']}x{im['a']}")
+                checar(f"imagem {i + 1}: o card fica SOBRE a imagem (nao come altura dela)",
+                       im["cardSobreAImagem"] and 0 < im["cardA"] <= 34, f"card {im['cardA']}px")
 
             print("\n== 3. o botao recolhe o MENU e devolve a largura ==")
             antes = pag.evaluate(JS_MEDIR)
@@ -221,11 +246,13 @@ def main() -> int:
             print("        palco:", antes["palcoL"], "->", depois["palcoL"], "| barra:",
                   antes["lateralL"], "->", depois["lateralL"], "| menu:", repr(depois["menu"]))
             checar("a barra lateral foi a ZERO", depois["lateralL"] == 0, str(depois["lateralL"]))
-            checar("o palco (e a grade) cresceram", depois["uteisL"] > antes["uteisL"]
-                   and depois["gradeL"] > antes["gradeL"],
+            checar("o palco cresceu (e a imagem tambem)", depois["uteisL"] > antes["uteisL"]
+                   and depois["gradeL"] >= antes["gradeL"],
                    f"{antes['uteisL']}->{depois['uteisL']} / {antes['gradeL']}->{depois['gradeL']}")
-            checar("e a grade continua usando o palco todo com o menu recolhido", depois["fracao"] >= 0.95,
-                   f"{depois['fracao']:.1%}")
+            checar("e o painel continua CENTRADO e sem faixa preta com o menu recolhido",
+                   abs(depois["margemEsq"] - depois["margemDir"]) <= 2
+                   and all(i["faixaCadaLado"] <= 2 for i in depois["imagens"] if i),
+                   f"margens {depois['margemEsq']}/{depois['margemDir']}")
             checar("o botao diz que agora ABRE o menu", "Abrir menu" in (depois["rotuloMenu"] or ""),
                    str(depois["rotuloMenu"]))
             checar("a barra recolhida fica fora do foco/leitor de tela",
@@ -251,7 +278,8 @@ def main() -> int:
         if falhas:
             print(f"FALHOU: {len(falhas)} — " + "; ".join(falhas))
             return 1
-        print("TUDO VERDE: a grade usa o palco inteiro, a imagem entra inteira (a maior que cabe) e o menu recolhe.")
+        print("TUDO VERDE: a celula tem a forma do video (zero faixa preta), o card flutua sobre a imagem, "
+              "o painel fica centrado e o menu recolhe.")
         return 0
     finally:
         api.terminate()

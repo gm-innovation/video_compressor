@@ -168,7 +168,7 @@ def main() -> int:
             pag.wait_for_selector(".controle-transmissao", timeout=ESPERA)
             pag.wait_for_load_state("networkidle")
 
-            print("\n== 1. a GRADE: o card fica ABAIXO da imagem e a imagem preenche o espaco ==")
+            print("\n== 1. a GRADE: o card flutua SOBRE o rodape da imagem e a imagem preenche a celula ==")
             jan = pag.locator(".janela").first
             checar("a janela tem a area da imagem (.img-cam) e o card (.card-cam)",
                    jan.locator(".img-cam").count() == 1 and jan.locator(".card-cam").count() == 1)
@@ -178,8 +178,13 @@ def main() -> int:
                 const card = j.querySelector('.card-cam').getBoundingClientRect();
                 return {topoImg: img.top, baseImg: img.bottom, topoCard: card.top, baseCard: card.bottom};
             }""")
-            checar("o card comeca onde a imagem termina (abaixo dela)",
-                   pos["topoCard"] >= pos["baseImg"] - 1.5, str(pos))
+            # CONTRATO TROCADO DE PROPOSITO (0.16.0, aprovado em 24/11/2026): o card deixou de ficar
+            # abaixo da imagem (comia 34 px de altura e encolhia o video) e passa a flutuar sobre o
+            # rodape dela. O que NAO pode mudar: ele continua DENTRO da janela e e' ele que carrega o
+            # controle de transmissao.
+            checar("o card flutua SOBRE o rodape da imagem (nao fica abaixo dela)",
+                   pos["topoCard"] >= pos["topoImg"] - 1 and pos["topoCard"] < pos["baseImg"] - 1
+                   and pos["baseCard"] <= pos["baseImg"] + 1.5, str(pos))
             checar("o controle de transmissao mora DENTRO do card (nao sobre o video)",
                    jan.locator(".card-cam > .controle-transmissao").count() == 1
                    and jan.locator(".janela > .controle-transmissao").count() == 0)

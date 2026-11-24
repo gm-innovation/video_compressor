@@ -211,10 +211,13 @@ function proporcaoDaGrade(grade) {
   return vistas.length ? Math.min.apply(null, vistas) : 16 / 9;
 }
 
-/* A GRADE OCUPA O PALCO INTEIRO (dono, 24/11/2026: "as imagens continuam ocupando metade do espaco
-   possivel na tela"). O que a grade faz e' escolher QUANTAS COLUNAS dao a MAIOR imagem (medindo a
-   area da imagem que cada hipotese entrega) e entregar as celulas em `1fr` — a sobra fica nas
-   celulas, nao em margem morta; quem se ajusta e' o `<video>` (`contain`, sem cortar). */
+/* A CELULA TEM A FORMA DO VIDEO E A GRADE CENTRALIZA O PAINEL (dono, 24/11/2026: "deve haver outra
+   forma de exibir as imagens sem ficar com essas faixas laterais pretas, sem cortar as imagens e sem
+   deixar os videos pequenos na tela"). O que a grade faz: escolhe QUANTAS COLUNAS dao a MAIOR imagem
+   (medindo a area que cada hipotese entrega) e, em vez de esticar a celula ate' a borda do palco (o que
+   virava tarja preta DENTRO da celula — medido: 176 px de cada lado no print de 1908x841), dimensiona a
+   trilha em px na PROPORCAO DO FLUXO e centra o painel: a sobra do palco vira margem simetrica, nao
+   faixa em volta de cada imagem. O card nao entra mais na conta — ele flutua SOBRE a imagem. */
 function ajustarGrade() {
   for (const grade of document.querySelectorAll('.grade-vms')) {
     const janelas = grade.querySelectorAll('.janela');
@@ -225,14 +228,11 @@ function ajustarGrade() {
     let ah = alvo.clientHeight - (parseFloat(est.paddingTop) || 0) - (parseFloat(est.paddingBottom) || 0);
     /* o que divide a altura com a grade (o topo do destaque, a tarja de vazio) sai da conta */
     for (const irmao of alvo.children) if (irmao !== grade && irmao.offsetHeight) ah -= irmao.offsetHeight;
-    const card = grade.querySelector('.card-cam');
-    const cardH = card ? card.offsetHeight : 0;
     const r = proporcaoDaGrade(grade);
     const n = janelas.length;
     /* QUANTAS COLUNAS DAO' A MAIOR IMAGEM (dono, 24/11/2026: "as telas ainda estao pequenas ... utilizem
-       o maior espaco possivel"). Antes o numero de colunas vinha de fora (2/3/4 por faixa de cameras) e
-       a imagem sobrava largura: em "Automatico" a grade passa a TESTAR de 1 a 4 colunas e fica com a que
-       der a maior imagem que cabe na tela. O modo manual (2x2 / 3x3 / 4x4) continua mandando sozinho. */
+       o maior espaco possivel"). Em "Automatico" a grade TESTA de 1 a 4 colunas e fica com a que der a
+       maior imagem que cabe na tela. O modo manual (2x2 / 3x3 / 4x4) continua mandando sozinho. */
     const manuais = S.auto ? 0 : (Number(grade.dataset.cols) || 0);
     const hipoteses = manuais ? [manuais] : [1, 2, 3, 4].filter((k) => k <= n);
     let melhor = null;
@@ -240,23 +240,29 @@ function ajustarGrade() {
       const linhas = Math.max(1, Math.ceil(n / cols));
       const celW = (aw - (cols - 1) * LACO_DA_GRADE) / cols;
       const celH = (ah - (linhas - 1) * LACO_DA_GRADE) / linhas;
-      const areaH = celH - cardH;                  // a imagem e' o que sobra do card na celula
-      if (!(celW > 40) || !(areaH > 20)) continue; // sem espaço: não mexe (a janela é pequena demais)
-      /* a IMAGEM (com `contain`) e' a maior que CABE na celula sem cortar: ou a largura manda, ou a
-         altura manda — e' o produto das duas que se compara entre as hipoteses. */
-      const imgL = Math.min(celW, areaH * r);
-      const imgA = imgL / r;
-      const area = imgL * imgA;
+      /* a CELULA tem a proporcao do video: a maior caixa que CABE na vaga (a largura manda ou a altura
+         manda). A area e' o que se compara entre as hipoteses. */
+      const larg = Math.min(celW, celH * r);
+      const alt = larg / r;
+      if (!(larg > 40) || !(alt > 20)) continue;  // sem espaço: não mexe (a janela é pequena demais)
+      const area = larg * alt;
       if (!melhor || area > melhor.area) {
-        melhor = { cols: cols, linhas: linhas, area: area, l: imgL, a: imgA };
+        melhor = { cols: cols, linhas: linhas, area: area, l: larg, a: alt };
       }
     }
     if (!melhor) continue;
-    /* a grade VAI ATE' A BORDA: celulas em 1fr (a sobra fica dentro da celula, junto da imagem) */
-    grade.style.gridTemplateColumns = 'repeat(' + melhor.cols + ', 1fr)';
-    grade.style.gridTemplateRows = 'repeat(' + melhor.linhas + ', 1fr)';
-    grade.style.justifyContent = 'stretch';
-    grade.style.alignContent = 'stretch';
+    /* trilhas em px NA PROPORCAO DO FLUXO + painel CENTRADO (a sobra fica no palco, entre o painel e a
+       borda — nunca entre a imagem e a borda da celula).
+       ARREDONDAR PARA INTEIRO TRAZ A FAIXA DE VOLTA: medido (janela de 1908x841), 646x363 de trilha
+       deixa a caixa da imagem 2,2 px mais larga que a imagem desenhada — 2,1 px de faixa de cada lado,
+       que foi reprovado na propria prova. Com a casa decimal a caixa fica exatamente na proporcao do
+       fluxo e a sobra vira fracao de pixel (a 1 px de borda de cada lado entra nessa conta). */
+    const l = Math.round(melhor.l * 100) / 100, a = Math.round(melhor.a * 100) / 100;
+    grade.style.setProperty('--razao', String(r));
+    grade.style.gridTemplateColumns = 'repeat(' + melhor.cols + ', ' + l + 'px)';
+    grade.style.gridTemplateRows = 'repeat(' + melhor.linhas + ', ' + a + 'px)';
+    grade.style.justifyContent = 'center';
+    grade.style.alignContent = 'center';
     grade.dataset.escolhidas = String(melhor.cols);
     grade.dataset.imagem = Math.round(melhor.l) + 'x' + Math.round(melhor.a);
   }

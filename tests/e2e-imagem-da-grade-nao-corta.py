@@ -16,7 +16,8 @@ O que se prova, num Chromium de verdade contra a API de verdade, com DOIS videos
   1) a IMAGEM que o olho ve tem a proporcao da camera (medida nos dois casos) — nada esticado, nada cortado;
   2) `object-fit:contain` => o quadro inteiro aparece e ocupa o maior tamanho que cabe na celula;
   3) a grade continua INTEIRA dentro do palco;
-  4) o card segue ABAIXO da imagem.
+  4) o card FLUTUA sobre o rodape da imagem (antes ele ficava abaixo e comia 34 px de altura —
+     contrato trocado de proposito na 0.16.0, aprovado em 24/11/2026).
 
     python tests/e2e-imagem-da-grade-nao-corta.py
 """
@@ -114,6 +115,7 @@ JS_MEDIR = """() => {
     proporcaoDoVideo: v.videoWidth / v.videoHeight,
     fit: getComputedStyle(v).objectFit,
     cardTopo: jan.querySelector('.card-cam').getBoundingClientRect().top,
+    cardBase: jan.querySelector('.card-cam').getBoundingClientRect().bottom,
     imgBase: caixa.bottom,
   };
 }"""
@@ -190,8 +192,12 @@ def main() -> int:
                    and m43["imagemA"] <= m43["caixaA"] + 1
                    and (m43["imagemL"] >= m43["caixaL"] - 1 or m43["imagemA"] >= m43["caixaA"] - 1),
                    f"imagem={m43['imagemL']:.0f}x{m43['imagemA']:.0f} caixa={m43['caixaL']:.0f}x{m43['caixaA']:.0f}")
-            checar("o card continua ABAIXO da imagem", m43["cardTopo"] >= m43["imgBase"] - 1.5,
-                   f"card={m43['cardTopo']:.1f} imagem={m43['imgBase']:.1f}")
+            # CONTRATO TROCADO DE PROPOSITO (0.16.0, aprovado em 24/11/2026): o card deixou de ficar
+            # ABAIXO da imagem porque era ele que comia 34 px de altura — e altura e' o que define o
+            # tamanho da imagem. Agora ele flutua SOBRE o rodape da imagem (dentro da celula).
+            checar("o card flutua SOBRE a imagem (nao come altura dela)",
+                   m43["cardTopo"] < m43["imgBase"] - 1 and m43["cardBase"] <= m43["imgBase"] + 1.5,
+                   f"card {m43['cardTopo']:.1f}..{m43['cardBase']:.1f} | base da imagem {m43['imgBase']:.1f}")
 
             print("\n== 3. camera 16:9 (1280x720): a imagem acompanha de novo ==")
             url169 = video_de_prova(tmp, 1280, 720)

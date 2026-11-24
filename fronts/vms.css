@@ -53,35 +53,39 @@ select.pil{padding:7px 9px}
    overflow:hidden do palco corta o contorno da janela selecionada (outline 2px + offset 1px
    ficam acima do topo do palco). Medido em 18/11/2026: padding-top 0 -> 2,6 px cortados. */
 .palco{flex:1;padding:12px 18px 8px;overflow:hidden;min-height:0;display:flex;flex-direction:column}
-/* A CELULA OCUPA A AREA INTEIRA DA GRADE (dono, 24/11/2026: "as imagens continuam ocupando metade do
-   espaco possivel na tela"). Antes a celula era OBRIGADA a ter a forma do video (`aspect-ratio`) e a
-   grade era centralizada: a altura mandava, a coluna parava de crescer e a largura que sobrava virava
-   margem morta FORA da grade (medido no print do dono em 1820x900: 917 px de grade num palco de 1500).
-   Agora a grade ocupa o palco inteiro e quem se ajusta e' o <video> (`object-fit:contain`): a imagem
-   fica do MAIOR tamanho que cabe sem cortar e a sobra vira faixa DENTRO da propria celula. */
-.grade-vms{display:grid;gap:5px;grid-auto-rows:1fr;align-content:stretch;align-items:stretch;height:100%}
-.g3{grid-template-columns:repeat(3,1fr)}
-.g4{grid-template-columns:repeat(4,1fr)}
-.g2{grid-template-columns:repeat(2,1fr)}
-.g1{grid-template-columns:1fr}
-/* A IMAGEM E' DA IMAGEM; INFORMACAO/ACAO VAI NO CARD ABAIXO (dono, 24/11/2026): "remover as informacoes e
-   botoes de cima da imagem, criar card abaixo da imagem da camera". */
-.janela{position:relative;display:flex;flex-direction:column;background:transparent;border:1px solid #16202f;
-  border-radius:5px;overflow:hidden;min-height:0;width:100%}
+/* A CELULA ABRACA O VIDEO (dono, 24/11/2026: "deve haver outra forma de exibir as imagens sem ficar
+   com essas faixas laterais pretas, sem cortar as imagens e sem deixar os videos pequenos"): quem manda
+   na forma da celula e' o VIDEO, nao o palco. A grade CENTRALIZA o painel (as colunas e linhas vem do
+   JS, em px, na proporcao do fluxo) e a sobra do palco vira margem simetrica — nao tarja em cada
+   celula. Medido no print de 1908x841 (menu recolhido): antes a celula era 934x364 (2,57:1) com o video
+   16:9 dentro dela, deixando 176 px de preto de cada lado (38% da celula); agora a imagem tem a celula
+   inteira e sai 646x364 (+23,1% de area). */
+/* `justify-content`/`align-content` CENTRAM AS TRILHAS (que vem em px do JS): a sobra do palco vira
+   margem simetrica. A celula ENCHE a trilha (`stretch`, o padrao) — nada de `justify-items:center`, que
+   deixaria a celula encolher para o tamanho do conteudo (a imagem e' `absolute`, logo o conteudo e' 0). */
+.grade-vms{display:grid;gap:5px;height:100%;justify-content:center;align-content:center;
+  justify-items:stretch;align-items:stretch}
+.g3{grid-template-columns:repeat(3,auto)}
+.g4{grid-template-columns:repeat(4,auto)}
+.g2{grid-template-columns:repeat(2,auto)}
+.g1{grid-template-columns:repeat(1,auto)}
+/* A IMAGEM E' DA IMAGEM; INFORMACAO/ACAO VAI NO CARD (dono, 24/11/2026). A celula tem a proporcao do
+   video (`--razao`) e a imagem ocupa a celula INTEIRA: zero faixa dentro dela. */
+.janela{position:relative;display:block;background:#000;border:1px solid #16202f;
+  border-radius:5px;overflow:hidden;min-height:0;min-width:0;aspect-ratio:var(--razao,1.7777778)}
 .janela.selecionada{outline:2px solid var(--azul);outline-offset:1px}
-/* a area DA IMAGEM e' o que sobra da celula depois do card (`flex:1`): a celula preenche a area da
-   grade e a imagem entra INTEIRA, do maior tamanho que cabe (o `<video>` e' `contain`) */
-.img-cam{position:relative;flex:1 1 auto;min-height:0;overflow:hidden;background:#000}
-/* `contain`: a imagem entra INTEIRA (a area ja esta na proporcao dela, entao nao sobra faixa) */
+/* a area DA IMAGEM e' a celula inteira: o card nao come mais altura (ele flutua SOBRE a imagem) */
+.img-cam{position:absolute;inset:0;overflow:hidden;background:#000}
+/* `contain`: a imagem entra INTEIRA (a caixa ja esta na proporcao dela, entao nao sobra faixa) */
 .janela video{width:100%;height:100%;object-fit:contain;display:block;background:#000}
-/* o CARD: nome/estado da camera + os botoes (energia, trecho, transmissao) ABAIXO da imagem.
-   UMA LINHA SO' E ALTURA FIXA (dono, 24/11/2026: "as telas ainda estao pequenas ... utilizem o maior
-   espaco possivel"). Medido: o card em 2-3 linhas comia ~110 px de altura e, como o tamanho da imagem
-   e' limitado pela ALTURA, era ele que encolhia o video (558x314 -> ~460x230). Com altura fixa o card
-   tambem para de crescer quando o estado muda ("Reconectar", contagem) — era isto o "diminui quando
-   reconecta". Os botoes passam a ser ICONE: o nome completo vive no `title` (mouse) e no `aria-label`. */
-.card-cam{flex:0 0 auto;display:flex;flex-wrap:nowrap;align-items:center;gap:6px;padding:2px 7px;
-  height:34px;background:#0d1420;border-top:1px solid var(--borda);min-width:0;overflow:hidden}
+/* o CARD: nome/estado da camera + os botoes (energia, trecho, transmissao) SOBRE a imagem, no rodape,
+   com gradiente (dono, 24/11/2026 — aprovado). Antes ele ficava ABAIXO da imagem e comia 34 px de
+   altura: como quem manda no tamanho da imagem e' a altura, era ele que encolhia o video. Os botoes
+   sao ICONE: o nome completo vive no `title` (mouse) e no `aria-label`. ALTURA FIXA para o card nao
+   crescer quando o estado muda ("Reconectar", contagem) — era isto o "diminui quando reconecta". */
+.card-cam{position:absolute;left:0;right:0;bottom:0;z-index:2;display:flex;flex-wrap:nowrap;align-items:center;
+  gap:6px;padding:2px 7px;height:34px;background:linear-gradient(180deg,rgba(4,8,14,0) 0%,rgba(4,8,14,.62) 38%,
+  rgba(4,8,14,.84) 100%);min-width:0;overflow:hidden}
 .marca-dagua{position:absolute;top:5px;right:7px;font-family:'JetBrains Mono',Consolas,monospace;font-size:10.5px;
   color:#e8eef8;text-shadow:0 1px 2px #000;background:rgba(0,0,0,.35);padding:1px 5px;border-radius:3px}
 /* `order:-1`: o NOME da camera e' o primeiro da linha (o card e' construido com os controles antes) */

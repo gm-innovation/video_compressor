@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<style>
+  :root{--tinta:var(--foreground,#e8eef7);--fraco:var(--muted-foreground,#93a4bd);--borda:var(--border,#26364d);--fundo:#0b1420;--celula:#101d2e;}
+  *{box-sizing:border-box}
+  body{font:13px/1.45 system-ui,sans-serif;color:var(--tinta);margin:0}
+  h1{font-size:14px;margin:0 0 2px}
+  .sub{color:var(--fraco);font-size:11.5px;margin-bottom:10px}
+  .par{display:grid;gap:14px}
+  .quadro{border:1px solid var(--borda);border-radius:8px;padding:8px;background:var(--fundo)}
+  .rot{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--fraco);margin-bottom:6px}
+  .rot b{color:var(--tinta);letter-spacing:0;text-transform:none;font-size:12px}
+  .palco{position:relative;background:#05090f;border-radius:4px}
+  /* ANTES: grade 1872x732 útil, células 934x364, imagem 582x328 (faixa 176 de cada lado), card 34 */
+  .antes .palco{width:936px;height:366px;padding:1px;display:grid;grid-template-columns:1fr 1fr;gap:2px}
+  .antes .janela{background:var(--celula);display:flex;flex-direction:column;overflow:hidden}
+  .antes .imgbox{flex:1;display:flex;align-items:center;justify-content:center}
+  .antes .img{width:291px;height:164px;background:linear-gradient(135deg,#3c5c86,#22384f)}
+  .card{height:17px;background:#16283d;display:flex;align-items:center;justify-content:space-between;padding:0 5px;font-size:9px;color:#b8c8dd}
+  .selo{color:#7fd6a3}
+  /* DEPOIS: a imagem manda na forma. 2x2, imagem 646x364, card SOBRE a imagem */
+  .depois .palco{width:936px;height:366px;display:flex;align-items:center;justify-content:center}
+  .grade{display:grid;grid-template-columns:1fr 1fr;gap:2px}
+  .depois .janela{position:relative;width:323px;height:182px;background:#05090f}
+  .depois .img{position:absolute;inset:0;background:linear-gradient(135deg,#3c5c86,#22384f)}
+  .depois .card{position:absolute;left:0;right:0;bottom:0;height:16px;background:linear-gradient(transparent,rgba(3,7,12,.85) 45%)}
+  .mede{color:var(--fraco);font-size:11px;margin-top:7px}
+  .mede b{color:var(--tinta)}
+  .ganho{color:#7fd6a3}
+  .nota{color:var(--fraco);font-size:11px;margin-top:12px;border-left:2px solid var(--borda);padding-left:8px}
+</style>
+<h1>Transmissões ao vivo — o que ocupa o quê (escala real, janela 1908×841, menu recolhido)</h1>
+<div class="sub">Mesma área de palco nos dois quadros. A barra preta é o vídeo; o resto é sobra.</div>
+
+<div class="par">
+  <div class="quadro antes">
+    <div class="rot">Antes · <b>célula 934×364 · imagem 582×328 · 176 px de faixa preta de cada lado</b></div>
+    <div class="palco">
+      <div class="janela"><div class="imgbox"><div class="img"></div></div><div class="card"><span>USB Video (1)</span><span class="selo">● no ar · 13:33</span></div></div>
+      <div class="janela"><div class="imgbox"><div class="img"></div></div><div class="card"><span>USB Video (2)</span><span class="selo">● no ar · 13:36</span></div></div>
+      <div class="janela"><div class="imgbox"><div class="img"></div></div><div class="card"><span>USB2 Video</span><span class="selo">● no ar · 13:38</span></div></div>
+      <div class="janela"><div class="imgbox"><div class="img"></div></div><div class="card"><span>Bancada — câmera 1 · 1280x720</span><span>parada</span></div></div>
+    </div>
+    <div class="mede">imagem <b>582×328</b> por câmera · sobra preta <b>352 px</b> da célula (38%) em cada quadro</div>
+  </div>
+
+  <div class="quadro depois">
+    <div class="rot">Depois · <b>célula = imagem 646×364 · zero faixa interna · card sobre a imagem</b></div>
+    <div class="palco">
+      <div class="grade">
+        <div class="janela"><div class="img"></div><div class="card"><span>USB Video (1)</span><span class="selo">● no ar · 13:33</span></div></div>
+        <div class="janela"><div class="img"></div><div class="card"><span>USB Video (2)</span><span class="selo">● no ar · 13:36</span></div></div>
+        <div class="janela"><div class="img"></div><div class="card"><span>USB2 Video</span><span class="selo">● no ar · 13:38</span></div></div>
+        <div class="janela"><div class="img"></div><div class="card"><span>Bancada — câmera 1 · 1280x720</span><span>parada</span></div></div>
+      </div>
+    </div>
+    <div class="mede">imagem <b>646×364</b> por câmera — <span class="ganho">+23,1% de área</span> — e o preto que sobra fica como margem do painel, não como tarja em volta de cada vídeo</div>
+  </div>
+</div>
+
+<div class="nota">Sem cortar. A sobra não some (4 vídeos 16:9 não preenchem um palco 2,56:1 sem cortar): ela deixa de ser tarja <b>dentro</b> de cada célula e as imagens ficam <b>maiores</b>.</div>

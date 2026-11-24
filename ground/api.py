@@ -39,6 +39,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # SEM trocar de aplicativo. Para isso o servidor LOCAL responde a origem do lado terra do proprio
 # cliente nas rotas de captura. Fechado por padrao: so' as origens declaradas abaixo (ou a lista de
 # LECSOR_CORS_ORIGENS) recebem o cabecalho; qualquer outra origem fica sem CORS e o navegador bloqueia.
+# Esta lista responde a DUAS perguntas diferentes — quem decide cada uma e' `eh_rota_de_captura`
+# (roteamento: a rota e' desta maquina) e `eh_rota_de_captura_cors` (CORS: quem de fora pode chama-la).
 ROTAS_CAPTURA = ("/api/dispositivos", "/api/envios", "/api/ingestao", "/api/ingestoes",
                  "/api/compressao", "/api/compressoes", "/api/medicoes", "/api/trecho", "/api/captura",
                  "/api/publicacao", "/api/cameras/publicar",
@@ -89,8 +91,28 @@ def origens_captura() -> tuple:
 
 
 def eh_rota_de_captura(rota: str) -> bool:
+    """Esta rota e' DESTA maquina (roteamento): aqui ela nao vai para o lado terra."""
     if rota in ROTAS_CAPTURA_LOCAIS:
         return True
+    return any(rota == r or rota.startswith(r + "/") for r in ROTAS_CAPTURA)
+
+
+def eh_rota_de_captura_cors(rota: str) -> bool:
+    """Rotas que a pagina do LADO TERRA chama AQUI, de outra origem (so' estas levam CORS).
+
+    Duas perguntas DIFERENTES, que ja' estiveram juntas e nao podiam estar (medido em 24/11/2026):
+
+      * "de quem e' esta rota?" (roteamento) -> `eh_rota_de_captura`, que inclui as ROTAS_CAPTURA_LOCAIS
+        (entrar/sair/eu/cameras/licenca/bordo): quem esta' sentado nesta maquina entra AQUI;
+      * "quem de fora pode chama-la pelo navegador?" (CORS) -> SO' as rotas do Admin que a pagina do
+        lado terra chama nesta maquina (a tela "Enviar video"). E' a mesma lista que o front usa em
+        `admin/admin.js` (`ROTAS_CAPTURA`).
+
+    A entrada, o cadastro e a licenca sao servidos pela MESMA origem que os usa: nao precisam de CORS
+    e nao podem te-lo (uma origem declarada poderia entrar/agir no lugar da pessoa). Com a lista unica,
+    `/api/eu` respondia `Access-Control-Allow-Origin` e o pre-voo devolvia 204 — provas 04 e 05 de
+    `tests/test_captura_no_admin.py`.
+    """
     return any(rota == r or rota.startswith(r + "/") for r in ROTAS_CAPTURA)
 from ingestao import iniciar as ing_iniciar, parar as ing_parar, listar as ing_listar  # noqa: E402
 from ingestao import desligar_camera as ing_desligar_camera, ligar_camera as ing_ligar_camera  # noqa: E402
@@ -2099,7 +2121,7 @@ class Handler(SimpleHTTPRequestHandler):
         maquina para listar as cameras plugadas e repassar o fluxo — sem abrir a captura para
         qualquer origem: origem nao declarada fica sem cabecalho e o proprio navegador bloqueia.
         """
-        if not eh_rota_de_captura(rota):
+        if not eh_rota_de_captura_cors(rota):
             return {}
         origem = self.headers.get("Origin")
         if not origem or origem not in origens_captura():
@@ -2437,9 +2459,13 @@ class Handler(SimpleHTTPRequestHandler):
                     pass
 
     def do_OPTIONS(self) -> None:  # noqa: N802
-        """Pre-voo do navegador nas rotas de captura (e' assim que o Admin fala com esta maquina)."""
+        """Pre-voo do navegador nas rotas de CAPTURA (e' assim que o Admin fala com esta maquina).
+
+        Entrada/cadastro/licenca NAO entram aqui: sao da MESMA origem que as usa, entao pre-voo nelas
+        e' 405 (nao existe origem de fora a autorizar). Ver `eh_rota_de_captura_cors`.
+        """
         rota = urlparse(self.path).path
-        if not eh_rota_de_captura(rota):
+        if not eh_rota_de_captura_cors(rota):
             return self._json(405, {"erro": "metodo nao permitido"})
         cab = self._cors(rota)
         self.send_response(204)

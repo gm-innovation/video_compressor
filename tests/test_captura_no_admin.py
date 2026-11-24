@@ -11,7 +11,9 @@ O que esta prova mede (nada de "deve funcionar"):
   2) `desktop/configuracao.js` NAO troca a base (as telas) quando `capturaLocal` esta ligado: o Admin
      continua no lado terra, logado; o pacote do tecnico a bordo continua igual ao de antes;
   3) as rotas da tela "Enviar video" do Admin (dispositivos, ingestao, compressao, envios) sao de
-     captura; as de cadastro/login (`/api/entrar`, `/api/eu`, `/api/cameras`, `/api/usuarios`) NAO sao;
+     captura E levam CORS; as de cadastro/login (`/api/entrar`, `/api/eu`, `/api/cameras`) sao DESTA
+     maquina (a pessoa entra aqui) mas NAO levam CORS — as do lado terra (`/api/usuarios`,
+     `/api/clientes`) nao sao nem uma coisa nem outra;
   4) o aplicativo diz a interface para onde ir (`preload.js` -> `enderecoDaCaptura`) e a tela roteia
      (`admin.js` -> `urlDeCaptura`/`fetchCaptura`), com os nomes certos: "Enviar video" e'
      "Teste de video (bancada)".
@@ -146,22 +148,37 @@ class CORSDeVerdade(unittest.TestCase):
 
 
 class RotasDeCaptura(unittest.TestCase):
-    """A lista de rotas e' a fronteira: captura sim, cadastro/login nunca."""
+    """Sao DUAS fronteiras, e o codigo ja' as confundiu uma vez (medido em 24/11/2026):
+
+      * ROTEAMENTO (`eh_rota_de_captura`): de quem e' a rota. Entrada/cadastro/cameras/licenca/bordo
+        sao DESTA maquina — quem esta' sentado nela entra AQUI (senao a sessao so' existiria do outro
+        lado e o bordo ficaria sem a camera que ele mesmo cadastrou);
+      * CORS (`eh_rota_de_captura_cors`): quem de fora pode chamar pelo navegador. So' as rotas da
+        tela "Enviar video" — as que a pagina do lado terra chama nesta maquina.
+    """
 
     @classmethod
     def setUpClass(cls):
         cls.api = carrega_api()
 
-    def test_rotas_da_tela_enviar_video_sao_de_captura(self):
+    def test_rotas_da_tela_enviar_video_sao_de_captura_e_tem_cors(self):
         for rota in ("/api/dispositivos", "/api/envios/destino", "/api/ingestao/comprimir",
                      "/api/ingestao/ao-vivo", "/api/ingestoes", "/api/compressoes",
                      "/api/compressao/publicar", "/api/medicoes"):
             self.assertTrue(self.api.eh_rota_de_captura(rota), f"faltou rota de captura: {rota}")
+            self.assertTrue(self.api.eh_rota_de_captura_cors(rota), f"faltou CORS na rota de captura: {rota}")
 
-    def test_rotas_de_cadastro_e_login_nao_sao_de_captura(self):
-        for rota in ("/api/entrar", "/api/eu", "/api/cameras", "/api/usuarios", "/api/clientes",
-                     "/api/primeiro-acesso", "/api/fluxos"):
+    def test_entrada_e_cadastro_sao_DESTA_maquina_mas_nao_tem_cors(self):
+        for rota in ("/api/entrar", "/api/eu", "/api/sair", "/api/cameras", "/api/licenca",
+                     "/api/licenca/ativar", "/bordo", "/api/bordo/serie"):
+            self.assertTrue(self.api.eh_rota_de_captura(rota), f"esta rota e' desta maquina: {rota}")
+            self.assertFalse(self.api.eh_rota_de_captura_cors(rota), f"cadastro/login ganhou CORS: {rota}")
+
+    def test_rotas_do_lado_terra_nao_sao_de_captura(self):
+        for rota in ("/api/usuarios", "/api/clientes", "/api/primeiro-acesso", "/api/fluxos",
+                     "/api/embarcacoes", "/api/licencas"):
             self.assertFalse(self.api.eh_rota_de_captura(rota), f"cadastro virou captura: {rota}")
+            self.assertFalse(self.api.eh_rota_de_captura_cors(rota), f"rota do terra ganhou CORS: {rota}")
 
     def test_nada_de_origem_aberta(self):
         self.assertNotIn("*", self.api.origens_captura())
