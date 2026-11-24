@@ -58,6 +58,9 @@ async function abrir() {
   if (S.embarcacoes.length) S.embarcacaoId = S.embarcacoes[0].id;
   await atualizar();
   if (!S.timer) S.timer = setInterval(atualizar, 5000);
+  // RELOGIO DE 1 s DA CONTAGEM (dono, 24/11/2026): o contador da transmissao anda a cada segundo na
+  // propria tela, sem depender do ciclo de 5 s do servidor — o cliente ve o tempo correndo de fato.
+  if (!S.tick) S.tick = setInterval(tickDaContagem, 1000);
 }
 
 /* Observador (tipo 4 — Petrobras, plano de 19/11/2026, Fase 4): o radar de oleo de todas as
@@ -93,6 +96,9 @@ async function abrirObservador() {
   await trocarTela('visualizar');
   await atualizar();
   if (!S.timer) S.timer = setInterval(atualizar, 5000);
+  // RELOGIO DE 1 s DA CONTAGEM (dono, 24/11/2026): o contador da transmissao anda a cada segundo na
+  // propria tela, sem depender do ciclo de 5 s do servidor — o cliente ve o tempo correndo de fato.
+  if (!S.tick) S.tick = setInterval(tickDaContagem, 1000);
 }
 
 async function atualizar() {
@@ -113,7 +119,10 @@ async function atualizar() {
     for (const ag of (an.corpo.agentes || [])) S.agentesPorCamera[ag.camera_id] = ag;
   }
   if (S.tela === 'alertas' || S.tela === 'relatorios') await dadosExtras();
-  if (S.tela === 'transmissao' || S.tela === 'configuracao' || S.tela === 'gravacoes') await carregarTransmissao();
+  // a GRADE tambem precisa das transmissoes abertas: e' nela que o cliente inicia/para a transmissao,
+  // ve a contagem e o "Reconectar" (dono, 24/11/2026 — os controles sairam da tela "Transmitir").
+  if (S.tela === 'transmissao' || S.tela === 'configuracao' || S.tela === 'gravacoes'
+      || S.tela === 'visualizar') await carregarTransmissao();
   if (S.tela === 'radar_hd') await carregarHd();
   if (S.tela === 'visualizar') {
     if (mudouLista || !$('palco').dataset.montado) desenharVisualizar();
@@ -250,6 +259,15 @@ function desenharVisualizar() {
     ctrlT.appendChild(bD);
     jan.ondblclick = (ev) => { ev.stopPropagation(); abrirDestaque([c.id]); };
     jan.appendChild(ctrlT);
+    /* TRANSMISSAO NO PROPRIO QUADRO (dono, 24/11/2026): o cliente inicia/para a transmissao AQUI,
+       ve a contagem regressiva, recebe o aviso do ultimo minuto ("quer continuar conectado?"), tem o
+       botao de gravar e o "Reconectar" quando a sessao cai. Antes isso so' existia na tela
+       "Transmitir" — que o dono nao usava; agora vale na tela em que ele esta'. */
+    const ctrlS = document.createElement('span');
+    ctrlS.className = 'controle-transmissao';
+    ctrlS.dataset.st = c.id;
+    jan.appendChild(ctrlS);
+    montarControle(c, ctrlS, jan);
     const linhaT = document.createElement('div'); linhaT.className = 'trecho-linha'; linhaT.style.display = 'none';
     jan.appendChild(linhaT);
     jan.appendChild(marca); jan.appendChild(caixas); jan.appendChild(rot);
@@ -752,11 +770,133 @@ function desenharTela() {
   }
 }
 
+/* Redesenha a TELA que esta' aberta depois de mexer numa transmissao. Na GRADE nao se remonta o palco
+   (remontar recria os <video> e a imagem pisca): so' o quadro de controle de cada janela e' repintado
+   (dono, 24/11/2026 — sem isto o botao ficava "pedindo…" para sempre na grade). */
+function redesenharTransmissao() {
+  if (S.tela !== 'visualizar') { desenharTela(); return; }
+  const palco = $('palco');
+  for (const c of (S.cameras || [])) {
+    const el = palco.querySelector(`[data-st="${c.id}"]`);
+    if (el) atualizarControle(c, el);
+  }
+}
+
 /* ---------------------------------------------- transmissao a pedido do cliente (17/11/2026)
    O CLIENTE abre a transmissao pela web; a ordem nasce no lado terra e vai ate' a maquina de captura
    da embarcacao. A tela bate um "estou aqui" enquanto esta' aberta: fechou a tela ou desligou o
    computador, o lado terra derruba SO' a sessao de quem fechou — se outro cliente esta' vendo, a
    transmissao continua para ele. */
+/* ===================== transmissao NO QUADRO (dono, 24/11/2026) =====================
+   O que o dono fixou: (a) a transmissao vive so' enquanto ALGUEM assiste — saiu o cliente e
+   ninguem mais esta' vendo, para (ele testou: "sai da tela e continuou transmitindo"); (b) a tela
+   mostra o tempo que falta, avisa no ULTIMO MINUTO perguntando se quer continuar (D1=1 minuto),
+   e se nao houver resposta DESLIGA (D2= "silencio desliga"); (c) depois de cair aparece "Reconectar";
+   (d) um botao para gravar (so' o que ja' chegou no lado terra — D4). Tudo na tela que ele usa. */
+
+/* Qual sessao MINHA existe nesta camera agora, e se ja' houve alguma (para "Iniciar" x "Reconectar"). */
+function sessaoDaCamera(camId) {
+  const t = S.transmissao || {};
+  const meu = (S.usuario || {}).email;
+  const abertas = (t.abertas || []).filter((x) => x.camera_id === camId);
+  const minha = abertas.find((x) => x.usuario_email === meu) || null;
+  const quantos = new Set(abertas.map((x) => x.usuario_email)).size;
+  const jaViu = !!minha || (t.historico || []).some((x) => x.camera_id === camId && x.usuario_email === meu);
+  return { minha, quantos, jaViu };
+}
+
+function _bt(papel, texto, classe) {
+  const b = document.createElement('button');
+  b.dataset.papel = papel; b.className = (classe || 'botao-st'); b.textContent = texto;
+  return b;
+}
+
+/* Monta o quadro de controle UMA vez; o criador de texto fica em atualizarControle (roda a cada 1 s). */
+function montarControle(c, el, jan) {
+  el.innerHTML = '';
+  const est = document.createElement('span'); est.dataset.papel = 'estado'; est.className = 'st-estado';
+  const cont = document.createElement('span'); cont.dataset.papel = 'contagem'; cont.className = 'st-contagem';
+  const aviso = document.createElement('div'); aviso.dataset.papel = 'aviso'; aviso.className = 'st-aviso';
+  el.append(est, cont, _bt('iniciar', 'Iniciar transmissão'), _bt('gravar', 'Gravar (no lado terra)'),
+            _bt('parar', 'Parar transmissão'), aviso);
+  atualizarControle(c, el);
+}
+
+/* Reconstrói o estado do controle a partir da sessao ATUAL. Roda a cada 1 s (relogio) e a cada
+   atualizacao de 5 s — por isso so' troca TEXTO; os botoes do aviso sao montados uma vez por sessao
+   (senao o clique do cliente era engolido pela reconstrucao do botao no meio do segundo). */
+function atualizarControle(c, el) {
+  const { minha, quantos, jaViu } = sessaoDaCamera(c.id);
+  const q = (p) => el.querySelector(`[data-papel="${p}"]`);
+  const est = q('estado'), cont = q('contagem'), aviso = q('aviso');
+  const bIni = q('iniciar'), bGrav = q('gravar'), bPar = q('parar');
+  const avisoSeg = (S.transmissao && S.transmissao.aviso_segundos) || 60;
+  const restante = minha && minha.termina_em
+    ? Math.round((new Date(minha.termina_em).getTime() - Date.now()) / 1000) : 0;
+  est.textContent = ''; cont.textContent = '';
+  aviso.classList.remove('mostra');
+  bIni.style.display = 'none'; bGrav.style.display = 'none'; bPar.style.display = 'none';
+
+  if (!minha) {
+    aviso.dataset.sig = '';
+    if (quantos > 0) { est.className = 'st-estado ok'; est.textContent = 'no ar — outro cliente assistindo'; }
+    else { est.className = 'st-estado' + (c.no_ar ? ' ok' : ''); est.textContent = c.no_ar ? 'no ar agora' : 'parada'; }
+    bIni.style.display = ''; bIni.disabled = false;
+    bIni.textContent = jaViu ? 'Reconectar' : 'Iniciar transmissão';
+    bIni.onclick = (ev) => { ev.stopPropagation(); pedirTransmissao(c.id, bIni); };
+    return;
+  }
+  const vivo = minha.estado === 'no_ar' || minha.estado === 'pedida';
+  est.className = 'st-estado ok';
+  est.textContent = minha.estado === 'no_ar' ? 'no ar' : 'conectando…';
+  if (quantos > 1) est.textContent += ' (' + quantos + ' assistindo)';
+  cont.textContent = vivo ? '· ' + mmss(Math.max(0, restante)) : '';
+  if (!vivo) { aviso.dataset.sig = ''; return; }
+
+  const gravando = !!minha.gravando || !!(minha.gravacao && minha.gravacao.gravando);
+  bGrav.style.display = ''; bGrav.classList.toggle('on', gravando);
+  bGrav.textContent = gravando ? 'Parar gravação' : 'Gravar (no lado terra)';
+  bGrav.onclick = (ev) => { ev.stopPropagation(); marcarGravando(minha.id, !gravando, bGrav); };
+  bPar.style.display = ''; bPar.textContent = 'Parar transmissão';
+  bPar.onclick = (ev) => { ev.stopPropagation(); pararTransmissao(minha.id, bPar); };
+
+  /* AVISO DO ULTIMO MINUTO (D1/D2): pergunta se quer continuar. Nao ha resposta "automatica": se o
+     cliente nao clicar, a sessao expira no prazo sozinha e o botao vira "Reconectar" — que e' o que
+     o dono pediu ("silencio desliga"). */
+  if (restante <= avisoSeg) {
+    const sig = 'aviso|' + minha.id;
+    if (aviso.dataset.sig !== sig) {
+      aviso.dataset.sig = sig; aviso.innerHTML = '';
+      const t = document.createElement('span'); t.className = 'st-aviso-txt'; t.dataset.papel = 'aviso-txt';
+      const bc = _bt('continuar', 'Continuar conectado', 'botao-st ok');
+      bc.onclick = (ev) => { ev.stopPropagation(); continuarTransmissao(minha.id, bc); };
+      const bn = _bt('nao', 'Não, encerrar', 'botao-st');
+      bn.onclick = (ev) => { ev.stopPropagation(); pararTransmissao(minha.id, bn); };
+      aviso.append(t, bc, bn);
+    }
+    aviso.classList.add('mostra');
+    const txt = aviso.querySelector('[data-papel="aviso-txt"]');
+    if (txt) txt.textContent = 'Sua transmissão será encerrada em ' + mmss(Math.max(0, restante)) + '. Continuar conectado?';
+  } else { aviso.dataset.sig = ''; aviso.innerHTML = ''; }
+}
+
+function tickDaContagem() {
+  if (S.tela !== 'visualizar') return;
+  const palco = $('palco');
+  for (const c of (S.cameras || [])) {
+    const el = palco.querySelector(`[data-st="${c.id}"]`);
+    if (el) atualizarControle(c, el);
+  }
+}
+
+async function continuarTransmissao(tid, botao) {
+  if (botao) { botao.disabled = true; botao.textContent = 'continuando…'; }
+  const d = await api('/api/transmissao/' + tid + '/continuar', { method: 'POST', body: '{}' });
+  if (!d.ok) alert((d.corpo && d.corpo.erro) || 'não deu para continuar a transmissão');
+  await carregarTransmissao();
+  redesenharTransmissao();
+}
+
 async function carregarTransmissao() {
   if (!S.embarcacaoId) return;
   const d = await api('/api/transmissao?embarcacao=' + encodeURIComponent(S.embarcacaoId));
@@ -800,7 +940,7 @@ async function jaBaixei(g, botao) {
   }
   marcarBaixado(g.transmissao_id);
   await carregarTransmissao();
-  desenharTela();
+  redesenharTransmissao();
 }
 
 function minutosAte(carimbo) {
@@ -874,7 +1014,7 @@ async function pedirTransmissao(cameraId, botao) {
     return;
   }
   await carregarTransmissao();
-  desenharTela();
+  redesenharTransmissao();
 }
 
 function emMB(bytes) { return (Math.max(0, bytes || 0) / 1048576).toFixed(1) + ' MB'; }
@@ -885,7 +1025,7 @@ async function marcarGravando(tid, ligado, botao) {
   const d = await api('/api/transmissao/' + tid + '/gravando',
     { method: 'POST', body: JSON.stringify({ gravando: !!ligado }) });
   await carregarTransmissao();
-  desenharTela();
+  redesenharTransmissao();
   if (!d.ok) alert((d.corpo && d.corpo.erro) || 'não deu para gravar');
 }
 
@@ -893,7 +1033,7 @@ async function pararTransmissao(tid, botao) {
   if (botao) { botao.disabled = true; botao.textContent = 'parando…'; }
   await api('/api/transmissao/' + tid + '/encerrar', { method: 'POST', body: '{}' });
   await carregarTransmissao();
-  desenharTela();
+  redesenharTransmissao();
 }
 
 /* O "estou aqui": enquanto esta' tela estiver aberta a sessao vive. E' o que faz fechar a tela (ou
@@ -1044,7 +1184,7 @@ function desenharConfiguracao() {
     if (!r.ok) { alert((r.corpo && r.corpo.erro) || 'não deu para gravar'); return; }
     tempoEscolhido = null;          // gravou: o servidor passa a ser a verdade
     await carregarTransmissao();
-    desenharTela();
+    redesenharTransmissao();
   };
   const acoes = document.createElement('div'); acoes.className = 'acoes-transmissao';
   acoes.appendChild(b);

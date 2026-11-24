@@ -39,6 +39,12 @@ def _banco() -> pathlib.Path:
 
 
 def _versao_app() -> str:
+    # A VERSAO DO APP QUE ESTA' RODANDO (24/11/2026): quem manda e' o Electron (`app.getVersion()`, no
+    # `desktop/main.js`), porque no PACOTE nao existe `desktop/package.json` — e o retrato subia com
+    # `versao_app` vazio, deixando o admin sem saber qual versao estava no barco.
+    v = (os.environ.get("LECSOR_VERSAO_APP") or "").strip()
+    if v:
+        return v
     for nome in ("VERSION", "versao.txt"):
         p = RAIZ / nome
         try:

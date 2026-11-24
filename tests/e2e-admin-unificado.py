@@ -275,13 +275,23 @@ def main() -> int:
             con.close()
             checar("desativar tira a camera de circulacao no banco", bool(ativo) and ativo[0] == 0, f"{ativo}")
 
-            print("\n== 7. 'ligar agora' da' retorno na cara e a chave se gera na embarcacao ==")
-            carta_varredura.locator("text=ligar agora").click()
-            pag.wait_for_timeout(1500)
-            corpo = palco(pag)
-            checar("ligar/desligar responde na tela (nunca silencio)",
-                   ("ordem" in corpo.lower() or "captura" in corpo.lower()),
-                   corpo[-300:].replace("\n", " | "))
+            print("\n== 7. D3: o admin NAO tem 'ligar agora' (so' quem assiste liga) e a chave se gera na embarcacao ==")
+            # D3 do dono (24/11/2026): "nao tem ligar agora do admin, so quem visualiza e' o cliente".
+            # O admin NAO liga camera — quem liga e' a sessao de quem esta' assistindo.
+            checar("o cartao da camera NAO oferece 'ligar agora' (D3)",
+                   carta_varredura.locator("text=ligar agora").count() == 0)
+            tok = hashlib.sha256(os.urandom(16)).hexdigest()
+            con = sqlite3.connect(str(banco))
+            con.execute("""INSERT INTO sessoes (token,usuario_id,expira_em) VALUES (?,?,?)
+                           ON CONFLICT(token) DO NOTHING""", (tok, "admin", "2099-01-01T00:00:00-03:00"))
+            con.commit(); con.close()
+            st, _r = pedir("POST", base + "/api/cameras/ligar", {"camera_id": CAM_VARREDURA}, cookie=tok)
+            con = sqlite3.connect(str(banco))
+            man = con.execute("SELECT COALESCE(manual,'') FROM desejo_camera WHERE camera_id=?",
+                              (CAM_VARREDURA,)).fetchone()
+            con.close()
+            checar("e o 'ligar' do admin nao grava manual='ligar' (D3)",
+                   (man is None) or (man[0] != "ligar"), f"HTTP {st}, manual={man}")
             pag.locator("text=Gerar chave").first.click()
             ok = esperar_texto(pag, "Digite esta chave no aplicativo")
             chave = ""

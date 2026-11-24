@@ -517,6 +517,10 @@ function aplicar() { for (const [, j] of janelas) j.setFullScreen(config.modoQui
 
 app.whenReady().then(async () => {
   menu();
+  // A VERSAO DO APP VAI PARA O SERVIDOR (24/11/2026): o retrato de saude do bordo reportava `versao_app`
+  // VAZIO porque `saude_do_bordo._versao_app()` procura `VERSION`/`desktop/package.json` DENTRO do pacote
+  // (nao existem la). Quem sabe a versao e' o proprio Electron — entao ela entra pelo ambiente aqui.
+  try { process.env.LECSOR_VERSAO_APP = app.getVersion(); } catch (e) { /* sem versao nao quebra nada */ }
   try { app.setLoginItemSettings({ openAtLogin: !!config.abrirComWindows }); } catch (e) {}
   if (config.servidorLocal && config.servidorLocal.ligado) {
     const r = servidor.subir(config);

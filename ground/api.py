@@ -378,6 +378,10 @@ TEMPOS_DE_TRANSMISSAO = (300, 900, 1800, 3600, 7200)      # 5, 15, 30, 60 e 120 
 TEMPO_MAXIMO_PADRAO = 900
 SEGUNDOS_SEM_BATIMENTO = 60        # tela fechada / computador desligado: sem "estou aqui", a sessao morre
 SEGUNDOS_SEM_RESPOSTA = 30         # a maquina de captura nao respondeu a ordem (nunca foi entregue)
+# AVISO DE 1 MINUTO ANTES DE CORTAR (dono, 24/11/2026, D1/D2): a tela pergunta "quer continuar
+# conectado?" no ultimo minuto da sessao; sem o clique em "continuar" a sessao expira no prazo
+# normal (o padrao e' desligar; seguir exige a acao do cliente).
+AVISO_SEGUNDOS = 60
 SEGUNDOS_ENTREGA_LENTA = 90        # a ordem foi entregue e a maquina nunca contou o que houve
 
 
@@ -488,9 +492,11 @@ def _desejo_das_cameras(embarcacao_id: str) -> list[dict]:
             quem = ", ".join(sorted({str(v["usuario_email"] or "tela") for v in vivas}))[:150]
             motivo = f"{len(vivas)} sessao(oes) assistindo: {quem}"
             tid = vivas[0]["id"]
-        elif manual == "ligar":
-            desejo, motivo, tid = "ligar", "o operador ligou esta camera na mao", ""
         else:
+            # D3 do dono (24/11/2026): "nao tem ligar agora do admin, so quem visualiza e' o cliente".
+            # NAO existe mais o desejo manual de LIGAR — quem sustenta o `ligar` e' a SESSAO VIVA de quem
+            # esta' assistindo (qualquer computador). Sem sessao, o desejo e' parar, sempre. (O
+            # `manual=='parar'` acima continua valendo: a operacao pode desligar na mao.)
             desejo, motivo, tid = "parar", "ninguem esta' assistindo", ""
         mudou = False
         with conexao() as c:
@@ -880,12 +886,21 @@ def _licenca_da_embarcacao(embarcacao_id: str) -> dict:
 
 def _maquinas_da_embarcacao(embarcacao_id: str) -> list:
     """Quantos PCs de captura usaram a licenca desta embarcacao (e quando) — o dono cobra "quantos
-    PCs usam a mesma licenca"; e' ajustavel e isto e' o medido, nao o combinado."""
+    PCs usam a mesma licenca"; e' ajustavel e isto e' o medido, nao o combinado.
+
+    A CHAVE NUNCA SAI INTEIRA (regra do produto: "a chave nao circula"): sai so' os 4 ultimos digitos
+    (`licenca_ultimos4`), como no resto do produto. A chave completa so' pelo fluxo proprio do admin
+    (`GET /api/licencas`, que exige admin). Ate' 24/11/2026 esta funcao devolvia a chave inteira, e o
+    papel `observador` (Petrobras) ve a area -> vazava a chave de todos os barcos.
+    """
     with conexao() as c:
-        return [dict(x) for x in c.execute(
-            """SELECT l.chave AS licenca, u.maquina, u.primeiro_em, u.ultimo_em
+        linhas = [dict(x) for x in c.execute(
+            """SELECT l.chave AS chave, u.maquina, u.primeiro_em, u.ultimo_em
                FROM licenca_usos u JOIN licencas l ON l.id=u.licenca_id
                WHERE l.embarcacao_id=? ORDER BY u.ultimo_em DESC""", (embarcacao_id,)).fetchall()]
+    for x in linhas:
+        x["licenca_ultimos4"] = licenca_modulo.ultimos4(x.pop("chave") or "")
+    return linhas
 
 
 def arvore_do_painel(usuario) -> dict:
@@ -976,12 +991,40 @@ def _tem_saude(embarcacao_id: str) -> bool:
 
 
 def _saude_resumida(embarcacao_id: str) -> dict:
-    """A saude do bordo DAQUELA embarcacao, resumida para o cartao (sem a serie inteira)."""
+    """A saude do bordo DAQUELA embarcacao, para a area unica (sem a serie inteira).
+
+    Vai o SEMAFORO **com os motivos** (`sinais`, do `classificar_saude`) e os NUMEROS do ultimo retrato
+    (cpu, memoria, disco, ffmpeg, mediamtx, dispositivos, varredura) — o dono pediu "saude E desempenho"
+    (24/11/2026) e a tela so' mostrava o estado e a hora. Nada de caminho de arquivo no corpo: o retrato
+    inteiro continua em `/api/saude-do-bordo` (a tela propria), aqui vai o que a area desenha.
+    """
     if not _tem_saude(embarcacao_id):
         return {}
     at = (saude_de(embarcacao_id, pontos=1) or {}).get("atual") or {}
-    return {"estado": at.get("estado") or "", "em": at.get("recebido_em") or "",
-            "maquina": at.get("maquina") or "", "versao_app": at.get("versao_app") or ""}
+    r = at.get("retrato") or {}
+    discos = [d for d in (r.get("discos") or []) if isinstance(d, dict)]
+    hd = next((d for d in discos if d.get("nome") == "hd do radar"), None)
+    ff = r.get("ffmpeg") or {}
+    dispo = r.get("dispositivos_video") or {}
+    varre = r.get("varredura") or {}
+    return {
+        "estado": at.get("estado") or "", "em": at.get("recebido_em") or "",
+        "maquina": at.get("maquina") or "", "versao_app": at.get("versao_app") or "",
+        "so": r.get("so") or "", "gerado_em": r.get("gerado_em") or "",
+        "uptime_s": r.get("uptime_s"),
+        "cpu_pct": r.get("cpu_pct"), "memoria_pct": r.get("memoria_pct"),
+        "memoria_livre_mb": r.get("memoria_livre_mb"),
+        "discos": [{"nome": d.get("nome"), "usado_pct": d.get("usado_pct"),
+                    "livre_gb": d.get("livre_gb"), "total_gb": d.get("total_gb")} for d in discos],
+        "hd_radar_usado_pct": (hd or {}).get("usado_pct"), "hd_radar_livre_gb": (hd or {}).get("livre_gb"),
+        "ffmpeg": ff.get("presente"), "ffmpeg_versao": ff.get("versao") or ff.get("erro") or "",
+        "mediamtx": bool((r.get("mediamtx") or {}).get("ativo")),
+        "mediamtx_caminhos": (r.get("mediamtx") or {}).get("caminhos"),
+        "dispositivos": dispo.get("quantos"), "dispositivos_nomes": dispo.get("nomes") or [],
+        "varredura": varre.get("vistos"), "varredura_ok": varre.get("ok"),
+        "nao_medido": r.get("nao_medido") or {},
+        "sinais": at.get("sinais") or [],
+    }
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1470,6 +1513,11 @@ def inicializar(semear_demo: bool = False) -> None:
         colunas_desejo = {r["name"] for r in c.execute("PRAGMA table_info(desejo_camera)")}
         if colunas_desejo and "manual" not in colunas_desejo:
             c.execute("ALTER TABLE desejo_camera ADD COLUMN manual TEXT NOT NULL DEFAULT ''")
+        # D3 do dono (24/11/2026): o LIGAR manual nao existe mais — quem liga e' o cliente que esta'
+        # assistindo. Uma instalacao que ATUALIZA pode ter `manual='ligar'` gravado pela versao antiga (e
+        # era isso que mantinha a transmissao no ar sem ninguem vendo): limpa aqui, sozinho, no boot.
+        if colunas_desejo:
+            c.execute("UPDATE desejo_camera SET manual='' WHERE manual='ligar'")
         # Papel `tecnico` (bordo) precisa do CHECK novo. SQLite nao altera CHECK no lugar: o
         # `db/migracao-tecnico.sql` recria a tabela preservando as linhas, e roda aqui para a
         # instalacao que ATUALIZA se consertar sozinha (o dono nao faz passo manual no cliente).
@@ -2086,6 +2134,8 @@ class Handler(SimpleHTTPRequestHandler):
                 d["segundos_restantes"] = max(0, int(resta))
             except Exception:
                 d["segundos_restantes"] = 0
+        # a tela do cliente pergunta "quer continuar conectado?" quando faltam AVISO_SEGUNDOS
+        d["aviso_segundos"] = AVISO_SEGUNDOS
         return d
 
     # ---- trecho de 1 minuto (prova da compressao)
@@ -2661,6 +2711,7 @@ class Handler(SimpleHTTPRequestHandler):
                                     "tempos": oferecidos,
                                     "tempo_maximo_s": meu_tempo,
                                     "teto_do_produto_s": teto,
+                                    "aviso_segundos": AVISO_SEGUNDOS,
                                     "papel": u["papel"],
                                     # o CLIENTE recebe o AVISO (o que ele pode baixar, so' o dele); a
                                     # operacao recebe a TRILHA (o que foi gravado na embarcacao, com o
@@ -3628,13 +3679,15 @@ class Handler(SimpleHTTPRequestHandler):
                                      "parar" if desligar else "iniciar", motivo=f"pedido de {quem}")
                 # alem da ordem (compatibilidade), grava a INTENCAO na flag: o bordo olha o desejo e age
                 # na diferenca — e' assim que o botao do operador chega ao PC de captura sem porta aberta.
+                # D3 do dono (24/11/2026): so' o DESLIGAR tem override manual. O LIGAR **limpa** o manual —
+                # quem sustenta o "ligar" e' a sessao de quem assiste (`_desejo_das_cameras`), nunca o admin.
                 with conexao() as c:
                     c.execute("""INSERT INTO desejo_camera
                                    (camera_id,embarcacao_id,desejo,versao,motivo,transmissao_id,manual,atualizado_em)
                                  VALUES (?,?,?,0,'','',?,?)
                                  ON CONFLICT(camera_id) DO UPDATE SET manual=excluded.manual""",
                               (cam_id, cam["embarcacao_id"], "parar" if desligar else "ligar",
-                               "parar" if desligar else "ligar", em_iso()))
+                               "parar" if desligar else "", em_iso()))
                 auditar(u, "ordem_camera_desligada" if desligar else "ordem_camera_ligada",
                         f"{cam_id} ({cam['embarcacao_id']}) ordem #{o['seq']}", self.client_address[0])
                 return self._json(200, {"ok": True, "ordem": o["seq"], "enviado_ao_bordo": True,
@@ -4160,6 +4213,15 @@ class Handler(SimpleHTTPRequestHandler):
                 if seg != fixado:
                     cortado_pelo_teto = True
                 seg = fixado
+            with conexao() as c:
+                _man = c.execute("SELECT manual FROM desejo_camera WHERE camera_id=?",
+                                 (cam_id,)).fetchone()
+            if _man and (_man["manual"] or "") == "parar":
+                # A OPERACAO desligou esta camera na mao (stand-by): a sessao do cliente NAO fura isso
+                # (dono, 24/11/2026). Antes o `/iniciar` apagava o override e a transmissao subia por
+                # cima da decisao do operador — agora o desligar manual vale.
+                return self._json(409, {"erro": "a operacao desligou esta camera na mao — fale com a "
+                                                "operacao LECSOR para liberar"})
             aberta = self._transmissao_aberta(u["email"], cam_id)
             if aberta:
                 # pedir de novo o que ja' esta' aberto nao abre uma segunda sessao (a tela pode
@@ -4180,9 +4242,10 @@ class Handler(SimpleHTTPRequestHandler):
                           (tid, seq, cam["embarcacao_id"], cam_id, cam["fluxo_id"], u["email"],
                            seg, carimbo, carimbo, termina))
                 linha = c.execute("SELECT * FROM transmissoes WHERE id=?", (tid,)).fetchone()
-                # o cliente pediu a transmissao: a intencao dele e' mais nova que o clique do operador,
-                # entao o override manual sai de cena (a sessao passa a sustentar o "ligar").
-                c.execute("UPDATE desejo_camera SET manual='' WHERE camera_id=?", (cam_id,))
+                # D3 (dono, 24/11/2026): o override manual de LIGAR deixou de existir; se sobrou um
+                # 'ligar' de versao antiga, ele sai de cena (a sessao passa a sustentar o "ligar"). O
+                # 'parar' da operacao NAO se apaga aqui (o cliente nem chega: o 409 acima barra antes).
+                c.execute("UPDATE desejo_camera SET manual='' WHERE camera_id=? AND manual='ligar'", (cam_id,))
             ordem = enfileirar_ordem(cam["embarcacao_id"], cam_id, cam["fluxo_id"], "iniciar",
                                      f"pedido do cliente {u['email']}", tid)
             auditar(u, "transmissao_pedida", f"{cam_id} ({texto_do_tempo(seg)})", self.client_address[0])
@@ -4201,6 +4264,29 @@ class Handler(SimpleHTTPRequestHandler):
             with conexao() as c:
                 c.execute("UPDATE transmissoes SET batimento_em=? WHERE id=?", (em_iso(), tid))
             return self._json(200, {"ok": True, "estado": t["estado"], "agora": em_iso()},
+                              {"Cache-Control": "no-store"})
+        if rota.startswith("/api/transmissao/") and rota.endswith("/continuar"):
+            # "Continuar conectado" (dono, 24/11/2026, D1/D2): o cliente viu o aviso do ultimo minuto
+            # e quer seguir. Renova a MESMA janela configurada (a lista fechada vale: continuar e' uma
+            # nova janela do mesmo tempo, nunca tempo infinito) e zera o relogio do batimento.
+            if not u:
+                return self._json(401, {"erro": "entre no sistema"})
+            tid = rota[len("/api/transmissao/"):-len("/continuar")]
+            t, erro, codigo = self._transmissao_da_tela(tid, u)
+            if codigo:
+                return self._json(codigo, {"erro": erro})
+            if t["estado"] not in ("pedida", "no_ar"):
+                return self._json(409, {"erro": "esta transmissao ja' terminou — use Reconectar"})
+            seg = int(t["segundos_max"] or 0) or TEMPO_MAXIMO_PADRAO
+            agora = dt.datetime.now(dt.timezone.utc)
+            termina = (agora + dt.timedelta(seconds=seg)).isoformat(timespec="seconds")
+            with conexao() as c:
+                c.execute("UPDATE transmissoes SET termina_em=?, batimento_em=? WHERE id=?",
+                          (termina, em_iso(agora), tid))
+                linha = c.execute("SELECT * FROM transmissoes WHERE id=?", (tid,)).fetchone()
+            auditar(u, "transmissao_continuada", f"{t['camera_id']} ({texto_do_tempo(seg)})",
+                    self.client_address[0])
+            return self._json(200, {"ok": True, "transmissao": self._json_transmissao(linha)},
                               {"Cache-Control": "no-store"})
         if rota.startswith("/api/transmissao/") and rota.endswith("/encerrar"):
             # Fechou a tela/navegador ou clicou em parar. Aceita corpo vazio (o aviso do

@@ -2267,19 +2267,68 @@ function areaDaEmpresa(t, empresa) {
   for (const emb of empresa.embarcacoes) t.appendChild(cartaoDaEmbarcacao(emb));
 }
 
+/* SAUDE E DESEMPENHO NA EMBARCACAO (24/11/2026). O dono: "nao tenho nenhuma informacao de saude e
+   desempenho". Antes so' havia o estado e a hora; agora vai o NUMERO de cada sinal, com o limiar e o
+   "o que fazer" do proprio bordo (`sinais` do `classificar_saude`) — e "sem medida" quando o bordo nao
+   conseguiu medir, nunca "ok" por omissao. */
+function tomDaSaude(estado) { return ({ ok: 'ok', atencao: 'alerta', problema: 'ruim' })[estado] || 'neutro'; }
+
+function painelDeSaude(emb) {
+  const s = emb.saude || {};
+  const cx = document.createElement('div'); cx.className = 'saude-emb';
+  if (!s.estado) {
+    cx.appendChild(notaDe('Este PC de captura ainda não reportou saúde (sem retrato). Sem dado fresco o '
+      + 'estado é "sem retorno" — confira o app aberto no barco e a conexão.'));
+    return cx;
+  }
+  const num = (v, suf) => (v === null || v === undefined || v === '') ? 'sem medida' : (v + (suf || ''));
+  const linha = document.createElement('div'); linha.className = 'linha-selos';
+  linha.appendChild(seloDe(tomDaSaude(s.estado), 'saúde: ' + s.estado));
+  linha.appendChild(seloDe('neutro', 'CPU ' + num(s.cpu_pct, '%')));
+  linha.appendChild(seloDe('neutro', 'memória ' + num(s.memoria_pct, '%')));
+  linha.appendChild(seloDe('neutro', 'HD do radar ' + num(s.hd_radar_usado_pct, '% usado')));
+  linha.appendChild(seloDe(s.ffmpeg === false ? 'ruim' : (s.ffmpeg ? 'ok' : 'neutro'),
+    'ffmpeg ' + (s.ffmpeg === false ? 'ausente' : (s.ffmpeg ? 'presente' : 'sem medida'))));
+  linha.appendChild(seloDe(s.mediamtx ? 'ok' : 'alerta', 'mediamtx ' + (s.mediamtx ? 'ativo' : 'sem medição')));
+  linha.appendChild(seloDe('neutro', 'dispositivos de vídeo ' + num(s.dispositivos)));
+  linha.appendChild(seloDe(s.varredura_ok === false ? 'alerta' : 'neutro', 'varredura ' + num(s.varredura)));
+  cx.appendChild(linha);
+  const horas = (s.uptime_s || s.uptime_s === 0) ? Math.round(s.uptime_s / 3600) + ' h no ar' : 'tempo no ar sem medida';
+  cx.appendChild(notaDe('PC ' + (s.maquina || '?') + ' · app ' + (s.versao_app || 'versão não informada')
+    + (s.so ? ' · ' + s.so : '') + ' · ' + horas
+    + ' · último retrato ' + (s.em || '—')
+    + (emb.maquinas && emb.maquinas.length ? ' · PC(s) com esta licença: ' + emb.maquinas.map((m) => m.maquina).join(', ') : '')));
+  const fora = (s.sinais || []).filter((x) => x.estado && x.estado !== 'ok');
+  if (fora.length) {
+    const ul = document.createElement('ul'); ul.className = 'sinais';
+    for (const x of fora) {
+      const li = document.createElement('li');
+      li.textContent = x.sinal + ' = ' + (x.valor === null || x.valor === undefined ? 'sem medida' : x.valor)
+        + ' — ' + (x.o_que_fazer || '') + (x.limiar ? '  (' + x.limiar + ')' : '');
+      ul.appendChild(li);
+    }
+    cx.appendChild(ul);
+  } else if ((s.sinais || []).length) {
+    cx.appendChild(notaDe('todos os sinais medidos estão dentro do limite (verde).'));
+  }
+  const nm = Object.keys(s.nao_medido || {});
+  if (nm.length) cx.appendChild(notaDe('o bordo não conseguiu medir: ' + nm.join(', ')
+    + ' — sem essa medida não dá para afirmar que está tudo bem.'));
+  return cx;
+}
+
 function cartaoDaEmbarcacao(emb) {
   const caixa = document.createElement('div'); caixa.className = 'cartao-embarcacao';
   const h = document.createElement('h2');
   h.appendChild(document.createTextNode(emb.nome + ' — ' + emb.id + '  '));
   const se = emb.saude && emb.saude.estado;
-  h.appendChild(seloDe(se === 'ok' ? 'ok' : (se === 'atencao' ? 'alerta' : (se ? 'ruim' : 'neutro')),
-    se === 'ok' ? 'saúde ok' : (se === 'atencao' ? 'atenção' : (se ? 'problema' : 'sem retorno do bordo'))));
+  h.appendChild(seloDe(tomDaSaude(se), se === 'ok' ? 'saúde ok' : (se === 'atencao' ? 'atenção'
+    : (se ? 'problema' : 'sem retorno do bordo'))));
   caixa.appendChild(h);
   caixa.appendChild(notaDe('Câmeras: ' + emb.resumo.cameras + ' · no ar: ' + emb.resumo.no_ar
     + ' · ativas: ' + emb.resumo.ativas
-    + (emb.resumo.achadas_pela_varredura ? ' · achadas pela varredura: ' + emb.resumo.achadas_pela_varredura : '')
-    + (emb.saude && emb.saude.em ? ' · último retrato do bordo: ' + emb.saude.em : '')
-    + (emb.maquinas && emb.maquinas.length ? ' · PC(s): ' + emb.maquinas.map((m) => m.maquina).join(', ') : '')));
+    + (emb.resumo.achadas_pela_varredura ? ' · achadas pela varredura: ' + emb.resumo.achadas_pela_varredura : '')));
+  caixa.appendChild(painelDeSaude(emb));
   caixa.appendChild(fichaLicenca(emb));
   const cams = document.createElement('div'); cams.className = 'cartes-cameras';
   for (const c of emb.cameras) cams.appendChild(cartaoDaCamera(c, emb));
@@ -2392,7 +2441,10 @@ function cartaoDaCamera(c, emb) {
     + (enc.codec ? ' · ' + enc.codec + (enc.resolucao ? ' ' + enc.resolucao : '') + (enc.fps ? ' ' + enc.fps + ' fps' : '') : '')
     + ' · ' + (c.estado && c.estado.estado ? c.estado.estado
         + (c.estado.gravando === '1' ? ' (gravando)' : '') : 'sem retorno do bordo')
-    + (c.estado && c.estado.motivo ? ' — ' + c.estado.motivo : '')));
+    + (c.estado && c.estado.motivo ? ' — ' + c.estado.motivo : '')
+    // DESEMPENHO (24/11/2026): o que a captura mediu (espectadores) e desde quando esta' no ar.
+    + (c.no_ar && c.estado && c.estado.desde ? ' · no ar desde ' + c.estado.desde : '')
+    + (c.leitores ? ' · ' + c.leitores + ' espectador(es) aqui' : '')));
   const des = (c.config.desejada || []).map((x) => x.chave + '=' + x.valor + ' (v' + x.versao + ')').join(' · ');
   const apl = (c.config.aplicada || []).map((x) => x.chave + '=' + x.valor + (x.motivo ? ' [' + x.motivo + ']' : '')).join(' · ');
   caixa.appendChild(notaDe('publicado ao bordo: ' + (des || 'nada ainda') + (apl ? '  |  o bordo aplicou: ' + apl : '')));
@@ -2415,13 +2467,17 @@ function cartaoDaCamera(c, emb) {
     if (r.ok) mostrarRecado('qualidade publicada para o PC de captura: ' + sel.value + ' kbps', false);
     else mostrarRecado('recusado: ' + ((r.corpo && r.corpo.erro) || JSON.stringify(r.corpo)), true);
   }));
-  acoes.appendChild(botao(c.no_ar ? 'parar o envio' : 'ligar agora', c.no_ar ? 'mini' : 'marca', async () => {
-    const r = await api('/api/cameras/' + (c.no_ar ? 'desligar' : 'ligar'),
-      { method: 'POST', body: JSON.stringify({ camera_id: c.id }) });
-    await atualizar();
-    if (r.ok) mostrarRecado(c.no_ar ? 'ordem de parar enviada ao PC de captura' : 'ordem de ligar enviada ao PC de captura', false);
-    else mostrarRecado('recusado: ' + ((r.corpo && r.corpo.erro) || JSON.stringify(r.corpo)), true);
-  }));
+  // D3 do dono (24/11/2026): "nao tem ligar agora do admin, so quem visualiza e' o cliente". O admin NAO
+  // liga camera — quem liga e' a sessao de quem esta' assistindo. Fica so' o DESLIGAR (o stand-by da
+  // operacao), e so' quando ha envio no ar.
+  if (c.no_ar) {
+    acoes.appendChild(botao('desligar o envio', 'mini', async () => {
+      const r = await api('/api/cameras/desligar', { method: 'POST', body: JSON.stringify({ camera_id: c.id }) });
+      await atualizar();
+      if (r.ok) mostrarRecado('ordem de parar enviada ao PC de captura', false);
+      else mostrarRecado('recusado: ' + ((r.corpo && r.corpo.erro) || JSON.stringify(r.corpo)), true);
+    }));
+  }
   caixa.appendChild(acoes);
   return caixa;
 }

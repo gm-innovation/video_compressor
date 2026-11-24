@@ -24,7 +24,7 @@ PAPEIS = ("Captura", "Terra", "Admin", "Cliente")
 # Ordem de publicacao: o PRIMEIRO e' o `latest` do GitHub. Nova versao entra na frente.
 # A 0.8.0 nunca chegou a virar release: o que ela trazia (config do bordo vinda de terra e saude do
 # bordo no admin) entrou inteiro na 0.9.0, que e' quem publica. A nota dela fica em NOTAS abaixo.
-VERSOES_PUBLICADAS = ("0.12.0", "0.11.1", "0.11.0", "0.10.1", "0.10.0", "0.9.1", "0.9.0", "0.7.0", "0.6.10", "0.6.9", "0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
+VERSOES_PUBLICADAS = ("0.13.0", "0.12.0", "0.11.1", "0.11.0", "0.10.1", "0.10.0", "0.9.1", "0.9.0", "0.7.0", "0.6.10", "0.6.9", "0.6.8", "0.6.7", "0.6.6", "0.6.5", "0.6.4", "0.6.3", "0.6.2", "0.6.1", "0.6.0", "0.5.0", "0.4.1", "0.4.0", "0.3.0", "0.2.9", "0.2.8")
 
 
 def instaladores(versao: str) -> list:
@@ -44,6 +44,49 @@ def instaladores(versao: str) -> list:
     return [DIST / papel.lower() / f"LECSOR-{papel}-{versao}-x64.exe" for papel in PAPEIS]
 
 NOTAS = {
+    "0.13.0": (
+        "**A transmissao ao vivo passa a ser do CLIENTE: contagem, aviso, reconectar e gravar — e a "
+        "saude do bordo na area unica.**\n\n"
+        "Teste do dono na tela do cliente (24/11/2026): \"sai da tela de transmissao ao vivo do cliente e "
+        "continuou transmitindo, isso precisa ser flag para o app de captura enxergar e parar a transmissao, "
+        "a nao ser que esteja sendo visualizado em outro computador\" · \"nao tenho nenhuma informacao de "
+        "saude e desempenho\" · \"precisa de um timer de contagem regressiva... e antes de desconectar, uma "
+        "mensagem perguntando se quer continuar conectado... aí aparece um botao 'reconectar'... e precisa "
+        "tambem de um botao para iniciar gravacao\".\n\n"
+        "**1. A transmissao se sustenta em quem ASSISTE (D3).** Decisao do dono: \"nao tem ligar agora do "
+        "admin, so' quem visualiza e' o cliente\". O botao \"ligar agora\" do admin **saiu**. Agora quem "
+        "sustenta a flag de transmissao de cada camera e' a **sessao de quem esta' assistindo** — o lado "
+        "terra manda `desejo=ligar` enquanto ha' pelo menos um espectador com batimento vivo, e vira "
+        "`desejo=parar` quando o ultimo sai. O admin so' mantem o **desligar** (stand-by da operacao), que "
+        "**vence** o pedido do cliente. Antes o `manual='ligar'` do admin vencia o \"ninguem assistindo\" e "
+        "a transmissao seguia sozinha (medido: 2 cameras com `manual='ligar'` e `transmissoes` vazio).\n\n"
+        "**2. Contagem, aviso de 1 minuto e \"Reconectar\" (D1/D2).** Na **grade** do cliente (a tela que "
+        "ele realmente usa, \"Transmissoes ao vivo\"), cada camera passou a mostrar um **contador mm:ss** do "
+        "tempo restante da sessao, os botoes **gravar/parar** e, no **ultimo minuto**, o aviso *\"quer "
+        "continuar conectado?\"* com o botao **Continuar**. \"Silencio\" (D2) = o cliente nao responde ao "
+        "aviso => **desliga**; para continuar ele clica em **Continuar** (rota `POST "
+        "/api/transmissao/<id>/continuar`, que renova a **mesma janela**, nunca tempo infinito). Depois do "
+        "fim aparece **Reconectar** (antes \"reconectar\" nao existia em lugar nenhum).\n\n"
+        "**3. Gravar no lado terra, so' o que chegou (D4).** O cliente ganhou o botao **Gravar**, na grade: "
+        "grava o video que **ja' chegou** em terra (`-c copy`, sem reencodar), nunca uma gravacao nova "
+        "pedida ao barco. Enquanto grava, o corte por tempo nao acontece; ao parar, o **mp4 fica no disco**. "
+        "Medido: 262 KB gravados de um fluxo real de bancada.\n\n"
+        "**4. Saude e desempenho na area unica.** O cartao da embarcacao passou a mostrar CPU, memoria, "
+        "disco, ffmpeg, mediamtx, dispositivos e a ultima varredura, com **semaforo e os motivos** (limiar e "
+        "\"o que fazer\") — era o \"nao tenho nenhuma informacao de saude e desempenho\" do dono. O cartao "
+        "da camera ganhou \"no ar desde <hh:mm>\" e \"N espectador(es)\".\n\n"
+        "**5. Seguranca (P0 medido e corrigido).** `GET /api/empresas` devolvia a **chave da licenca "
+        "inteira** e o papel `observador` (Petrobras) enxergava a rota. Agora ela sai so' nos **ultimos 4** "
+        "digitos; a chave completa fica so' na rota de licencas, do admin. **O `versao_app` tambem parou de "
+        "subir vazio**: o pacote agora escreve `LECSOR_VERSAO_APP` no boot (`desktop/main.js`) e o retrato "
+        "de saude le' essa variavel.\n\n"
+        "**Provas:** `tools/regressao-0130.py` (**25 provas, tudo verde**) — as novas "
+        "`tests/e2e-flag-de-audiencia.py` (a flag so' na sessao de quem assiste), "
+        "`tests/e2e-saude-e-desempenho-na-area.py` (saude + a chave nunca inteira), "
+        "`tests/e2e-contagem-aviso-e-reconectar.py` (contagem, aviso e reconectar na grade) e "
+        "`tests/e2e-gravacao-no-cliente.py` (gravacao de ponta a ponta com mediamtx + ffmpeg reais), "
+        "mais toda a suite do `regressao-0100`; `node --check` e `py_compile`.\n"
+    ),
     "0.12.0": (
         "**O admin ficou numa area so: empresa -> embarcacao -> cameras.**\n\n"
         "Pedido do dono (23/11/2026): \"preciso poder configurar cada cliente/embarcacao/cameras de forma "
