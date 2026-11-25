@@ -7,7 +7,7 @@ Pedido do dono (25/11/2026, verbatim):
 
 > estou com o admin aberto e não vejo onde editar as câmeras, embarcações e clientes
 
-Status: **aguardando "aprovado"** (nada implementado).
+Status: **decisões D1-D4 registradas em 25/11/2026 (seção 4) — plano fechado, aguardando "aprovado" para implementar** (nada implementado ainda).
 
 ---
 
@@ -44,9 +44,12 @@ mantidas só para não quebrar link salvo; **não** editaram nada.
   `USB/dshow desta máquina` (o que a varredura acha) × `Rede (IP)` (o que se digita).
 - Campo `protocolo` (rtsp padrão; https/onvif como opção) e o campo de **canal** com o exemplo do gravador.
 - **Credencial nunca no formulário nem no banco/chat/repo** (regra do dono): o cadastro guarda só o
-  endereço e o **nome da variável de ambiente** que o PC de captura deve ter (ex.: `LECSOR_CAM_CAM01_SENHA`),
-  com a senha digitada **no PC de captura**, por variável de ambiente do serviço — como já é a regra.
-- (P1) Aviso na tela quando o IP for de rede e a variável do segredo não estiver declarada no cadastro.
+  endereço e o **identificador do segredo** (o nome do arquivo no PC de captura, ex.: `cam-01`); a senha
+  vive **só** no PC de captura, no arquivo de ACL restrita (D1), e chega à tela **apenas** como
+  "segredo configurado: sim/não".
+- (P1) Aviso na tela quando o IP for de rede e o **arquivo do segredo** não existir no PC de captura (D1).
+- **A câmera IP convive com a de HDMI/split (D2)**: o cadastro novo não desliga nem substitui nenhuma câmera
+  que já existe na embarcação; as duas entram na grade pela mesma regra de `rotulo`.
 
 ### Fase 2 — O app de captura VÊ o IP e APONTA (P0) — o coração do pedido
 
@@ -69,8 +72,12 @@ mantidas só para não quebrar link salvo; **não** editaram nada.
 
 ### Fase 4 — Editar cliente / embarcação / câmera no admin (P0)
 
-- **Empresa (cliente)**: editar **nome** (e o identificador com trava — ele é chave de várias tabelas).
-- **Embarcação**: editar **nome** e **IMO**; mostrar/alterar o vínculo com a empresa.
+- **Empresa (cliente)**: editar **nome** **e o identificador** (D3) — a renomeação da chave vai na transação
+  do item D3, com auditoria e recusa se algum filho não puder ser atualizado.
+- **Embarcação**: editar **nome**, **IMO** e o **identificador** (mesmo rito do D3); mostrar/alterar o vínculo
+  com a empresa.
+- **Só admin (D4)**: as rotas de configuração passam a exigir `papel == "admin"` (não `PAPEL_ADMIN`, que inclui
+  `operador`); a operação continua com operador+admin.
 - **Câmera**: trocar o `prompt()` (admin/admin.js:749) por **formulário no cartão** — rótulo, fluxo, entrada
   (USB/rede), IP, porta, protocolo, canal, ativo — com o mesmo contrato do `editar` que já existe no servidor.
 - (P1) O menu "Avançado (telas antigas)" passa a **apontar** para a área única (ou sai), para o dono não cair
@@ -98,12 +105,29 @@ mantidas só para não quebrar link salvo; **não** editaram nada.
 
 ---
 
-## 4. Decisões que preciso do dono (responder 1-4)
+## 4. Decisões do dono (25/11/2026) e o que cada uma obriga
 
-- **D1.** Câmera IP: a senha fica em **variável de ambiente no PC de captura** (`LECSOR_CAM_<ID>_SENHA`), uma
-  por câmera? (a regra diz: credencial nunca em chat/e-mail/repositório)
-- **D2.** A câmera IP **substitui** a câmera por HDMI/split na mesma embarcação, ou convive com ela (as duas
-  podem aparecer juntas na grade)?
-- **D3.** O identificador da empresa/embarcação (chave primária) pode ser **renomeado** ou fica travado depois
-  de criado (só o nome de exibição muda)?
-- **D4.** Editar continua exigindo **operador/admin** (como hoje) e a captura segue **só cadastrando**?
+- **D1. "a forma mais segura" → o segredo não sai do PC de captura.** O cadastro guarda **só o nome da
+  variável** de ambiente; a senha vive **apenas** no PC de captura, num **arquivo com permissão restrita**
+  (`C:\ProgramData\LECSOR\segredos\cam-<id>.txt`, ACL só do serviço — sem `Usuários`), lido em memória na hora
+  de montar o comando. Nunca no banco, no repositório, no chat, na API (nenhuma rota devolve) nem na tela.
+  **Limite honesto:** com RTSP o ffmpeg recebe a URL com a credencial, então ela aparece na linha de comando
+  do processo — visível a **admin local** daquela máquina. Vou documentar isso no plano; se o dono quiser
+  zero-exposição, a alternativa é um proxy local (o `mediamtx` já vai no pacote) publicando o fluxo em
+  `127.0.0.1` e o ffmpeg consumindo de lá, sem credencial na linha de comando.
+- **D2. Convive.** A câmera IP **não** substitui a de HDMI/split: as duas aparecem na mesma embarcação e
+  podem estar na mesma grade (a grade já é por câmera). Ordenação por `rotulo`.
+- **D3. Identificador renomeável.** Medido: o `db/schema-fase4.sql` declara `REFERENCES clientes(id)` /
+  `embarcacoes(id)` **sem `ON UPDATE CASCADE`** e o banco roda com `PRAGMA foreign_keys = ON`
+  (ground/api.py:158) — então renomear a chave **quebra** o update se os filhos não forem tratados. Renomear
+  = **transação única** atualizando os filhos antes do pai, listando as tabelas que referenciam
+  (`embarcacoes.cliente_id`, `cameras.embarcacao_id`, `usuarios.cliente_id`, e as de `schema-transmissao.sql`
+  /`fase6`/`fase7` que carregam `embarcacao_id`), **com auditoria** (`empresa_renomeada`, de → para) e
+  recusa se algo falhar. As de histórico/auditoria mantêm o texto antigo de propósito (trilha imutável).
+- **D4. Só admin.** Hoje `PAPEL_ADMIN = ("operador", "admin")` (ground/api.py:146) e **o mesmo** conjunto
+  governa as ações de operação (desligar/cancelar/envios), não só o cadastro. Então a regra "só admin" será
+  aplicada **só às rotas de configuração** (`/api/clientes`, `/api/embarcacoes`, `/api/cameras`,
+  `/api/cameras/<id>/editar|nome|alvo|ativo|remover`, `/api/usuarios`); a operação segue com operador+admin.
+  Efeito colateral a tratar nas provas: os testes que hoje entram como **operador** para configurar
+  (`tests/e2e-licenca-no-admin.py`, `tests/e2e-escopo-no-admin.py`, `tests/e2e-admin-unificado.py`, entre
+  outros) passam a precisar do papel admin — **nenhuma** prova pode ficar medindo o operador editando.
