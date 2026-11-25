@@ -140,7 +140,11 @@ def main() -> int:
             entrar(pag, base, "/app/", "cliente@lecsor.test")
 
             menu = pag.locator(".lateral").inner_text()
-            checar('o menu do cliente tem "Radar de óleo (HD)"', "Radar de óleo (HD)" in menu, menu[:120])
+            # PLANO UNICO (25/11/2026): o item do menu passou a se chamar "Imagens gravadas a bordo" (e
+            # volta a "Radar de óleo (HD)" quando existe câmera do tipo radar). O caminho de acesso ao
+            # gravado a bordo e' o mesmo, e a prova continua medindo o que interessa: o cliente tem o item.
+            checar("o menu do cliente abre o gravado a bordo (item 'Imagens gravadas a bordo')",
+                   "Imagens gravadas a bordo" in menu or "Radar de óleo (HD)" in menu, menu[:120])
             pag.click('[data-tela="radar_hd"]')
             pag.wait_for_selector("#hd-filtro:not(.oculto)", timeout=20000)
             pag.wait_for_timeout(2500)

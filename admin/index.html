@@ -4,6 +4,7 @@
 <title>Admin do projeto e do sistema — LECSOR</title>
 <link rel="stylesheet" href="/fronts/vms.css">
 <link rel="stylesheet" href="/fronts/admin.css">
+<link rel="stylesheet" href="/fronts/dashboard.css">
 
 <style>
   .grade-cartoes { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; margin-top: 14px; }
@@ -32,6 +33,11 @@
   #ao-vivo .janela-adm { border: 1px solid var(--border, #2a3550); border-radius: 10px; overflow: hidden; background: #0b1220; }
   #ao-vivo video { width: 100%; aspect-ratio: 16 / 9; background: #000; display: block; object-fit: contain; }
   #ao-vivo .rotulo-adm { padding: 6px 10px; font-size: 13px; }
+  /* O SELETOR DENTRO DA JANELA (plano único, 25/11/2026): empresa → embarcação → câmeras. */
+  #ao-vivo .ao-vivo-escolha { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 10px; }
+  #ao-vivo .ao-vivo-escolha label { font-size: 13px; }
+  #ao-vivo .ao-vivo-escolha select { background: #0b1220; color: inherit; border: 1px solid var(--border, #2a3550); border-radius: 6px; padding: 4px 6px; }
+  #ao-vivo .av-cam { display: inline-flex; align-items: center; gap: 4px; margin-right: 12px; font-size: 13px; white-space: nowrap; }
 </style>
 </head><body>
 
@@ -89,6 +95,9 @@
     <button class="item" data-tela="saude_bordo"><span class="ic">🩺</span>Saúde do bordo</button>
     <button class="item" data-tela="saude"><span class="ic">⚙</span>Saúde do sistema</button>
     <button class="item" data-tela="envios"><span class="ic">📥</span>Enviar vídeo</button>
+    <!-- IMAGENS GRAVADAS A BORDO (plano único, 25/11/2026 — dono: "ainda não consigo acessar as imagens
+         na área do admin, precisa resolver isso"): o HD do computador de captura, no admin. -->
+    <button class="item" data-tela="hd_bordo"><span class="ic">🛰</span>Imagens gravadas a bordo</button>
 
     <!-- PROJETO LECSOR: a gestão do projeto (fases/evidências/ADR) — não é operação do produto. -->
     <div class="grupo">Projeto LECSOR</div>

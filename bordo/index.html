@@ -17,7 +17,11 @@
   ingestão aparece como PRESENTE/AUSENTE.
 -->
 <style>
-  :root { color-scheme: dark; }
+  :root { color-scheme: dark;
+    /* Nomes do tema que o dashboard compartilhado usa (fronts/dashboard.css — a linguagem do Dock
+       Check, plano único 0.20.0, 25/11/2026). Aqui eles apontam para a paleta do painel do bordo. */
+    --fundo:#0b1220; --painel:#111a2e; --painel2:#0d1420; --borda:#22304d; --borda2:#2b3c5e;
+    --texto:#e8eefc; --texto2:#9fb0d0; --ok:#22c55e; --aviso:#f59e0b; --ruim:#ef4444; --azul:#3b82f6; }
   * { box-sizing: border-box; }
   body { margin: 0; min-height: 100vh; background: #0b1220; color: #e8eefc;
          font: 15px/1.5 system-ui, "Segoe UI", Roboto, sans-serif; padding: 22px 18px 34px; }
@@ -116,9 +120,20 @@
   body.tv h1 { font-size: 26px; }
   body.tv p.sub, body.tv .grade, body.tv .aviso, body.tv .curva-nota { display: none; }
   body.tv .tf .num { font-size: 64px; }
+  body.tv .dash-kpi .num { font-size: 46px; }
+  body.tv #dash-diag { display: none; }
   body.tv .curva-topo .agora { font-size: 30px; }
   body.tv .grafico { height: 150px; }
   body.tv .pe { margin-top: 10px; }
+</style>
+<!-- A LINGUAGEM DO DOCK CHECK (plano único 0.20.0, 25/11/2026): o MESMO arquivo que veste o dashboard
+     do admin. Dono: "tanto o dashboard do admin quanto o do app de captura continuam horríveis, precisa
+     ser algo mais próximo desse do Dock Check". -->
+<link rel="stylesheet" href="/fronts/dashboard.css">
+<style>
+  /* o número grande do KPI aceita a unidade pequena ao lado (o dashboard.css não define isto) */
+  .dash-kpi .num small { font-size: 14px; font-weight: 600; color: #9fb0d0; margin-left: 4px; }
+  .dash-kpi, .dash-card, .dash-conexao, .dash-rosca { color: #e8eefc; }
 </style>
 </head>
 <body>
@@ -130,8 +145,15 @@
 
   <div class="aviso" id="recado"></div>
 
+  <!-- CABEÇALHO E DIAGNÓSTICO (linguagem do Dock Check, plano único 0.20.0, 25/11/2026): a bolinha de
+       saúde, a frase do estado e as TRÊS rotas desta máquina (bordo → terra retrato, bordo → terra vídeo,
+       terra → bordo) + o agente de ordens. Órfão de medida sai como "não medido" — esta tela não inventa. -->
+  <div id="dash-topo" class="dash-topo"></div>
+
   <!-- DASHBOARD (dono, 24/11/2026): a primeira dobra é o que se lê de longe. -->
-  <div class="painel" id="painel"></div>
+  <div class="dash-fila" id="painel"></div>
+
+  <div id="dash-diag" class="dash-grade"></div>
 
   <!-- AS CURVAS (dono, 24/11/2026): "quero um dashboard de verdade!" — a EVOLUÇÃO no tempo. Cada rodada
        de saúde (60 s) é um ponto da série que ESTA máquina grava; aqui ela vira gráfico. Sem série ainda,
@@ -446,6 +468,8 @@ async function carregar() {
     ['Câmeras paradas/vivas', resumo.texto || s.texto || '—'],
     ['Gerado em', hora(s.gerado_em)],
   ]);
+  /* a primeira dobra do Dock Check: bolinha de saúde + diagnóstico de conexões + por câmera/encoder */
+  pintarDashboardDoBordo(d);
   pintarPainel(s);
   pintarIndividual(s);
 
@@ -678,21 +702,140 @@ function estadoDe(v, par) {
   return x >= par[1] ? 'ruim' : (x >= par[0] ? 'atencao' : 'ok');
 }
 
+const ICONE_DO_TILE = { 'CPU': '⚙', 'Memória': '🧠', 'Disco': '💾', 'Rede (subindo)': '📶' };
+const TOM_DO_ESTADO = { ok: 'ok', atencao: 'atencao', ruim: 'problema', neutro: 'neutro' };
+const COR_DO_FUNDO = { ok: '#0f2a1a', atencao: '#2a2310', problema: '#2a1214' };
+const COR_DA_BARRA = { ok: '#22c55e', atencao: '#f59e0b', problema: '#ef4444' };
+
 function tile(rotulo, valor, unidade, estado, pe, largura) {
+  /* O CARTÃO DE KPI DO DOCK CHECK — a MESMA linguagem do dashboard do admin (plano único 0.20.0,
+     25/11/2026), vestido pelo mesmo `fronts/dashboard.css`: ícone em círculo, rótulo, número grande,
+     barra de progresso e a linha do pé. Dono: "tanto o dashboard do admin quanto o do app de captura
+     continuam horríveis, precisa ser algo mais próximo desse do Dock Check". */
+  const tom = TOM_DO_ESTADO[estado] || 'neutro';
   const d = document.createElement('div');
-  d.className = 'tf ' + estado;
+  d.className = 'dash-kpi' + (tom === 'problema' ? ' ruim' : '');
+  const ic = document.createElement('div'); ic.className = 'ico'; ic.textContent = ICONE_DO_TILE[rotulo] || '•';
+  ic.style.background = COR_DO_FUNDO[tom] || '#0d1420';
+  const corpo = document.createElement('div'); corpo.className = 'corpo';
   const r = document.createElement('div'); r.className = 'rot'; r.textContent = rotulo;
   const n = document.createElement('div'); n.className = 'num'; n.textContent = valor;
   if (unidade) { const u = document.createElement('small'); u.textContent = unidade; n.appendChild(u); }
-  const p = document.createElement('span'); p.className = 'pe'; p.textContent = pe || '';
-  d.append(r, n, p);
+  corpo.append(r, n);
   if (largura !== null && largura !== undefined) {
-    const b = document.createElement('div'); b.className = 'barra';
+    const b = document.createElement('div'); b.className = 'dash-barra';
     const i = document.createElement('i');
     i.style.width = Math.min(100, Math.max(0, Number(largura))) + '%';
-    b.appendChild(i); d.appendChild(b);
+    i.style.background = COR_DA_BARRA[tom] || '#3b82f6';
+    b.appendChild(i); corpo.appendChild(b);
   }
+  if (pe) { const p = document.createElement('div'); p.className = 'rot'; p.textContent = pe; corpo.appendChild(p); }
+  d.append(ic, corpo);
   return d;
+}
+
+/* O CABEÇALHO E O DIAGNÓSTICO DE CONEXÕES DESTA MÁQUINA — a mesma primeira dobra do painel do admin.
+   Tudo sai do que o `/api/bordo` já devolve: nada é medido aqui e nada é estimado. */
+function pintarDashboardDoBordo(d) {
+  const topo = $('dash-topo');
+  const diag = $('dash-diag');
+  if (!topo || !diag) return;
+  d = d || {};
+  const s = d.saude || {};
+  const ag = d.agente || {};
+  const lic = d.licenca || {};
+  const tok = d.token || {};
+  const terra = d.lado_terra || {};
+  const proc = d.processos || [];
+  const grav = d.gravacao || {};
+  const estado = s.estado || (s.resumo && s.resumo.estado) || '';
+  const tom = TOM_DO_ESTADO[estado === 'problema' ? 'ruim' : (estado === 'ok' ? 'ok'
+    : (estado === 'alerta' ? 'atencao' : 'neutro'))];
+  const transmite = proc.filter((p) => p.estado === 'transmitindo' || p.estado === 'transmitindo e gravando').length;
+  const gravando = proc.filter((p) => p.gravando || p.estado === 'gravando' || p.estado === 'transmitindo e gravando').length;
+
+  topo.innerHTML = '';
+  const tit = document.createElement('div'); tit.className = 'titulo';
+  const pt = document.createElement('span'); pt.className = 'dash-ponto ' + tom;
+  tit.appendChild(pt);
+  const bloco = document.createElement('div');
+  const h2 = document.createElement('h2');
+  h2.textContent = estado === 'ok' ? 'Máquina saudável'
+    : (estado === 'problema' ? 'Máquina com problema'
+      : (estado === 'alerta' ? 'Máquina em atenção' : 'Sem medidas de saúde ainda'));
+  const q = document.createElement('p'); q.className = 'quando';
+  q.textContent = (lic.embarcacao_nome || lic.embarcacao_id || 'máquina sem licença') +
+    ' · agente de ordens ' + (ag.no_ar ? 'no ar' : 'sem sinal') +
+    ' · token de ingestão ' + (tok.presente ? 'presente' : 'ausente') +
+    ' · ' + (transmite ? transmite + ' fluxo(s) no ar' : 'nada transmitindo') +
+    (gravando || grav.ligada ? ' · gravação full-time ativa' : '') +
+    ' · esta tela se atualiza sozinha a cada 10 s';
+  bloco.append(h2, q);
+  tit.appendChild(bloco);
+  topo.appendChild(tit);
+
+  diag.innerHTML = '';
+  const cardConc = document.createElement('div'); cardConc.className = 'dash-card';
+  const h3 = document.createElement('h3'); h3.textContent = 'Diagnóstico de conexões';
+  const de = document.createElement('span'); de.className = 'de'; de.textContent = 'o terra nunca abre conexão para cá';
+  h3.appendChild(de); cardConc.appendChild(h3);
+  const caixa = document.createElement('div'); caixa.className = 'dash-diag';
+  caixa.appendChild(conexaoDoBordo('Bordo → terra (retrato)', tok.presente ? 'ok' : 'problema',
+    terra.texto || (tok.presente ? 'enviando o cadastro desta máquina' : 'falta o token de ingestão no pacote')));
+  caixa.appendChild(conexaoDoBordo('Bordo → terra (vídeo)', transmite ? 'ok' : 'atencao',
+    transmite ? (transmite + ' fluxo(s) subindo agora') : 'nada no ar: só sobe o que o cliente ou o admin pedir'));
+  caixa.appendChild(conexaoDoBordo('Terra → bordo', 'ok',
+    'sem porta aberta nesta máquina: eu pergunto as ordens, ninguém entra'));
+  caixa.appendChild(conexaoDoBordo('Agente de ordens', ag.no_ar ? 'ok' : 'problema',
+    ag.no_ar ? ('no ar' + (ag.em ? ' · último sinal há ' + (segundos(ag.em_em_segundos) ?? '?') + ' s' : ''))
+             : ('sem sinal nesta máquina' + (ag.motivo ? ' — ' + ag.motivo : ''))));
+  cardConc.appendChild(caixa);
+  diag.appendChild(cardConc);
+
+  const cardIdx = document.createElement('div'); cardIdx.className = 'dash-card';
+  const h4 = document.createElement('h3'); h4.textContent = 'Por câmera/encoder nesta máquina';
+  const de2 = document.createElement('span'); de2.className = 'de'; de2.textContent = 'o que esta máquina mediu';
+  h4.appendChild(de2); cardIdx.appendChild(h4);
+  const linhas = s.individual || [];
+  if (linhas.length) {
+    const barras = document.createElement('div'); barras.className = 'dash-barras';
+    for (const x of linhas) {
+      const noAr = 1;
+      barras.appendChild(barraDoBordo(x.rotulo || x.camera_id || x.fluxo || 'fluxo',
+        (x.estado || 'no ar') + ' · ' + numero(x.kbps, 0, ' kbps') + ' · ' + numero(x.fps, 1, ' fps'), noAr, 1));
+    }
+    cardIdx.appendChild(barras);
+  } else {
+    const vazio = document.createElement('div'); vazio.className = 'dash-vazio';
+    vazio.textContent = 'Nenhum fluxo desta máquina no ar agora (a rede e as câmeras paradas não foram medidas).';
+    cardIdx.appendChild(vazio);
+  }
+  diag.appendChild(cardIdx);
+}
+
+function conexaoDoBordo(qual, estado, detalhe) {
+  const c = document.createElement('div'); c.className = 'dash-conexao';
+  c.style.borderLeftColor = COR_DA_BARRA[estado] || '#243044';
+  const q = document.createElement('div'); q.className = 'qual';
+  const pt = document.createElement('span'); pt.className = 'pt';
+  pt.style.background = COR_DA_BARRA[estado] || '#64748b';
+  q.append(pt, document.createTextNode(qual));
+  const dd = document.createElement('div'); dd.className = 'detalhe'; dd.textContent = detalhe || '';
+  c.append(q, dd);
+  return c;
+}
+
+function barraDoBordo(nome, conta, noAr, total) {
+  const g = document.createElement('div'); g.className = 'dash-barra-item';
+  const n = document.createElement('span'); n.className = 'nome'; n.textContent = nome;
+  const c = document.createElement('span'); c.className = 'conta'; c.textContent = conta;
+  const t = document.createElement('div'); t.className = 'trilha';
+  const verdes = total ? Math.round(100 * noAr / total) : 0;
+  const on = document.createElement('i'); on.style.width = verdes + '%'; on.style.background = '#22c55e';
+  const off = document.createElement('i'); off.style.width = (100 - verdes) + '%'; off.style.background = '#334155';
+  t.append(on, off);
+  g.append(n, c, t);
+  return g;
 }
 
 const um1 = (v) => (v === null || v === undefined || v === '' ? '—' : Number(v).toFixed(1));

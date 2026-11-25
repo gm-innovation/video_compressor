@@ -1,0 +1,128 @@
+/* ============================================================================================
+   DASHBOARD — a linguagem do Dock Check (plano único 0.20.0, 25/11/2026)
+   Dono: "tanto o dashboard do admin quanto o do app de captura continuam horríveis, precisa ser
+   algo mais próximo desse do Dock Check".
+
+   O que o print do Dock Check tem e o que está aqui:
+     cabeçalho com bolinha de saúde que pulsa + "atualizado há X · auto-refresh" + Atualizar/Minimizar;
+     fileira de KPI (ícone + rótulo + número grande + barra de progresso);
+     barras por item ("Dispositivos por Projeto" → "Câmeras por embarcação");
+     rosca de "Distribuição Geral" com o total no centro;
+     "Disponibilidade (7 dias)" com Uptime / Incidentes / Tempo médio e as barras por dia;
+     "Diagnóstico de Conexões" (cartões de estado com borda colorida);
+     lista com selos Crítico/Atenção/Operacional e "Alertas (N)".
+
+   Usa SÓ as variáveis do tema (o mesmo painel do admin e do bordo), então vale para os dois.
+   ============================================================================================ */
+
+/* ---------- cabeçalho do dashboard ---------- */
+.dash-topo{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  background:var(--painel);border:1px solid var(--borda);border-radius:12px;padding:12px 14px;margin-bottom:12px}
+.dash-topo .titulo{display:flex;align-items:center;gap:11px}
+.dash-topo h2{margin:0;font-size:17px;font-family:'Space Grotesk',sans-serif;letter-spacing:.02em}
+.dash-topo .quando{margin:2px 0 0;font-size:12px;color:var(--texto2)}
+.dash-topo .acoes{display:flex;gap:8px;flex-wrap:wrap}
+.dash-ponto{width:11px;height:11px;flex:0 0 11px;border-radius:99px;background:var(--ok);
+  animation:dash-pulsa-ok 1.9s ease-out infinite}
+.dash-ponto.alerta{background:var(--aviso);animation:dash-pulsa-aviso 1.9s ease-out infinite}
+.dash-ponto.problema{background:var(--ruim);animation:dash-pulsa-ruim 1.4s ease-out infinite}
+@keyframes dash-pulsa-ok{0%{box-shadow:0 0 0 0 rgba(34,197,94,.5)}70%{box-shadow:0 0 0 9px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}
+@keyframes dash-pulsa-aviso{0%{box-shadow:0 0 0 0 rgba(245,158,11,.5)}70%{box-shadow:0 0 0 9px rgba(245,158,11,0)}100%{box-shadow:0 0 0 0 rgba(245,158,11,0)}}
+@keyframes dash-pulsa-ruim{0%{box-shadow:0 0 0 0 rgba(239,68,68,.55)}70%{box-shadow:0 0 0 10px rgba(239,68,68,0)}100%{box-shadow:0 0 0 0 rgba(239,68,68,0)}}
+
+/* ---------- fileira de KPI ---------- */
+.dash-fila{display:grid;grid-template-columns:repeat(auto-fit,minmax(196px,1fr));gap:10px;margin-bottom:12px}
+.dash-kpi{background:var(--painel);border:1px solid var(--borda);border-radius:11px;padding:11px 13px;
+  display:flex;align-items:center;gap:11px}
+.dash-kpi .ico{width:34px;height:34px;flex:0 0 34px;border-radius:99px;display:grid;place-items:center;font-size:16px}
+.dash-kpi .corpo{flex:1;min-width:0}
+.dash-kpi .rot{font-size:11px;color:var(--texto2);text-transform:uppercase;letter-spacing:.04em}
+.dash-kpi .num{font-size:21px;font-weight:700;font-family:'Space Grotesk',sans-serif;line-height:1.15}
+.dash-kpi .num .de{font-size:12.5px;color:var(--texto2);font-weight:600}
+.dash-barra{height:5px;border-radius:99px;background:#1b2434;overflow:hidden;margin-top:6px}
+.dash-barra > i{display:block;height:100%;border-radius:99px;background:var(--ok);transition:width .3s}
+.dash-kpi.ruim{background:linear-gradient(0deg,rgba(239,68,68,.08),rgba(239,68,68,.08)),var(--painel)}
+
+/* ---------- blocos ---------- */
+.dash-grade{display:grid;grid-template-columns:repeat(auto-fit,minmax(326px,1fr));gap:12px;margin-bottom:12px}
+.dash-card{background:var(--painel);border:1px solid var(--borda);border-radius:12px;padding:12px 14px;min-width:0}
+.dash-card h3{margin:0 0 9px;font-size:13.5px;display:flex;align-items:center;gap:7px;font-weight:600}
+.dash-card h3 .de{font-weight:500;color:var(--texto2);font-size:12px}
+.dash-vazio{font-size:12.5px;color:var(--texto2);padding:6px 0}
+
+/* ---------- barras por item (Câmeras por embarcação) ---------- */
+.dash-barras{display:flex;flex-direction:column;gap:9px}
+.dash-barra-item{display:grid;grid-template-columns:1fr auto;gap:3px 10px;font-size:12.5px}
+.dash-barra-item .nome{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dash-barra-item .conta{color:var(--texto2);font-variant-numeric:tabular-nums}
+.dash-barra-item .trilha{grid-column:1 / -1;height:7px;border-radius:99px;background:#1b2434;overflow:hidden;display:flex}
+.dash-barra-item .trilha i{display:block;height:100%}
+
+/* ---------- rosca (Distribuição Geral) ---------- */
+.dash-rosca{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.dash-rosca .anel{position:relative;flex:0 0 124px}
+.dash-rosca .anel .centro{position:absolute;inset:0;display:grid;place-items:center;text-align:center}
+.dash-rosca .anel .centro b{display:block;font-size:22px;font-family:'Space Grotesk',sans-serif;line-height:1}
+.dash-rosca .anel .centro span{font-size:10.5px;color:var(--texto2);text-transform:uppercase;letter-spacing:.03em}
+.dash-rosca .legenda{font-size:12.5px;display:flex;flex-direction:column;gap:7px;min-width:0}
+.dash-rosca .legenda span{display:flex;align-items:center;gap:8px}
+.dash-rosca .legenda i{width:9px;height:9px;flex:0 0 9px;border-radius:99px;display:block}
+.dash-rosca .legenda .qtd{color:var(--texto2);margin-left:auto;font-variant-numeric:tabular-nums}
+
+/* ---------- disponibilidade (7 dias) ---------- */
+.dash-metricas{display:flex;gap:10px;flex-wrap:wrap}
+.dash-metrica{background:var(--painel2);border:1px solid var(--borda);border-radius:10px;padding:9px 15px;
+  text-align:center;min-width:98px}
+.dash-metrica b{display:block;font-size:20px;font-family:'Space Grotesk',sans-serif;line-height:1.2}
+.dash-metrica span{font-size:10.5px;color:var(--texto2);text-transform:uppercase;letter-spacing:.03em}
+.dash-dias{display:flex;align-items:flex-end;gap:5px;height:62px;margin-top:12px}
+.dash-dias .dia{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;
+  gap:5px;height:100%;min-width:0}
+.dash-dias .dia .torre{width:100%;display:flex;flex-direction:column;justify-content:flex-end;flex:1;gap:2px}
+.dash-dias .dia .torre i{display:block;border-radius:4px 4px 0 0;width:100%}
+.dash-dias .dia b{font-size:10px;color:var(--texto2);font-weight:600;white-space:nowrap}
+.dash-dias .dia .qtd{font-size:10px;color:var(--texto2);font-variant-numeric:tabular-nums}
+
+/* ---------- diagnóstico de conexões ---------- */
+.dash-diag{display:grid;grid-template-columns:repeat(auto-fit,minmax(206px,1fr));gap:10px}
+.dash-conexao{border:1px solid var(--borda);border-left:3px solid var(--borda2);border-radius:9px;
+  padding:9px 11px;background:var(--painel2);min-width:0}
+.dash-conexao .qual{font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:7px}
+.dash-conexao .qual .pt{width:7px;height:7px;flex:0 0 7px;border-radius:99px;display:block;background:var(--texto2)}
+.dash-conexao .detalhe{font-size:11.5px;color:var(--texto2);margin-top:3px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+
+/* ---------- listas (embarcações / alertas / câmeras) ---------- */
+.dash-lista{display:flex;flex-direction:column;gap:8px}
+.dash-item{border:1px solid var(--borda);border-left:3px solid var(--borda2);border-radius:9px;
+  padding:9px 11px;background:var(--painel2);display:grid;grid-template-columns:1fr auto;gap:2px 10px;
+  align-items:center;min-width:0}
+.dash-item .nome{font-size:13.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dash-item .emb{font-size:11.5px;color:var(--texto2);grid-column:1 / -1}
+.dash-item .numeros{font-size:11.5px;color:var(--texto2);grid-column:1 / -1;
+  font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dash-item.ok{border-left-color:var(--ok)}
+.dash-item.atencao,.dash-item.alerta{border-left-color:var(--aviso)}
+.dash-item.problema{border-left-color:var(--ruim)}
+
+/* ---------- selos Crítico / Atenção / Operacional ---------- */
+.dash-selo{border-radius:99px;padding:2px 10px;font-size:11px;font-weight:700;border:1px solid;
+  display:inline-block;white-space:nowrap}
+.dash-selo.ok{color:#86efac;background:#0f2a1a;border-color:#1c5137}
+.dash-selo.atencao{color:#fcd34d;background:#2a2310;border-color:#5b4715}
+.dash-selo.problema{color:#fca5a5;background:#2a1214;border-color:#5d2226}
+.dash-selo.neutro{color:var(--texto2);background:#0d1420;border-color:var(--borda2)}
+
+/* ---------- modo minimizado (o botão "Minimizar" do Dock Check) ---------- */
+body.dash-min .dash-detalhe{display:none}
+body.dash-min .dash-topo{margin-bottom:10px}
+body.dash-min .dash-fila{margin-bottom:0}
+
+/* ---------- gaveta de detalhe (a telemetria por câmera/encoder do dashboard do admin) ---------- */
+/* Fechada por padrão: o painel fica limpo e o número continua a um clique. */
+.dash-gaveta{margin-top:6px}
+.dash-gaveta>summary{cursor:pointer;color:var(--texto2);font-size:12px}
+.dash-gaveta table{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
+.dash-gaveta th,.dash-gaveta td{text-align:left;padding:4px 10px 4px 0;
+  border-bottom:1px solid var(--borda)}
+.dash-gaveta th{color:var(--texto2);font-weight:600}

@@ -91,11 +91,18 @@ def wait_estado(pag, cam: str, pedaco: str, limite: int = 20000) -> str:
 
 
 def esperar_botao(pag, seletor: str, texto: str, limite: int = 25000) -> bool:
-    """Espera o botao daquele camera mostrar o texto (a linha e' redesenhada a cada acao)."""
+    """Espera o botao daquela camera mostrar o texto (a linha e' redesenhada a cada acao).
+
+    Desde 24/11/2026 os botoes da GRADE sao ICONES com o nome completo no `title`/`aria-label` — o
+    `innerText` so' traz o glifo. A prova mede o nome ACESSIVEL junto do texto.
+    """
     fim = time.time() + limite / 1000
     while time.time() < fim:
         try:
-            if texto in pag.locator(seletor).inner_text():
+            e = pag.locator(seletor).first
+            junto = ((e.inner_text() or '') + ' ' + (e.get_attribute("title") or '') + ' '
+                     + (e.get_attribute("aria-label") or ''))
+            if texto in junto:
                 return True
         except Exception:
             pass
@@ -209,9 +216,11 @@ def main() -> int:
             pag.fill("#senha", SENHA)
             pag.click("form#form-entrar button[type=submit]")
             pag.wait_for_selector("#sistema:not(.oculto)", timeout=20000)
-            pag.click('.item[data-tela="transmissao"]')
-            pag.wait_for_selector(".transmissao-linha", timeout=15000)
-            pag.click(f"#iniciar-{cam}")
+# PLANO UNICO (25/11/2026): a tela "Transmitir" saiu do cliente - o controle de transmissao
+            # (iniciar/parar/contagem/gravar) mora na GRADE, no quadro de cada camera. O cliente ja'
+            # cai nessa tela ao entrar; o botao do quadro e' o `[data-papel="iniciar"]`.
+            pag.wait_for_selector(f'.janela[data-cam="{cam}"] [data-papel="iniciar"]', timeout=15000)
+            pag.click(f'.janela[data-cam="{cam}"] [data-papel="iniciar"]')
             wait_estado(pag, cam, "pedido enviado", 20000)
             s, j = pedir("GET", base + f"/api/ordens?embarcacao_id={emb}&espera=0", token_bordo=TOKEN)
             ordens = j.get("ordens") or []
@@ -223,12 +232,12 @@ def main() -> int:
             checar("a transmissao esta' no ar para o cliente", "no ar" in texto_ar.lower(), texto_ar)
 
             # --- GRAVAR de verdade (o arquivo sai do fluxo que chegou) -------------------------------
-            pag.click(f"#gravar-{cam}")
-            gravando = esperar_botao(pag, f"#gravar-{cam}", "Parar gravação", 30000)
+            pag.click(f'.janela[data-cam="{cam}"] [data-papel="gravar"]')
+            gravando = esperar_botao(pag, f'.janela[data-cam="{cam}"] [data-papel="gravar"]', "Parar gravação", 30000)
             checar("a tela diz que esta' GRAVANDO (com fluxo de verdade, agora e' verdade)", gravando,
                    pag.locator(f'[data-estado="{cam}"]').inner_text() if not gravando else "")
             pag.wait_for_timeout(6000)
-            pag.click(f"#gravar-{cam}")                      # para a gravacao -> o arquivo fica pronto
+            pag.click(f'.janela[data-cam="{cam}"] [data-papel="gravar"]')                      # para a gravacao -> o arquivo fica pronto
             pag.wait_for_selector("#aviso-gravacao", timeout=25000)
 
             # --- o AVISO ao cliente (dono: "ao final da gravacao, precisa avisar ao cliente") --------

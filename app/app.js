@@ -47,8 +47,18 @@ async function abrir() {
                     && !['cliente', 'observador'].includes(eu.corpo.papel));
   $('entrada').classList.add('oculto'); $('sistema').classList.remove('oculto');
   $('conta-email').textContent = eu.corpo.email;
-  $('conta-papel').textContent = eu.corpo.papel === 'cliente' ? 'Cliente'
-    : (eu.corpo.papel === 'observador' ? 'Observador (Petrobras)' : 'Operação LECSOR');
+  /* O TIPO DO CLIENTE NA TELA (dono, 25/11/2026: "que tipo de cliente é esse? só acessa uma
+     embarcação, várias embarcações, todas de uma empresa, todas de todas as empresas?"). O servidor
+     manda o escopo em `/api/eu` e o chip diz por extenso. */
+  const TIPOS_DE_CLIENTE = {
+    uma_embarcacao_da_empresa: 'Cliente · 1 embarcação',
+    algumas_embarcacoes_da_empresa: 'Cliente · algumas embarcações da empresa',
+    todas_as_embarcacoes_da_empresa: 'Cliente · todas as embarcações da empresa',
+    todas_as_empresas: 'Observador (Petrobras/IBAMA) · todas as empresas',
+  };
+  S.escopo = eu.corpo.escopo || '';
+  $('conta-papel').textContent = TIPOS_DE_CLIENTE[S.escopo]
+    || (eu.corpo.papel === 'cliente' ? 'Cliente' : 'Operação LECSOR');
   if (eu.corpo.papel === 'observador') return abrirObservador();
   $('iniciais').textContent = eu.corpo.nome.split(/\s+/).filter((p) => p.length > 2).slice(0, 2).map((p) => p[0]).join('').toUpperCase() || 'LC';
   const em = await api('/api/embarcacoes');
@@ -119,13 +129,17 @@ async function atualizar() {
   S.cameras = novas;
   if (S.selecionadas.size === 0) S.cameras.forEach((c) => S.selecionadas.add(c.id));
   for (const id of Array.from(S.selecionadas)) if (!S.cameras.some((c) => c.id === id)) S.selecionadas.delete(id);
-  /* P2 (dono, 25/11/2026): o item "Radar de óleo (HD)" só faz sentido quando a embarcação TEM radar de
-     óleo (câmera de tipo 'radar'). Sem radar, o item sai do menu — nada de tela que não serve. */
-  const btRadar = document.querySelector('button[data-tela="radar_hd"]');
-  if (btRadar) {
-    const temRadar = S.cameras.some((c) => c.tipo === 'radar');
-    btRadar.classList.toggle('oculto', !temRadar);
-    if (!temRadar && S.tela === 'radar_hd') trocarTela('visualizar');
+  /* O ACESSO AO GRAVADO A BORDO NÃO SE ESCONDE (plano único, 25/11/2026): na 0.19.0 o item sumia quando
+     a embarcação não tinha câmera de tipo 'radar' — e era justamente esse o acesso que o dono procurava
+     ("onde eu consigo acessar as imagens gravadas a bordo?"). O item fica SEMPRE no menu; quem explica
+     a ausência de blocos é a própria tela. O rótulo volta a ser "Radar de óleo (HD)" quando a
+     embarcação TEM radar de óleo — o nome antigo não se perde. */
+  const btHd = document.querySelector('button[data-tela="radar_hd"]');
+  if (btHd) {
+    btHd.classList.remove('oculto');
+    const temRadar = (S.cameras || []).some((c) => c.tipo === 'radar');
+    btHd.innerHTML = '<span class="ic">🛰</span>'
+      + (temRadar ? 'Radar de óleo (HD)' : 'Imagens gravadas a bordo');
   }
   const an = await api('/api/analises');
   if (an.ok && an.corpo) {
@@ -133,11 +147,10 @@ async function atualizar() {
     S.agentesPorCamera = {};
     for (const ag of (an.corpo.agentes || [])) S.agentesPorCamera[ag.camera_id] = ag;
   }
-  if (S.tela === 'alertas' || S.tela === 'relatorios') await dadosExtras();
+  if (S.tela === 'alertas') await dadosExtras();
   // a GRADE tambem precisa das transmissoes abertas: e' nela que o cliente inicia/para a transmissao,
   // ve a contagem e o "Reconectar" (dono, 24/11/2026 — os controles sairam da tela "Transmitir").
-  if (S.tela === 'transmissao' || S.tela === 'configuracao' || S.tela === 'gravacoes'
-      || S.tela === 'visualizar') await carregarTransmissao();
+  if (S.tela === 'gravacoes' || S.tela === 'visualizar') await carregarTransmissao();
   if (S.tela === 'radar_hd') await carregarHd();
   if (S.tela === 'visualizar') {
     if (mudouLista || !$('palco').dataset.montado) desenharVisualizar();
@@ -369,7 +382,12 @@ function desenharVisualizar() {
     const ponto = document.createElement('span'); ponto.className = 'ponto' + (c.no_ar ? '' : ' ruim');
     const nome = document.createElement('span');
     // o rotulo carrega so o essencial; o motivo completo aparece no aviso dentro da janela
-    nome.dataset.base = c.rotulo + (c.encoder && c.encoder.resolucao ? ' · ' + c.encoder.resolucao : '');
+    /* O CARD DIZ DE QUAL EMBARCAÇÃO É A CÂMERA (dono, 25/11/2026: "e essa, qual a embarcação?"): com o
+       observador (tipo 4) saltando entre embarcações de empresas diferentes, o nome da câmera sozinho
+       não diz onde ela está. A ordem é câmera · embarcação · resolução. */
+    const embDaCamera = nomeDaEmbarcacao();
+    nome.dataset.base = c.rotulo + (embDaCamera ? ' · ' + embDaCamera : '')
+      + (c.encoder && c.encoder.resolucao ? ' · ' + c.encoder.resolucao : '');
     nome.textContent = nome.dataset.base + (c.no_ar ? '' : ' · fora do ar');
     rot.appendChild(ponto); rot.appendChild(nome);
     const caixas = document.createElement('div'); caixas.className = 'caixas'; caixas.id = 'caixas-' + c.id;
@@ -787,16 +805,29 @@ const TELAS = {
   visualizar: ['Transmissões ao vivo', 'Monitoramento em tempo real das câmeras selecionadas.'],
   alertas: ['Alertas', 'Queda de câmera, perda de sinal e eventos das análises de vídeo.'],
   gravacoes: ['Gravações', 'Trechos gravados pela operação (depende da retenção da embarcação).'],
-  radar_hd: ['Radar de óleo (HD)', 'As imagens do radar ficam gravadas o tempo todo no computador de captura. Procure por data e hora e peça o trecho que quiser ver.'],
-  relatorios: ['Relatórios', 'Indicadores medidos pelo sistema: disponibilidade, contagens e qualidade do link.'],
+  /* O acesso às imagens GRAVADAS A BORDO (plano único, 25/11/2026): o HD do computador de captura,
+     gravando o tempo todo. O nome antigo ("Radar de óleo (HD)") ficou só como apelido quando a
+     embarcação TEM radar — o que o cliente procura é "as imagens gravadas a bordo". */
+  radar_hd: ['Imagens gravadas a bordo', 'As imagens ficam gravadas o tempo todo no computador de captura da embarcação. Procure por data e hora e peça o trecho que quiser ver.'],
   cameras: ['Câmeras', 'Câmeras liberadas para a sua empresa e o estado de cada uma.'],
-  transmissao: ['Transmitir', 'Você abre a transmissão da câmera: a ordem vai até a máquina de captura da embarcação.'],
-  configuracao: ['Tempo de transmissão', 'Quanto tempo cada transmissão pode durar antes de parar.']
+  /* Saíram do cliente (plano único, 25/11/2026): `relatorios` (lia `analytics_*`, que ninguém
+     escreve), `transmissao` (repetia o controle da GRADE) e `configuracao` (o teto é do admin). */
 };
+
+/* A EMBARCAÇÃO NA TELA (dono, 25/11/2026: "e essa, qual a embarcação? não está aparecendo lá"): ela
+   existia só no <select> do cabeçalho. O subtítulo passa a dizer de qual embarcação são as imagens, e
+   o card de cada câmera repete — o observador (tipo 4) salta entre embarcações de empresas diferentes
+   e precisa saber onde está. */
+function nomeDaEmbarcacao() {
+  const e = (S.embarcacoes || []).find((x) => x.id === S.embarcacaoId);
+  return (e && e.nome) || '';
+}
 
 function desenharTela() {
   const [titulo, sub] = TELAS[S.tela] || TELAS.visualizar;
-  $('titulo-tela').textContent = titulo; $('sub-tela').textContent = sub;
+  const emb = nomeDaEmbarcacao();
+  $('titulo-tela').textContent = titulo;
+  $('sub-tela').textContent = sub + (emb ? ' · ' + emb : '');
   $('controles').classList.toggle('oculto', S.tela !== 'visualizar');
   $('hd-filtro').classList.toggle('oculto', S.tela !== 'radar_hd');
   $('paginacao').classList.add('oculto');
@@ -858,7 +889,8 @@ function desenharTela() {
       const total = blocos.reduce((s, b) => s + (b.bytes || 0), 0);
       resumo.textContent = blocos.length
         ? `${blocos.length} trecho(s) · ${emMB(total)} · de ${blocos[blocos.length - 1].inicio.replace('T', ' ').slice(0, 16)} até ${blocos[0].inicio.replace('T', ' ').slice(0, 16)}`
-        : 'o computador de captura ainda não publicou imagens do radar';
+        : 'o computador de captura ainda não publicou blocos: a gravação contínua a bordo nasce desligada '
+          + 'e quem liga é o próprio PC de captura (o lado terra nunca abre conexão para o bordo)';
     }
     const jaPedido = {};
     for (const p of (cat.pedidos || [])) jaPedido[p.camera_id + '|' + p.arquivo] = p;
@@ -891,38 +923,6 @@ function desenharTela() {
                tamanho: emMB(b.bytes), situacao, acao };
     }), S.hd ? 'Nenhum trecho neste horário — tente um intervalo maior (as imagens ficam guardadas no computador de captura e o mais antigo gira quando o disco enche).'
       : 'Carregando as imagens do radar…');
-  } else if (t === 'relatorios') {
-    const linhas = S.cameras.map((c) => ({ camera: c.rotulo, estado: c.no_ar ? 'no ar' : 'fora do ar',
-      encoder: c.encoder && c.encoder.bitrate ? c.encoder.bitrate : '', leitores: c.leitores }));
-    const contagens = (S.analises.contagens || []).map((x) => ({ camera: rotuloDe(x.camera_id), entrou: x.entrou, saiu: x.saiu,
-      pico: x.pico, fonte: x.fonte, quando: (x.janela_fim || '').replace('T', ' ').slice(0, 19) }));
-    tabelaEmPalco([{ rotulo: 'Câmera', campo: 'camera' }, { rotulo: 'Estado', campo: 'estado' },
-                   { rotulo: 'Bitrate', campo: 'encoder' }, { rotulo: 'Espectadores', campo: 'leitores' }], linhas,
-      'Sem dado de relatório.');
-    const p = $('palco');
-    const ags = S.analises.agentes || [];
-    /* Estas linhas ficam fora da tabela: só são remontadas quando o texto delas muda de verdade. */
-    const textoExtras = ags.map((ag) => `${ag.camera_id}|${ag.estado}|${ag.modelo}|${ag.fps}|${ag.quadros}`).join('§')
-      + '||' + contagens.map((x) => `${x.camera}|${x.entrou}|${x.saiu}|${x.pico}`).join('§');
-    let cx = p.querySelector('.extras-relatorio');
-    if (!cx) { cx = document.createElement('div'); cx.className = 'extras-relatorio'; p.appendChild(cx); }
-    if (cx.dataset.marca !== textoExtras) {
-      cx.dataset.marca = textoExtras;
-      limpar(cx);
-      for (const ag of ags) {
-        const h2 = document.createElement('div'); h2.className = 'agente-linha';
-        const sinal = document.createElement('span'); sinal.className = 'sinal' + (ag.estado === 'no ar' ? ' noar' : '');
-        h2.appendChild(sinal);
-        const txt = document.createElement('span');
-        txt.textContent = `Agente de análise em ${rotuloDe(ag.camera_id)}: ${ag.estado} · modelo ${ag.modelo} · ${ag.fps} quadros/s · ${ag.quadros} quadros analisados`;
-        h2.appendChild(txt); cx.appendChild(h2);
-      }
-      if (contagens.length) {
-        const h = document.createElement('div'); h.className = 'vazio';
-        h.textContent = 'Contagens de pessoas: ' + contagens.slice(0, 4).map((c) => `${c.camera}: ${c.entrou} entrada(s) / ${c.saiu} saída(s) · pico ${c.pico}`).join(' · ');
-        cx.appendChild(h);
-      }
-    }
   } else if (t === 'cameras') {
     /* A coluna Tipo (dono, 25/11/2026): radar de óleo e FLIR (térmica) aparecem nomeados — o
        observador (Petrobras/IBAMA) vê só esses dois; o cliente vê os seus. */
@@ -932,10 +932,6 @@ function desenharTela() {
                    { rotulo: 'Estado', valor: (l) => (l.no_ar ? 'no ar' : 'fora do ar') },
                    { rotulo: 'Resolução', valor: (l) => (l.encoder && l.encoder.resolucao) || '—' },
                    { rotulo: 'Bitrate', valor: (l) => (l.encoder && l.encoder.bitrate) || '—' }], S.cameras, 'Nenhuma câmera liberada.');
-  } else if (t === 'transmissao') {
-    desenharTransmissao();
-  } else if (t === 'configuracao') {
-    desenharConfiguracao();
   }
 }
 
@@ -998,6 +994,9 @@ function _btIc(papel, icone, texto, classe) {
 function montarControle(c, el, jan, imgDaCamera) {
   el.innerHTML = '';
   const est = document.createElement('span'); est.dataset.papel = 'estado'; est.className = 'st-estado';
+  /* `data-estado="<camera>"`: e' por aqui que a prova de tela le' o estado DAQUELA camera (a tela
+     "Transmitir" saiu na 0.20.0 — plano unico, 25/11/2026 — e o estado passou a viver so' na grade). */
+  est.dataset.estado = c.id;
   const cont = document.createElement('span'); cont.dataset.papel = 'contagem'; cont.className = 'st-contagem';
   const aviso = document.createElement('div'); aviso.dataset.papel = 'aviso'; aviso.className = 'st-aviso';
   el.append(est, cont, _btIc('iniciar', '▶', 'Iniciar transmissão'),
@@ -1283,154 +1282,6 @@ async function baterPonto() {
   }
 }
 
-function desenharTransmissao() {
-  const p = $('palco');
-  limpar(p); p.dataset.montado = '';
-  avisoDeGravacao(p);
-  const meu = (S.usuario || {}).email;
-  const cams = S.cameras || [];
-  if (!cams.length) {
-    const d = document.createElement('div'); d.className = 'vazio';
-    d.textContent = 'Nenhuma câmera liberada para esta embarcação.';
-    p.appendChild(d); return;
-  }
-  const cx = document.createElement('div'); cx.className = 'transmissao-caixa';
-  for (const cam of cams) {
-    const abertas = (S.transmissao.abertas || []).filter((t) => t.camera_id === cam.id);
-    const minha = abertas.find((t) => t.usuario_email === meu);
-    const quantos = new Set(abertas.map((t) => t.usuario_email)).size;
-    const l = document.createElement('div'); l.className = 'transmissao-linha'; l.dataset.camera = cam.id;
-
-    const nome = document.createElement('div'); nome.className = 'nome'; nome.textContent = cam.rotulo;
-    const est = document.createElement('div');
-    est.className = 'estado' + (minha && minha.estado === 'no_ar' ? ' noar' : '');
-    est.dataset.estado = cam.id;
-    if (minha) {
-      est.textContent = textoDaSessao(minha, meu);
-      if (minha.termina_em && minha.estado !== 'encerrada' && minha.estado !== 'expirada') {
-        est.textContent += ' · tempo restante ' + mmss(minha.segundos_restantes || 0);
-      }
-    } else if (abertas.length) {
-      est.textContent = 'no ar — outro cliente da sua empresa está assistindo';
-    } else {
-      est.textContent = cam.no_ar ? 'no ar agora' : 'parada';
-    }
-    if (quantos > 1) est.textContent += ' · ' + quantos + ' clientes assistindo';
-
-    const acoes = document.createElement('div'); acoes.className = 'acoes-transmissao';
-    const b = document.createElement('button');
-    if (minha) {
-      /* a gravacao mora no LADO TERRA (o vídeo que já chegou); enquanto grava, o tempo não corta */
-      if ((minha.estado === 'no_ar' || minha.estado === 'pedida')) {
-        const gravando = !!minha.gravando || !!(minha.gravacao && minha.gravacao.gravando);
-        const g = document.createElement('button');
-        g.className = 'pil' + (gravando ? ' on' : ''); g.id = 'gravar-' + cam.id;
-        g.textContent = gravando ? 'Parar gravação' : 'Gravar (no lado terra)';
-        g.onclick = () => marcarGravando(minha.id, !gravando, g);
-        acoes.appendChild(g);
-      }
-      b.className = 'pil'; b.textContent = 'Parar transmissão'; b.id = 'parar-' + cam.id;
-      b.onclick = () => pararTransmissao(minha.id, b);
-    } else {
-      b.className = 'pil on'; b.textContent = 'Iniciar transmissão'; b.id = 'iniciar-' + cam.id;
-      b.onclick = () => pedirTransmissao(cam.id, b);
-    }
-    acoes.appendChild(b);
-    l.appendChild(nome); l.appendChild(est); l.appendChild(acoes);
-    cx.appendChild(l);
-  }
-  p.appendChild(cx);
-
-  const h = document.createElement('div'); h.className = 'grupo-historico';
-  h.textContent = 'Histórico das transmissões desta embarcação';
-  p.appendChild(h);
-  const hist = S.transmissao.historico || [];
-  if (!hist.length) {
-    const d = document.createElement('div'); d.className = 'vazio';
-    d.textContent = 'Ainda não houve transmissão nesta embarcação.';
-    p.appendChild(d); return;
-  }
-  const tb = document.createElement('table'); tb.className = 'historico';
-  const th = document.createElement('thead');
-  const trh = document.createElement('tr');
-  for (const titulo of ['Quando', 'Câmera', 'Quem', 'Durou', 'Como terminou', 'Gravação']) {
-    const c = document.createElement('th'); c.textContent = titulo; trh.appendChild(c);
-  }
-  th.appendChild(trh); tb.appendChild(th);
-  const corpo = document.createElement('tbody');
-  for (const t of hist.slice(0, 20)) {
-    const tr = document.createElement('tr');
-    for (const valor of [(t.criada_em || '').replace('T', ' ').slice(0, 19), rotuloDe(t.camera_id),
-                         t.usuario_email || '', duracaoDa(t), textoDaSessao(t, meu)]) {
-      const td = document.createElement('td'); td.textContent = valor; tr.appendChild(td);
-    }
-    const tdG = document.createElement('td');
-    if (t.gravacao && t.gravacao.tem) {
-      const a = document.createElement('a');
-      a.href = '/api/gravacoes/' + encodeURIComponent(t.id);
-      a.textContent = 'baixar (' + emMB(t.gravacao.bytes) + ')';
-      tdG.appendChild(a);
-    } else { tdG.textContent = '—'; }
-    tr.appendChild(tdG);
-    corpo.appendChild(tr);
-  }
-  tb.appendChild(corpo);
-  p.appendChild(tb);
-}
-
-/* O que o cliente escolheu nesta tela. E' o que VENCE o valor do servidor: o redesenho nao pode
-   apagar a escolha dele (mesmo defeito que a prova de tela pegou na tela do tempo). */
-let tempoEscolhido = null;
-
-function desenharConfiguracao() {
-  const p = $('palco');
-  limpar(p); p.dataset.montado = '';
-  const cx = document.createElement('div'); cx.className = 'config-caixa';
-  const d = document.createElement('div'); d.className = 'vazio';
-  /* Dono (19/11/2026): "todas as configuracoes serao feitas por mim (admin), nada sera configurado pelo
-     cliente". Com o tempo FIXADO pelo administrador, o cliente so' LE — a caixa de escolher sai. */
-  const fixado = (S.transmissao || {}).teto_do_produto_s || 0;
-  if (fixado) {
-    d.textContent = 'O tempo de cada transmissão é definido pelo administrador da LECSOR '
-      + `(${Math.round(fixado / 60)} min). Você não precisa configurar nada. Ao estourar o tempo a `
-      + 'transmissão para e você inicia de novo — a menos que esteja gravando. Tudo fica no histórico.';
-    cx.appendChild(d);
-    p.appendChild(cx);
-    return;
-  }
-  d.textContent = 'Tempo máximo de cada transmissão. Ao estourar, a transmissão para e você inicia de '
-    + 'novo — a menos que esteja gravando. Tudo o que for feito fica no histórico.';
-  cx.appendChild(d);
-  const linha = document.createElement('div'); linha.className = 'transmissao-linha';
-  const nome = document.createElement('div'); nome.className = 'nome'; nome.textContent = 'Tempo máximo';
-  const atual = tempoEscolhido === null ? S.transmissao.tempo_maximo_s : tempoEscolhido;
-  const sel = document.createElement('select'); sel.className = 'pil'; sel.id = 'tempo-maximo';
-  for (const s of (S.transmissao.tempos || [900])) {
-    const o = document.createElement('option'); o.value = s; o.textContent = (s / 60) + ' min';
-    if (s === atual) o.selected = true;
-    sel.appendChild(o);
-  }
-  sel.onchange = () => { tempoEscolhido = parseInt(sel.value, 10); };
-  const b = document.createElement('button'); b.className = 'pil on'; b.id = 'gravar-tempo';
-  b.textContent = 'Gravar';
-  b.onclick = async () => {
-    b.disabled = true;
-    const escolhido = tempoEscolhido === null ? parseInt(sel.value, 10) : tempoEscolhido;
-    const r = await api('/api/transmissao/config',
-      { method: 'POST', body: JSON.stringify({ tempo_maximo_s: escolhido }) });
-    b.disabled = false;
-    if (!r.ok) { alert((r.corpo && r.corpo.erro) || 'não deu para gravar'); return; }
-    tempoEscolhido = null;          // gravou: o servidor passa a ser a verdade
-    await carregarTransmissao();
-    redesenharTransmissao();
-  };
-  const acoes = document.createElement('div'); acoes.className = 'acoes-transmissao';
-  acoes.appendChild(b);
-  linha.appendChild(nome); linha.appendChild(sel); linha.appendChild(acoes);
-  cx.appendChild(linha);
-  p.appendChild(cx);
-}
-
 /* ---------------------------------------------------------------- rodape e utilidades */
 function atualizarRodape() {
   const total = S.cameras.length, sel = S.selecionadas.size;
@@ -1450,7 +1301,7 @@ function relogios() {
 function trocarTela(tela) {
   S.tela = tela; S.pagina = 1;
   document.querySelectorAll('.item[data-tela]').forEach((b) => b.classList.toggle('on', b.dataset.tela === tela));
-  if (tela === 'transmissao' || tela === 'configuracao' || tela === 'gravacoes') { carregarTransmissao().then(desenharTela); }
+  if (tela === 'gravacoes') { carregarTransmissao().then(desenharTela); }
   if (tela === 'visualizar') {
     desenharVisualizar();
     /* voltou para a tela do video: bate o "estou aqui" NA HORA (nao espera o tick de 10 s) — assim o

@@ -594,6 +594,31 @@ def texto_do_tempo(segundos: int) -> str:
     return f"{max(1, int(segundos) // 60)} min"
 
 
+def escopo_do_cliente(u) -> str:
+    """O TIPO do cliente (dono, 25/11/2026: "que tipo de cliente é esse?"): um dos quatro.
+
+      * observador          -> todas_as_empresas                (tipo 4: Petrobras/IBAMA)
+      * sem vinculo nenhum  -> todas_as_embarcacoes_da_empresa  (tipo 3)
+      * um vinculo          -> uma_embarcacao_da_empresa        (tipo 1)
+      * mais de um vinculo  -> algumas_embarcacoes_da_empresa   (tipo 2)
+
+    E' a MESMA regra do painel do admin (`/api/usuarios/<id>/embarcacoes`), aqui como funcao para o
+    proprio cliente ler o seu tipo em `/api/eu` — a tela mostra o tipo em vez de deixar no escuro.
+    """
+    if not u or u["papel"] == PAPEL_OBSERVADOR:
+        return "todas_as_empresas" if u else ""
+    try:
+        with conexao() as c:
+            r = c.execute("SELECT count(*) AS n FROM usuario_embarcacoes WHERE usuario_id=?",
+                          (u["id"],)).fetchone()
+        n = int(r["n"] or 0)
+    except Exception:
+        return ""
+    if n == 0:
+        return "todas_as_embarcacoes_da_empresa"
+    return "uma_embarcacao_da_empresa" if n == 1 else "algumas_embarcacoes_da_empresa"
+
+
 def tempo_maximo_do_produto() -> int:
     """Teto do PRODUTO (o administrador define). ZERO quer dizer sem teto.
 
@@ -1236,6 +1261,135 @@ def _saude_resumida(embarcacao_id: str) -> dict:
 
 
 # ---------------------------------------------------------------------------------------------
+# DASHBOARD DO ADMIN (plano único 0.20.0, 25/11/2026 — a linguagem do Dock Check). O dono: "tanto o
+# dashboard do admin quanto o do app de captura continuam horríveis, precisa ser algo mais próximo
+# desse do Dock Check". Aqui mora o que o dashboard desenha: KPI, lista com o pior estado, diagnóstico
+# de conexões, a DISPONIBILIDADE MEDIDA (7 dias) e os alertas. NADA é estimado: cada número sai de
+# `saude_bordo` (o retrato que o PC de captura manda), do mediamtx (câmera no ar) ou das tabelas de
+# estado. Onde não há medida, a tela escreve "não medido" — não inventa zero nem verde.
+# ---------------------------------------------------------------------------------------------
+def disponibilidade_7d(embarcacao_id: str, dias: int = 7) -> dict:
+    """A disponibilidade MEDIDA do bordo nos últimos `dias`.
+
+    Definição (a mesma que a tela escreve, para não haver número sem régua): cada retrato recebido é
+    classificado pelo MESMO `classificar_saude` que o painel usa. Por dia sai quantos retratos chegaram
+    e quantos foram 'problema'/'alerta'/'ok' (o silêncio do bordo conta como 'problema', é a regra do
+    semáforo). Daí: `cobertura_pct` = dias com pelo menos um retrato ÷ dias (a máquina esteve viva e
+    alcançável) e `incidentes` = dias com pelo menos um retrato 'problema'.
+    """
+    emb = (embarcacao_id or "").strip()
+    agora = dt.datetime.now(dt.timezone.utc)
+    inicio = (agora - dt.timedelta(days=dias)).replace(hour=0, minute=0, second=0, microsecond=0)
+    retratos: dict[str, int] = {}
+    problemas: dict[str, int] = {}
+    alertas_do_dia: dict[str, int] = {}
+    oks: dict[str, int] = {}
+    if emb:
+        with conexao() as c:
+            linhas = c.execute("""SELECT recebido_em, estado, retrato FROM saude_bordo
+                                  WHERE embarcacao_id=? AND recebido_em>=?
+                                  ORDER BY recebido_em DESC LIMIT 4000""",
+                               (emb, inicio.isoformat(timespec="seconds"))).fetchall()
+        for linha in linhas:
+            dia = (linha["recebido_em"] or "")[:10]
+            if not dia:
+                continue
+            # O ESTADO DO DIA É O QUE O PAINEL MOSTROU QUANDO O RETRATO CHEGOU (`estado` gravado por
+            # `receber_saude_do_bordo`) — classificar de novo AQUI, dias depois, diria "mudo" de um
+            # bordo que falou na hora. Sem a coluna (retrato antigo/inserido direto) classifica como
+            # recém-chegado (idade 0): é o mesmo semáforo, na hora em que o dado existiu.
+            estado = (linha["estado"] or "").strip()
+            if not estado:
+                try:
+                    retrato = json.loads(linha["retrato"] or "{}")
+                except Exception:  # noqa: BLE001
+                    retrato = {}
+                estado = (classificar_saude(retrato, 0.0) or {}).get("estado") or ""
+            retratos[dia] = retratos.get(dia, 0) + 1
+            # o vocabulário do semáforo é ok / atencao / problema (o campo do dia chama 'alerta')
+            if estado == "problema":
+                problemas[dia] = problemas.get(dia, 0) + 1
+            elif estado in ("atencao", "alerta"):
+                alertas_do_dia[dia] = alertas_do_dia.get(dia, 0) + 1
+            elif estado == "ok":
+                oks[dia] = oks.get(dia, 0) + 1
+    dias_saida = []
+    for i in range(dias - 1, -1, -1):
+        dia = (agora - dt.timedelta(days=i)).date().isoformat()
+        dias_saida.append({"dia": dia, "retratos": retratos.get(dia, 0),
+                           "problema": problemas.get(dia, 0), "alerta": alertas_do_dia.get(dia, 0),
+                           "ok": oks.get(dia, 0)})
+    com_retrato = len([d for d in dias_saida if d["retratos"] > 0])
+    return {"dias": dias_saida, "janela_dias": dias, "dias_com_retrato": com_retrato,
+            "cobertura_pct": round(100.0 * com_retrato / dias),
+            "incidentes": len([d for d in dias_saida if d["problema"] > 0]),
+            "retratos": sum(d["retratos"] for d in dias_saida)}
+
+
+def resumo_da_frota(usuario) -> dict:
+    """O corpo do dashboard do admin, montado de uma vez (a tela não faz 6 chamadas)."""
+    arv = arvore_do_painel(usuario)
+    agora = em_iso()
+    with conexao() as c:
+        ult_ingestao = c.execute("SELECT max(atualizado_em) AS em FROM ingestoes").fetchone()
+        ult_ingestao = dict(ult_ingestao)["em"] if ult_ingestao else ""
+    fluxos_no_ar = len([p for p in caminhos_do_mediamtx().values() if p.get("ready")])
+    embarcacoes: list = []
+    alertas: list = []
+    grupos = [(e.get("nome") or "", e.get("embarcacoes") or []) for e in (arv.get("empresas") or [])]
+    grupos.append(("(sem empresa)", arv.get("embarcacoes_sem_empresa") or []))
+    for nome_empresa, embs_do_grupo in grupos:
+        for emb in embs_do_grupo:
+            s = emb.get("saude") or {}
+            r = emb.get("resumo") or {}
+            disp = disponibilidade_7d(emb["id"])
+            item = {"id": emb["id"], "nome": emb["nome"], "empresa": nome_empresa,
+                    "estado_da_embarcacao": emb.get("estado") or "",
+                    "estado": s.get("estado") or "", "em": s.get("em") or "",
+                    "maquina": s.get("maquina") or "", "versao_app": s.get("versao_app") or "",
+                    "cpu_pct": s.get("cpu_pct"), "memoria_pct": s.get("memoria_pct"),
+                    "hd_radar_usado_pct": s.get("hd_radar_usado_pct"),
+                    "cameras": r.get("cameras") or 0, "no_ar": r.get("no_ar") or 0,
+                    "achadas_pela_varredura": r.get("achadas_pela_varredura") or 0,
+                    # a telemetria POR CÂMERA/ENCODER continua subindo para o dashboard (o dono pediu
+                    # "informações de telemetria do computador", 24/11/2026) — agora na gaveta de cada
+                    # embarcação, ao lado do KPI, em vez de uma tabela solta.
+                    "individual": s.get("individual") or [],
+                    "disponibilidade": disp}
+            embarcacoes.append(item)
+            for sinal in (s.get("sinais") or []):
+                if (sinal.get("estado") or "ok") == "ok":
+                    continue
+                alertas.append({"embarcacao_id": emb["id"], "embarcacao": emb["nome"],
+                                "empresa": nome_empresa,
+                                "sinal": sinal.get("sinal") or "", "estado": sinal.get("estado") or "",
+                                "valor": sinal.get("valor"), "unidade": sinal.get("unidade") or "",
+                                "o_que_fazer": sinal.get("o_que_fazer") or "",
+                                "em": s.get("em") or ""})
+    ordem = {"problema": 0, "alerta": 1, "atencao": 1, "ok": 2, "": 3}
+    embarcacoes.sort(key=lambda e: (ordem.get(e["estado"], 3), e["nome"]))
+    alertas.sort(key=lambda a: (ordem.get(a["estado"], 3), a["embarcacao"]))
+    total_cams = sum(e["cameras"] for e in embarcacoes)
+    total_no_ar = sum(e["no_ar"] for e in embarcacoes)
+    reportando = len([e for e in embarcacoes if e["em"]])
+    ok = len([e for e in embarcacoes if e["estado"] == "ok"])
+    # o vocabulário do semáforo é ok / atencao / problema (a tela escreve "Atenção" para 'atencao')
+    atencao = len([e for e in embarcacoes if e["estado"] in ("atencao", "alerta")])
+    problema = len([e for e in embarcacoes if e["estado"] == "problema"])
+    return {"agora": agora, "kpis": {
+                "embarcacoes": len(embarcacoes), "cameras": total_cams, "cameras_no_ar": total_no_ar,
+                "bordo_reportando": reportando, "fluxos_no_ar": fluxos_no_ar, "alertas": len(alertas),
+                "ok": ok, "atencao": atencao, "problema": problema},
+            "embarcacoes": embarcacoes, "alertas": alertas,
+            "conexoes": {
+                # TERRA -> BORDO: quem fala é o bordo (o terra nunca abre conexão para o PC de captura).
+                # BORDO -> TERRA: o caminho de vídeo — a última ingestão e os fluxos vivos no mediamtx.
+                "ultimo_retrato_em": max([e["em"] for e in embarcacoes if e["em"]] or [""]),
+                "ultima_ingestao_em": ult_ingestao or "",
+                "fluxos_no_ar": fluxos_no_ar}}
+
+
+# ---------------------------------------------------------------------------------------------
 # SAUDE DO BORDO NO PAINEL (0.8.0, Fase 5). O bordo ENVIA; terra guarda e classifica. Cada sinal tem
 # LIMIAR DECLARADO e o "o que fazer" — o painel nao precisa saber regra nenhuma e o teste prova a regra
 # pelo mesmo caminho que a tela ve. Sem dado recente NAO e' "ok": bordo mudo e' PROBLEMA (silencio nao
@@ -1805,6 +1959,13 @@ def inicializar(semear_demo: bool = False) -> None:
                         "||' '||COALESCE(local,'')||' '||COALESCE(alvo,''))")
             c.execute(f"UPDATE cameras SET tipo='flir' WHERE {nome_cam} LIKE '%flir%'")
             c.execute(f"UPDATE cameras SET tipo='radar' WHERE tipo='camera' AND {nome_cam} LIKE '%radar%'")
+        # TIPO DECIDIDO PELO ADMIN (plano unico, 25/11/2026 — "o bordo propoe, o admin decide"): o
+        # anuncio do bordo deduz o tipo pelo NOME e sobrescrevia a escolha do admin no anuncio seguinte.
+        # Com esta marca, o anuncio so' escreve o tipo enquanto ninguem decidiu (0); depois disso quem
+        # manda e' o admin (`/api/cameras/<id>/editar` com `tipo` grava 1). Instalacao que atualiza ganha
+        # a coluna aqui, zerada: nada do que ja' existe muda.
+        if "tipo_definido_pelo_admin" not in colunas:
+            c.execute("ALTER TABLE cameras ADD COLUMN tipo_definido_pelo_admin INTEGER NOT NULL DEFAULT 0")
         # RADAR por embarcacao (Fase 6): instalacao que ATUALIZA ganha as colunas aqui, sem passo
         # manual no cliente — a config da embarcacao (fonte, modo, taxa, alvo) mora nestas colunas.
         colunas_emb = {r["name"] for r in c.execute("PRAGMA table_info(embarcacoes)")}
@@ -2762,7 +2923,12 @@ class Handler(SimpleHTTPRequestHandler):
             # libera os botoes de ligar/desligar a CAMERA na tela (a captura so existe onde a
             # camera esta plugada). Cliente remoto nunca recebe esses botoes.
             return self._json(200, {"autenticado": True, "email": u["email"], "nome": u["nome"],
-                                    "papel": u["papel"], "local": self._local()})
+                                    "papel": u["papel"], "local": self._local(),
+                                    # O TIPO do cliente na tela (dono, 25/11/2026): a tela do cliente
+                                    # mostra "1 embarcacao" / "algumas" / "todas da empresa" / "todas
+                                    # as empresas (observador)" em vez de deixar o escopo no escuro.
+                                    "escopo": escopo_do_cliente(u),
+                                    "cliente_id": u["cliente_id"]})
         if rota == "/api/fluxos":
             return self._json(200, fluxos())
         if rota == "/api/embarcacoes/radar":
@@ -3429,6 +3595,17 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(200, arvore_do_painel(u), {"Cache-Control": "no-store"})
             except Exception as e:  # noqa: BLE001
                 return self._json(500, {"erro": f"nao consegui montar a area do cliente "
+                                                f"({type(e).__name__}: {e})"})
+        if rota == "/api/frota-resumo":
+            # O DASHBOARD DO ADMIN (plano único 0.20.0, 25/11/2026 — a linguagem do Dock Check): uma
+            # leitura só com KPI, lista por embarcação, diagnóstico de conexões, disponibilidade MEDIDA
+            # de 7 dias e alertas. Só a operação vê — é painel de administração.
+            if not (u and u["papel"] in PAPEL_ADMIN):
+                return self._json(401, {"erro": "entre no sistema"})
+            try:
+                return self._json(200, resumo_da_frota(u), {"Cache-Control": "no-store"})
+            except Exception as e:  # noqa: BLE001
+                return self._json(500, {"erro": f"nao consegui montar o dashboard "
                                                 f"({type(e).__name__}: {e})"})
         if rota == "/api/cameras":
             if not u:
@@ -4605,7 +4782,8 @@ class Handler(SimpleHTTPRequestHandler):
                 cam = c.execute("SELECT * FROM cameras WHERE id=?", (cid,)).fetchone()
                 if not cam:
                     return self._json(404, {"erro": "camera inexistente"})
-                for chave in ("rotulo", "embarcacao_id", "ip", "porta", "protocolo", "canal", "fluxo_id"):
+                for chave in ("rotulo", "embarcacao_id", "ip", "porta", "protocolo", "canal", "fluxo_id",
+                              "tipo"):
                     if chave not in d:
                         continue
                     if chave in ("ip", "porta", "protocolo", "canal") and not self._local():
@@ -4615,6 +4793,8 @@ class Handler(SimpleHTTPRequestHandler):
                     valor = str(d.get(chave) or "").strip()
                     if chave == "rotulo" and not valor:
                         return self._json(422, {"erro": "rotulo nao pode ficar vazio"})
+                    if chave == "tipo" and valor not in ("camera", "radar", "flir"):
+                        return self._json(422, {"erro": "tipo invalido: use camera, radar ou flir"})
                     if chave == "ip" and valor and not re.match(r"^[0-9a-zA-Z.:\-]{3,64}$", valor):
                         return self._json(422, {"erro": "ip invalido"})
                     if chave == "porta" and valor and not (valor.isdigit() and 1 <= int(valor) <= 65535):
@@ -4627,6 +4807,11 @@ class Handler(SimpleHTTPRequestHandler):
                 if not mudados:
                     return self._json(200, {"ok": True, "id": cid, "mudou": [],
                                             "observacao": "nada a mudar"})
+                if "tipo" in campos:
+                    # O ADMIN DECIDIU O TIPO (plano unico, 25/11/2026 — "o bordo propoe, o admin
+                    # decide"): marca a decisao; a partir daqui o anuncio do bordo nao sobrescreve mais
+                    # (o radar de oleo / a FLIR que o observador ve' passam a ser o que o admin disse).
+                    campos["tipo_definido_pelo_admin"] = 1
                 if campos.get("embarcacao_id") and not c.execute(
                         "SELECT 1 FROM embarcacoes WHERE id=?", (campos["embarcacao_id"],)).fetchone():
                     return self._json(422, {"erro": "embarcacao_id inexistente"})
@@ -4959,6 +5144,16 @@ class Handler(SimpleHTTPRequestHandler):
             # Tela de configuracao do cliente: o tempo maximo de cada transmissao.
             if not u:
                 return self._json(401, {"erro": "entre no sistema"})
+            # O TEMPO E' DO ADMIN (dono, 25/11/2026: "quem define o tempo maximo e' o admin, nao o
+            # cliente"). A tela saiu do menu do cliente; a recusa fica no SERVIDOR, nao so' no front —
+            # valendo mesmo quando o admin ainda nao fixou o teto (que era o caso do print do dono).
+            if u["papel"] == "cliente":
+                fixado_cli = tempo_maximo_do_produto()
+                return self._json(403, {
+                    "erro": "o tempo de transmissao e' definido pelo administrador"
+                            + (f" ({texto_do_tempo(fixado_cli)})" if fixado_cli else ""),
+                    "teto_do_produto_s": fixado_cli, "configuravel": False},
+                    {"Cache-Control": "no-store"})
             # Com o tempo FIXADO pelo administrador (dono, 19/11/2026), o cliente nao configura nada:
             # o que ele escolher na tela nao vale — entao nao aceitamos a mudanca nem por API.
             fixado = tempo_maximo_do_produto()
@@ -5299,11 +5494,22 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(403, {"erro": "licenca desta embarcacao nao libera a captura",
                                         "licenca": _bloqueio, "embarcacao_id": emb,
                                         "dica": "fale com o admin: a licenca pode ser reemitida ou prorrogada"})
+            # O BORDO PROPOE, O ADMIN DECIDE (plano único, 25/11/2026). O anúncio do bordo trazia o NOME do
+            # dispositivo e o tipo deduzido, e sobrescrevia o que o admin tinha declarado a cada anúncio:
+            # o radar renomeado no admin voltava a ser "câmera comum" e o nome do admin se perdia. Agora,
+            # DEPOIS de o admin editar a câmera (`tipo_definido_pelo_admin=1`), o anúncio não sobrescreve
+            # mais NEM o tipo NEM o rótulo; antes disso o bordo continua sendo quem propõe (renomear o
+            # dispositivo no PC de captura tem de aparecer em terra — o admin ainda não decidiu nada).
             c.execute("""INSERT INTO cameras (id,embarcacao_id,rotulo,fluxo_id,local,ativo,tipo)
                          VALUES (?,?,?,?,?,?,?)
-                         ON CONFLICT(id) DO UPDATE SET rotulo=excluded.rotulo,
+                         ON CONFLICT(id) DO UPDATE SET
+                             rotulo=CASE WHEN COALESCE(cameras.rotulo,'')=''
+                                              OR cameras.tipo_definido_pelo_admin=0
+                                         THEN excluded.rotulo ELSE cameras.rotulo END,
                              embarcacao_id=excluded.embarcacao_id, fluxo_id=excluded.fluxo_id,
-                             ativo=excluded.ativo, tipo=excluded.tipo, local='bordo'""",
+                             ativo=excluded.ativo, local='bordo',
+                             tipo=CASE WHEN cameras.tipo_definido_pelo_admin=1
+                                       THEN cameras.tipo ELSE excluded.tipo END""",
                       (cid, emb, rotulo, fluxo, "bordo", ativo, tipo))
         # ESPELHO: o lado terra e' quem tem a chave de servico — e' aqui que o cadastro do bordo
         # tambem entra no Supabase (o anexo do dono: a tabela `cameras` da nuvem parada em 1 linha).

@@ -100,10 +100,11 @@ def main() -> int:
 
             # --- 1) o CLIENTE pede a transmissao pela web -------------------------------------------
             entrar(pag_cli, base, "/app/", "cliente@lecsor.test")
-            pag_cli.click('[data-tela="transmissao"]')
-            pag_cli.wait_for_selector(".transmissao-linha", timeout=20000)
-            cam = pag_cli.eval_on_selector_all(".transmissao-linha", "ls => ls.map(l => l.dataset.camera)")[0]
-            pag_cli.click(f"#iniciar-{cam}")
+            # PLANO UNICO (25/11/2026): a tela "Transmitir" saiu do cliente - o controle (iniciar/parar/
+            # contagem/gravar) mora na GRADE, no quadro de cada camera, e o cliente ja' cai nela.
+            cam = pag_cli.eval_on_selector_all(".janela", "ls => ls.map(l => l.dataset.cam)")[0]
+            pag_cli.wait_for_selector(f'.janela[data-cam="{cam}"] [data-papel="iniciar"]', timeout=20000)
+            pag_cli.click(f'.janela[data-cam="{cam}"] [data-papel="iniciar"]')
             pedido_na_tela = ""
             fim = time.time() + 15
             while time.time() < fim:

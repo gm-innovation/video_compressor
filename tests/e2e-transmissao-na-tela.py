@@ -92,8 +92,9 @@ def entrar(pag, base: str, email: str) -> None:
 
 
 def tela_transmitir(pag) -> None:
-    pag.click('[data-tela="transmissao"]')
-    pag.wait_for_selector(".transmissao-linha", timeout=20000)
+    """A GRADE e' a tela de transmissao (plano unico, 25/11/2026): a tela "Transmitir" saiu do cliente e
+    o controle (iniciar / contagem / parar / gravar) mora no quadro de cada camera, dentro da janela."""
+    pag.wait_for_selector('.janela [data-papel="iniciar"]', timeout=20000)
 
 
 def estado_da(pag, cam: str) -> str:
@@ -178,17 +179,19 @@ def main() -> int:
             entrar(pag_a, base, "cliente@lecsor.test")
             checar("o cliente entrou pelo navegador, sem app instalado", pag_a.locator("#sistema").is_visible())
             itens = pag_a.eval_on_selector_all(".item[data-tela]", "bs => bs.map(b => b.dataset.tela)")
-            checar("a tela do cliente tem 'Transmitir' e 'Tempo de transmissão'",
-                   "transmissao" in itens and "configuracao" in itens, f"{itens}")
+            # PLANO UNICO (25/11/2026): o menu do cliente ficou enxuto - "Transmitir" (repetia o controle
+            # da GRADE) e "Tempo de transmissão" (o teto e' do ADMIN) sairam de vez.
+            checar("a tela do cliente NAO tem mais 'Transmitir' nem 'Tempo de transmissão'",
+                   "transmissao" not in itens and "configuracao" not in itens, f"{itens}")
             checar("a tela do cliente NAO tem menu de operacao (Enviar vídeo)",
                    "envios" not in itens, f"{itens}")
 
             # --- 2) o cliente define quando inicia ----------------------------------------------------
             tela_transmitir(pag_a)
-            cam = pag_a.eval_on_selector_all(".transmissao-linha", "ls => ls.map(l => l.dataset.camera)")[0]
+            cam = pag_a.eval_on_selector_all(".janela", "ls => ls.map(l => l.dataset.cam)")[0]
             checar("a transmissao comeca PARADA, com o botao de iniciar", "parada" in estado_da(pag_a, cam).lower(),
                    estado_da(pag_a, cam))
-            pag_a.click(f"#iniciar-{cam}")
+            pag_a.click(f'.janela[data-cam="{cam}"] [data-papel="iniciar"]')
             checar("clicando, a tela avisa que a ordem foi para a maquina de captura",
                    "pedido enviado" in esperar_texto(pag_a, cam, "pedido enviado").lower(),
                    estado_da(pag_a, cam))
@@ -202,9 +205,10 @@ def main() -> int:
             texto = esperar_texto(pag_a, cam, "no ar")
             checar("a tela mostra NO AR com o tempo restante do cliente",
                    "no ar" in texto.lower() and "tempo restante" in texto.lower(), texto)
-            checar("o botao virou 'Parar transmissão'", pag_a.locator(f"#parar-{cam}").count() == 1)
+            checar("o botao virou 'Parar transmissão'",
+                   pag_a.locator(f'.janela[data-cam="{cam}"] [data-papel="parar"]').count() == 1)
             # GRAVAR no lado terra: sem fluxo chegando nesta maquina a tela NAO pode dizer que grava
-            pag_a.click(f"#gravar-{cam}")
+            pag_a.click(f'.janela[data-cam="{cam}"] [data-papel="gravar"]')
             pag_a.wait_for_timeout(8000)
             texto_g = estado_da(pag_a, cam)
             checar("sem fluxo no ar, a tela nao finge que esta' gravando",
@@ -219,7 +223,7 @@ def main() -> int:
             # o render da tela depende do primeiro /api/transmissao: espera em vez de amostrar
             texto_b = esperar_texto(pag_b, cam, "outro cliente")
             checar("o segundo cliente ve que outro esta' assistindo", "outro cliente" in texto_b.lower(), texto_b)
-            pag_b.click(f"#iniciar-{cam}")
+            pag_b.click(f'.janela[data-cam="{cam}"] [data-papel="iniciar"]')
             esperar_texto(pag_b, cam, "pedido enviado")
             # o bordo tambem obedece o pedido do SEGUNDO cliente
             s, j = pedir("GET", base + "/api/ordens?embarcacao_id=bancada&espera=0", token_bordo=TOKEN)
@@ -228,7 +232,7 @@ def main() -> int:
                       {"estado": "atendida", "resultado": "camera no ar", "fluxo_id": cam}, token_bordo=TOKEN)
             texto_b = esperar_texto(pag_b, cam, "a sua transmissão")
             checar("o segundo cliente abriu a mesma camera", "a sua transmissão" in texto_b, texto_b)
-            pag_a.click(f"#parar-{cam}")
+            pag_a.click(f'.janela[data-cam="{cam}"] [data-papel="parar"]')
             pag_a.wait_for_timeout(1500)
             texto_a = estado_da(pag_a, cam)
             checar("quem para encerra so' a propria sessao (a tela diz quem continua vendo)",
@@ -253,7 +257,7 @@ def main() -> int:
 
             # --- 6) computador desligado (ninguem batendo): a sessao morre sozinha e a camera para -----
             antes = len(ordens("parar"))
-            pag_a.click(f"#iniciar-{cam}")
+            pag_a.click(f'.janela[data-cam="{cam}"] [data-papel="iniciar"]')
             esperar_texto(pag_a, cam, "pedido enviado")
             s, j = pedir("GET", base + "/api/ordens?embarcacao_id=bancada&espera=0", token_bordo=TOKEN)
             for o in (j.get("ordens") or []):
@@ -283,26 +287,30 @@ def main() -> int:
             pedir("GET", base + "/api/ordens?embarcacao_id=bancada&espera=0", token_bordo=TOKEN)  # esvazia a fila
             pag_a.close()   # so' agora: a maquina morta sai de cena
 
-            # --- 7) tela de configuracao do tempo ------------------------------------------------------
-            # a maquina liga de novo: tela nova, mesmo cliente (a sessao do navegador continua valida)
+            # --- 7) o TEMPO e' do ADMIN: o cliente NAO configura (plano unico, 25/11/2026) --------------
+            # A tela "Tempo de transmissão" saiu do cliente E o SERVIDOR recusa o POST dele — a regra do
+            # dono e' "quem define o tempo máximo é o admin, não o cliente". A prova e' pelo servidor, com
+            # a sessão do próprio cliente no navegador.
             pag_a = ctx_a.new_page()
             pag_a.on("pageerror", lambda e: erros.append("A: " + str(e)))
             pag_a.goto(base + "/app/")
             pag_a.wait_for_selector("#sistema:not(.oculto)", timeout=20000)
             tela_transmitir(pag_a)
-            pag_a.click('[data-tela="configuracao"]')
-            pag_a.wait_for_selector("#tempo-maximo", timeout=15000)
-            pag_a.select_option("#tempo-maximo", "300")
-            pag_a.click("#gravar-tempo")
-            pag_a.wait_for_timeout(1200)
-            pag_a.click('[data-tela="transmissao"]')
-            pag_a.wait_for_selector(".transmissao-linha", timeout=15000)
-            pag_a.click(f"#iniciar-{cam}")
+            recusa = pag_a.evaluate("""async () => {
+                const r = await fetch('/api/transmissao/config', {method: 'POST',
+                  headers: {'Content-Type': 'application/json'}, body: JSON.stringify({tempo_maximo_s: 300})});
+                return {status: r.status, corpo: await r.json()};
+            }""")
+            checar("o cliente NAO configura o tempo de transmissao (o teto e' do admin)",
+                   recusa["status"] == 403 and "administrador" in (recusa["corpo"].get("erro") or ""),
+                   f"{recusa}")
+            pag_a.click(f'.janela[data-cam="{cam}"] [data-papel="iniciar"]')
             pag_a.wait_for_timeout(1500)
             con = sqlite3.connect(banco)
             seg = con.execute("SELECT segundos_max FROM transmissoes ORDER BY rowid DESC LIMIT 1").fetchone()[0]
             con.close()
-            checar("o tempo gravado na tela vale para o proximo pedido (300 s)", seg == 300, f"{seg}")
+            checar("o pedido do cliente usa o teto do sistema, nao um tempo que ele escolheu",
+                   seg != 300, f"{seg}")
             # a tela "Gravacoes" deixou de ser um lugar vazio: ela le' o historico do lado terra
             pag_a.click('[data-tela="gravacoes"]')
             pag_a.wait_for_selector("#palco table", timeout=15000)

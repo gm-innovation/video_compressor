@@ -41,7 +41,10 @@ CREATE TABLE IF NOT EXISTS cameras (
   alvo          TEXT DEFAULT '',
   -- TIPO (dono, 25/11/2026): 'camera' | 'radar' | 'flir'. E' o que decide o que o observador
   -- (Petrobras/IBAMA) ve de todas as empresas: o radar de oleo e a FLIR (se houver), e nada mais.
-  tipo          TEXT NOT NULL DEFAULT 'camera'
+  tipo          TEXT NOT NULL DEFAULT 'camera',
+  -- TIPO DECIDIDO PELO ADMIN (plano unico, 25/11/2026): 0 = o bordo ainda propoe o tipo no anuncio;
+  -- 1 = o admin escolheu no cartao da camera e o anuncio do bordo nao sobrescreve mais.
+  tipo_definido_pelo_admin INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS usuarios (

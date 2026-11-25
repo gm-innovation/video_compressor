@@ -177,19 +177,18 @@ def main() -> int:
             pag2.wait_for_selector("#sistema:not(.oculto)", timeout=ESPERA)
             pag2.click('button.item[data-tela="config_bordo"]')
             pag2.wait_for_selector("#tela", timeout=ESPERA)
-            pag2.wait_for_function("() => /Banda por câmera/.test(document.getElementById('tela').textContent)", timeout=ESPERA)
-            # A lista POR CAMERA (os selects `cfg-alvo-*`) chega depois do titulo (vem do detalhe das
-            # cameras). Conferir no mesmo instante do titulo falhava sob carga na suite (provado
-            # 25/11/2026: rc=1 na bateria, rc=0 isolado). Espera-se o proprio select.
             try:
-                pag2.wait_for_function(
-                    "() => document.querySelectorAll('#tela select[id^=cfg-alvo-]').length >= 1",
-                    timeout=ESPERA)
+                pag2.wait_for_selector("#cfg-teto", timeout=ESPERA)
             except Exception:  # noqa: BLE001 — se nao aparecer, a prova FALHA na checagem abaixo
                 pass
             checar("admin tem a tela 'Configuração do bordo'", visivel(pag2, "#cfg-emb"))
-            checar("...com o alvo por câmera e o teto da embarcação",
-                   pag2.locator("#tela select[id^=cfg-alvo-]").count() >= 1 and visivel(pag2, "#cfg-teto"))
+            # PLANO UNICO (25/11/2026, dono: "ha' blocos duplicados"): a tela ficou so' com o que e' da
+            # EMBARCACAO. O alvo por camera e o ligar/desligar do envio moram no cartao da camera
+            # ("Empresas e configuracao"), entao aqui NAO pode existir select de alvo por camera.
+            checar("...com o teto da embarcação", visivel(pag2, "#cfg-teto"))
+            checar("...e SEM repetir o alvo por câmera (o cartão da câmera é o dono disso)",
+                   pag2.locator("#tela select[id^=cfg-alvo-]").count() == 0
+                   and "cartão da câmera" in pag2.inner_text("#tela"))
             checar("...e diz o que está publicado (desejada x aplicada)",
                    "nada publicado" in pag2.inner_text("#tela") or "v" in pag2.inner_text("#tela").lower())
             checar("sem erro de javascript na tela de configuração do bordo", not erros, "; ".join(erros[:3]))

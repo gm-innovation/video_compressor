@@ -68,12 +68,14 @@ def rodar(amb, ctx: dict) -> Jornada:
     j.checar("o cliente entra na web", True, "tela do cliente no ar")
 
     # 2) a camera do barco esta' na lista dele e ele PEDE a transmissao
-    pagina.click('.item[data-tela="transmissao"]')
-    pagina.wait_for_selector(".transmissao-linha", timeout=20000)
-    j.checar("a camera do barco aparece para o cliente", pagina.locator(f"#iniciar-{cam}").count() > 0,
+# PLANO UNICO (25/11/2026): a tela "Transmitir" saiu do cliente - o controle de transmissao
+    # (iniciar/parar/contagem/gravar) mora na GRADE, no quadro de cada camera. O cliente ja'
+    # cai nessa tela ao entrar; o botao do quadro e' o `[data-papel="iniciar"]`.
+    pagina.wait_for_selector(f'.janela[data-cam="{cam}"] [data-papel="iniciar"]', timeout=20000)
+    j.checar("a camera do barco aparece para o cliente", pagina.locator(f'.janela[data-cam="{cam}"] [data-papel="iniciar"]').count() > 0,
              f"botao de iniciar da camera {cam}")
     t_clique = time.time()
-    pagina.click(f"#iniciar-{cam}")
+    pagina.click(f'.janela[data-cam="{cam}"] [data-papel="iniciar"]')
     pedido = _espera_estado(pagina, cam, "pedido", 20.0) or _estado_da_tela(pagina, cam)
     j.checar("o pedido sai da tela do cliente", "pedido" in pedido.lower() or "chegando" in pedido.lower(),
              f"estado na tela: {pedido[:70]!r}")

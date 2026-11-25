@@ -204,7 +204,7 @@ def main() -> int:
             pag.wait_for_function(JS_PARAR_VISIVEL, timeout=ESPERA)
             checar("a sessao abriu (1 aberta)", sessoes_abertas(banco) == 1, f"{sessoes_abertas(banco)} abertas")
             t0 = batimento_em(banco)
-            pag.click('.item[data-tela="relatorios"]')
+            pag.click('.item[data-tela="alertas"]')
             pag.wait_for_function("() => document.querySelectorAll('.janela').length === 0", timeout=ESPERA)
             pag.wait_for_timeout(13000)          # mais que o tick do batimento (10 s)
             t1 = batimento_em(banco)
@@ -224,7 +224,7 @@ def main() -> int:
                    rotulo(pag, '.controle-transmissao [data-papel="parar"]'))
 
             print("\n== 4. fora da tela por mais que a janela: o lado terra encerra sozinho ==")
-            pag.click('.item[data-tela="relatorios"]')
+            pag.click('.item[data-tela="alertas"]')
             pag.wait_for_function("() => document.querySelectorAll('.janela').length === 0", timeout=ESPERA)
             envelhecer_batimento(banco, 120)     # o ultimo 'estou aqui' passa a ser de 2 min atras
             limite = time.time() + 30

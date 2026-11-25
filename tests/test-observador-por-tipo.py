@@ -43,6 +43,7 @@ TIPO_RADAR_SEM_NOME = "equip-ocm-01"      # tipo='radar', nome SEM "radar"  -> d
 TIPO_CAMERA_COM_NOME = "radar-anta-99"    # tipo='camera', nome COM "radar" -> NAO deve aparecer
 TIPO_FLIR = "sens-iv-01"                  # tipo='flir', nome SEM "flir"   -> deve aparecer
 TIPO_COMUM = "cam-proa-01"                # tipo='camera'                  -> NAO deve aparecer
+TOKEN_ANUNCIO = "token-de-teste-do-anuncio-do-bordo"   # o bordo anuncia com este token de ingestao
 
 
 def checar(nome: str, cond: bool, detalhe: str = "") -> None:
@@ -103,7 +104,7 @@ def preparar_banco_antigo(caminho: pathlib.Path) -> None:
     con.close()
 
 
-def subir(banco: pathlib.Path, tmp: pathlib.Path):
+def subir(banco: pathlib.Path, tmp: pathlib.Path, token: str = ""):
     env = dict(os.environ)
     env["LECSOR_BANCO"] = str(banco)
     env["LECSOR_SENHA_DEMO"] = "senha-de-bancada-nao-usada"
@@ -112,6 +113,8 @@ def subir(banco: pathlib.Path, tmp: pathlib.Path):
     for k in ("LECSOR_SUPABASE_URL", "LECSOR_SUPABASE_ANON_KEY", "LECSOR_SUPABASE_SERVICE_KEY",
               "LECSOR_LADO_TERRA_API", "LECSOR_DESTINO_SRT", "LECSOR_TOKEN_INGESTAO"):
         env.pop(k, None)
+    if token:
+        env["LECSOR_TOKEN_INGESTAO"] = token   # o bordo anuncia COM o token de ingestao
     porta = porta_livre()
     log = (tmp / "api.log").open("wb")
     api = subprocess.Popen([sys.executable, str(RAIZ / "ground" / "api.py"), str(porta)],
@@ -142,6 +145,31 @@ def pedir(base: str, rota: str, cookie: str):
             return r.status, json.loads(r.read().decode("utf-8", "replace") or "{}")
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read().decode("utf-8", "replace") or "{}")
+
+
+def enviar(base: str, rota: str, corpo: dict, cookie: str = "", token: str = ""):
+    """POST que vai com cookie (o admin) ou com o token de ingestao (o bordo anunciando)."""
+    cab = {"Content-Type": "application/json"}
+    if cookie:
+        cab["Cookie"] = cookie
+    if token:
+        cab["Authorization"] = "Bearer " + token
+    rq = urllib.request.Request(base + rota, method="POST", data=json.dumps(corpo).encode(),
+                                headers=cab)
+    try:
+        with urllib.request.urlopen(rq, timeout=8) as r:
+            return r.status, json.loads(r.read().decode("utf-8", "replace") or "{}")
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read().decode("utf-8", "replace") or "{}")
+
+
+def tipo_e_dono(banco: pathlib.Path, cam_id: str):
+    """(tipo, tipo_definido_pelo_admin) da camera — a marca decide quem manda no tipo."""
+    con = sqlite3.connect(str(banco))
+    linha = con.execute("SELECT tipo,tipo_definido_pelo_admin FROM cameras WHERE id=?",
+                        (cam_id,)).fetchone()
+    con.close()
+    return linha
 
 
 def testar_tipo_decide() -> None:
@@ -197,16 +225,82 @@ def testar_migracao() -> None:
         print(f"   (log: {log})")
 
 
+def testar_admin_manda_no_tipo() -> None:
+    """O BORDO PROPÕE, O ADMIN DECIDE (plano único, 25/11/2026).
+
+    Antes o anúncio do bordo gravava `tipo=excluded.tipo` a cada aviso e apagava a escolha do admin: o
+    radar declarado no cartão voltava a "câmera comum" no anúncio seguinte — e o observador (Petrobras/
+    IBAMA) deixava de ver a imagem que o dono queria liberar.
+    """
+    print("== o bordo PROPOE, o admin DECIDE: o anuncio nao sobrescreve o tipo declarado ==")
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="lecsor-obs-manda-"))
+    banco = tmp / "pipeline.db"
+    api, base, log = subir(banco, tmp, token=TOKEN_ANUNCIO)
+    try:
+        criar_usuario(banco, "admin", "admin@lecsor.test", "admin")
+        semear(banco)
+        cookie = entrar(base, "admin@lecsor.test")
+
+        st, r = enviar(base, "/api/cameras/%s/editar" % TIPO_CAMERA_COM_NOME, {"tipo": "radar"},
+                       cookie=cookie)
+        checar("o admin declarou o tipo no cartao (HTTP 200)", st == 200, f"HTTP {st} {r}")
+        linha = tipo_e_dono(banco, TIPO_CAMERA_COM_NOME)
+        checar("o banco guardou tipo='radar' com a marca do admin",
+               bool(linha) and linha[0] == "radar" and linha[1] == 1, f"{linha}")
+
+        st, r = enviar(base, "/api/cameras/anuncio",
+                       {"id": TIPO_CAMERA_COM_NOME, "fluxo_id": TIPO_CAMERA_COM_NOME,
+                        "rotulo": "Equipamento do bordo", "embarcacao_id": EMB_A, "tipo": "camera"},
+                       token=TOKEN_ANUNCIO)
+        checar("o anuncio do bordo foi aceito (HTTP 201)", st == 201, f"HTTP {st} {r}")
+        linha = tipo_e_dono(banco, TIPO_CAMERA_COM_NOME)
+        checar("o anuncio do bordo NAO sobrescreveu o tipo do admin (segue 'radar')",
+               bool(linha) and linha[0] == "radar", f"{linha}")
+        con = sqlite3.connect(str(banco))
+        rot = con.execute("SELECT rotulo FROM cameras WHERE id=?", (TIPO_CAMERA_COM_NOME,)).fetchone()
+        con.close()
+        checar("e o nome declarado no lado terra tambem ficou de pe",
+               bool(rot) and rot[0] == "Radar de antena (antigo)", f"{rot}")
+
+        st, r = enviar(base, "/api/cameras/anuncio",
+                       {"id": "cam-do-bordo-nova", "fluxo_id": "cam-do-bordo-nova",
+                        "rotulo": "Sensor novo", "embarcacao_id": EMB_A, "tipo": "flir"},
+                       token=TOKEN_ANUNCIO)
+        checar("a camera nova do bordo foi aceita (HTTP 201)", st == 201, f"HTTP {st} {r}")
+        linha = tipo_e_dono(banco, "cam-do-bordo-nova")
+        checar("na camera NOVA o bordo ainda PROPOE o tipo (flir), sem decisao do admin",
+               bool(linha) and linha[0] == "flir" and linha[1] == 0, f"{linha}")
+
+        # Enquanto o ADMIN NAO decidiu, quem renomeia o dispositivo no PC de captura tem de aparecer em
+        # terra: a marca do admin protege a escolha DELE, nao congela a camera sem dono.
+        st, r = enviar(base, "/api/cameras/anuncio",
+                       {"id": "cam-do-bordo-nova", "fluxo_id": "cam-do-bordo-nova",
+                        "rotulo": "Sensor novo (renomeado no bordo)", "embarcacao_id": EMB_A, "tipo": "flir"},
+                       token=TOKEN_ANUNCIO)
+        con = sqlite3.connect(str(banco))
+        rot = con.execute("SELECT rotulo FROM cameras WHERE id='cam-do-bordo-nova'").fetchone()
+        con.close()
+        checar("sem decisao do admin, o anuncio ATUALIZA o rotulo (o bordo ainda propoe)",
+               st == 201 and bool(rot) and rot[0] == "Sensor novo (renomeado no bordo)", f"HTTP {st} {rot}")
+    finally:
+        api.kill()
+        print(f"   (log: {log})")
+
+
 def main() -> int:
-    print("OBSERVADOR POR TIPO — 0.19.0 (Fase 4): radar de oleo e FLIR, por TIPO e nao por nome.\n")
+    print("OBSERVADOR POR TIPO — 0.19.0/0.20.0: radar de oleo e FLIR, por TIPO e nao por nome; e o tipo\n"
+          "declarado pelo admin manda no anuncio do bordo.\n")
     testar_tipo_decide()
     print()
     testar_migracao()
     print()
+    testar_admin_manda_no_tipo()
+    print()
     if falhas:
         print(f"FALHOU: {len(falhas)} verificacao(oes) — {falhas}")
         return 1
-    print("TUDO VERDE: o observador filtra por tipo (radar/FLIR) e a migracao corre sozinha.")
+    print("TUDO VERDE: o observador filtra por tipo (radar/FLIR), a migracao corre sozinha e o tipo do "
+          "admin vence o anuncio do bordo.")
     return 0
 
 

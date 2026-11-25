@@ -1,6 +1,6 @@
 /* Admin do projeto e do sistema: acompanhamento (§6) + administracao (clientes, embarcacoes,
    cameras, usuarios, analises, auditoria, saude). Le e escreve tudo pela API do produto. */
-const A = { usuario: null, resumo: null, clientes: [], usuarios: [], verificarCredencial: false, sistema: null, cameras: [], embarcacoes: [], licencas: [], tela: 'empresas', timer: null, chaveRevelada: null, marca: null, radarForm: null, radarAviso: null, prontidao: null, config: null, empresaId: null, arvore: null };
+const A = { usuario: null, resumo: null, clientes: [], usuarios: [], verificarCredencial: false, sistema: null, cameras: [], embarcacoes: [], licencas: [], tela: 'empresas', timer: null, chaveRevelada: null, marca: null, radarForm: null, radarAviso: null, prontidao: null, config: null, empresaId: null, arvore: null, hd: null };
 const $ = (id) => document.getElementById(id);
 const limpar = (el) => { while (el.firstChild) el.removeChild(el.firstChild); };
 const esc = (s) => String(s === null || s === undefined ? '' : s);
@@ -258,7 +258,8 @@ const SUBS = {
   envios: ['Enviar vídeo', 'Escolhe a fonte (arquivo, link ou câmera desta máquina) e a qualidade por câmera: o sistema codifica, publica em SRT e mede o corte de banda.'],
   saude: ['Saúde do sistema', 'Estado da API, do lado terra e das contagens do banco.'],
   saude_bordo: ['Saúde do bordo', 'O computador de captura reporta sozinho: CPU, memória, disco (e o anel do HD do radar), ffmpeg, captura viva, mediamtx, erros. Semáforo com o limiar e o que fazer.'],
-  config_bordo: ['Configuração do bordo', 'Você publica aqui e o computador de captura busca: alvo de banda por câmera e teto de tempo da embarcação. O bordo confirma o que aplicou — ou o motivo da recusa.'],
+  config_bordo: ['Configuração do bordo', 'Você publica aqui e o computador de captura busca: o TETO de tempo da embarcação. O ajuste por câmera (qualidade de envio, ligar/desligar) mora no cartão da câmera, em "Empresas e configuração" — aqui não se repete. O bordo confirma o que aplicou — ou o motivo da recusa.'],
+  hd_bordo: ['Imagens gravadas a bordo', 'O HD do computador de captura, embarcação por embarcação: o que ele gravou (o radar de óleo grava o tempo todo), pesquisável por data e hora. O pedido vai ao bordo e o download abre quando o trecho chega em terra.'],
   licencas: ['Licenças do PC de captura', 'A chave que se digita no app de captura: ela liga aquela máquina à empresa e à embarcação. Vale por tempo ou sem prazo, e quantos PCs usam a mesma licença é ajustável.']
 };
 
@@ -300,7 +301,8 @@ function desenhar(forcado) {
     painel: telaPainel, fases: telaFases, medicoes: telaMedicoes, decisoes: telaDecisoes,
     evidencias: telaEvidencias, documentos: telaDocumentos,
     licencas: telaLicencas, usuarios: telaUsuarios, auditoria: telaAuditoria, envios: telaEnvios,
-    config_bordo: telaConfigDoBordo, saude_bordo: telaSaudeDoBordo, saude: telaSaude };
+    config_bordo: telaConfigDoBordo, saude_bordo: telaSaudeDoBordo, saude: telaSaude,
+    hd_bordo: telaHdDoBordo };
   (despacho[A.tela] || telaPainel)(tela);
 }
 
@@ -2024,54 +2026,18 @@ async function telaConfigDoBordo(t) {
   const dados = (r.ok && r.corpo) || { chaves: [], aplicadas: [], versao: 0 };
   const achar = (cam, chave) => (dados.aplicadas || []).find((x) => x.camera_id === (cam || '') && x.chave === chave) || null;
 
-  /* --- alvo de banda por câmera (é o que o bordo aplica de verdade) --- */
+  /* POR CÂMERA MORA NO CARTÃO DA CÂMERA (plano único, 25/11/2026 — dono: "há blocos duplicados"): o
+     bloco "Banda por câmera" repetia o cartão de "Empresas e configuração" (qualidade de envio e
+     ligar/desligar transmissão) e a tabela do fim listava tudo uma terceira vez. Aqui fica só o que é
+     da EMBARCAÇÃO (o teto) e o resumo de leitura do que está publicado. */
   const cams = (A.cameras || []).filter((c) => c.embarcacao_id === escolhida);
   const cx = document.createElement('div'); cx.className = 'caixa-form';
-  cx.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Banda por câmera' }));
-  if (!cams.length) {
-    cx.appendChild(recado('esta embarcação ainda não tem câmera cadastrada', true));
-  }
-  cams.forEach((c) => {
-    const linha = document.createElement('div'); linha.className = 'linha-form';
-    const desejada = (dados.chaves || []).find((x) => x.camera_id === c.id && x.chave === 'alvo_kbps');
-    const aplic = achar(c.id, 'alvo_kbps');
-    const sel2 = document.createElement('select'); sel2.id = 'cfg-alvo-' + c.id;
-    ALVOS_DA_BANDA.forEach((v) => sel2.appendChild(Object.assign(document.createElement('option'),
-      { value: v, textContent: (Number(v) / 1000).toFixed(1).replace('.', ',') + ' Mbps', selected: desejada && desejada.valor === v })));
-    const estado = document.createElement('span'); estado.className = 'nota';
-    estado.textContent = !desejada ? 'nada publicado'
-      : (aplic && aplic.versao >= desejada.versao
-        ? 'aplicado (v' + aplic.versao + ')'
-        : (aplic && aplic.motivo ? 'RECUSADO: ' + aplic.motivo : 'aguardando o bordo'));
-    linha.appendChild(Object.assign(document.createElement('label'), { textContent: c.rotulo || c.id }));
-    linha.appendChild(sel2);
-    linha.appendChild(botao('Publicar', 'mini', async () => {
-      const rr = await api('/api/config', { method: 'POST', body: JSON.stringify({ embarcacao_id: escolhida, camera_id: c.id, chave: 'alvo_kbps', valor: sel2.value }) });
-      await atualizar();
-      A.tela = 'config_bordo'; A.config = { embarcacao_id: escolhida }; desenhar(true);
-      mostrarRecado(rr.ok ? 'publicado para o bordo: ' + (c.rotulo || c.id) + ' = ' + sel2.value + ' kbps (v' + (rr.corpo.versao || '?') + ')'
-        : 'recusado: ' + JSON.stringify(rr.corpo), !rr.ok);
-    }));
-    linha.appendChild(estado);
-    /* "quais câmeras transmitem": ligar/desligar daqui — o bordo obedece sem ninguém encostar nele. */
-    const querLigar = !desejada || String(desejada.valor) === '1';
-    const aplicT = achar(c.id, 'transmitir');
-    const desT = (dados.chaves || []).find((x) => x.camera_id === c.id && x.chave === 'transmitir');
-    const estadoT = document.createElement('span'); estadoT.className = 'nota';
-    estadoT.textContent = !desT ? 'transmissão: nada publicado'
-      : (aplicT && aplicT.motivo ? 'transmissão: RECUSADO — ' + aplicT.motivo
-        : 'transmissão: ' + (String(desT.valor) === '1' ? 'publicada LIGADA' : 'publicada PARADA')
-          + (aplicT && aplicT.versao >= desT.versao ? ' · no bordo: ' + (String(aplicT.valor) === '1' ? 'no ar' : 'parada') : ' · aguardando o bordo'));
-    linha.appendChild(botao(querLigar ? 'Desligar transmissão' : 'Ligar transmissão', 'mini', async () => {
-      const rr = await api('/api/config', { method: 'POST', body: JSON.stringify({ embarcacao_id: escolhida, camera_id: c.id, chave: 'transmitir', valor: querLigar ? '0' : '1' }) });
-      await atualizar();
-      A.tela = 'config_bordo'; A.config = { embarcacao_id: escolhida }; desenhar(true);
-      mostrarRecado(rr.ok ? 'publicado para o bordo: transmissão ' + (querLigar ? 'DESLIGAR' : 'LIGAR') + ' ' + (c.rotulo || c.id)
-        : 'recusado: ' + JSON.stringify(rr.corpo), !rr.ok);
-    }));
-    linha.appendChild(estadoT);
-    cx.appendChild(linha);
-  });
+  cx.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Por câmera: no cartão da câmera' }));
+  cx.appendChild(notaDe(cams.length
+    ? 'Qualidade de envio, ligar/desligar a transmissão, nome e TIPO de cada uma das ' + cams.length
+      + ' câmera(s) desta embarcação ficam na área "Empresas e configuração", no cartão da câmera — o '
+      + 'mesmo ajuste não se repete aqui.'
+    : 'esta embarcação ainda não tem câmera cadastrada'));
   t.appendChild(cx);
 
   /* --- teto de tempo da embarcação (o bordo passa a usar este teto) --- */
@@ -2172,122 +2138,515 @@ function fecharAoVivo() {
 }
 
 /* O VÍDEO AO VIVO no admin: o MESMO player do cliente. É só assistir — sem ligar, sem parar e sem
-   gravar (o admin ACOMPANHA; quem sustenta a transmissão é quem está vendo). */
-function abrirAoVivo(emb, cameras) {
+   gravar (o admin ACOMPANHA; quem sustenta a transmissão é quem está vendo).
+   O SELETOR DENTRO DA JANELA (plano único, 25/11/2026 — dono: "como escolho quais câmeras e de quais
+   empresas ou embarcações quero acompanhar?" e "de qual embarcação... não aparece nenhum botão de
+   escolha"): a janela ganha empresa → embarcação → câmeras (uma caixa por câmera; por padrão, todas as
+   da embarcação). Antes ela abria as câmeras de UMA embarcação e trocar exigia achar o outro botão. */
+function abrirAoVivo(frota, embInicial) {
   if (document.getElementById('ao-vivo')) { fecharAoVivo(); return; }
-  const noAr = cameras.filter((c) => c.no_ar);
+  const empresas = [];
+  for (const l of frota) if (!empresas.includes(l.empresa)) empresas.push(l.empresa);
+  const linhaInicial = frota.find((l) => embInicial && l.emb.id === embInicial.id) || frota[0] || {};
+  const idInicial = (linhaInicial.emb || {}).id || '';
+
   const caixa = document.createElement('div'); caixa.id = 'ao-vivo';
   const topo = document.createElement('div'); topo.className = 'ao-vivo-topo';
-  const titulo = document.createElement('strong');
-  titulo.textContent = 'Ao vivo — ' + (emb.nome || emb.id) + '  (' + noAr.length + ' de ' + cameras.length + ' no ar)';
+  const titulo = document.createElement('strong'); titulo.id = 'av-titulo'; titulo.textContent = 'Ao vivo';
   const dica = document.createElement('span'); dica.className = 'nota';
   dica.textContent = 'somente leitura: aqui não se liga, não se para e não se grava';
-  const b = document.createElement('button'); b.className = 'pil'; b.textContent = 'Fechar'; b.onclick = fecharAoVivo;
-  topo.append(titulo, dica, b);
+  const bFechar = document.createElement('button'); bFechar.className = 'pil';
+  bFechar.textContent = 'Fechar'; bFechar.onclick = fecharAoVivo;
+  topo.append(titulo, dica, bFechar);
   caixa.appendChild(topo);
+
+  const escolha = document.createElement('div'); escolha.className = 'ao-vivo-escolha';
+  const selE = document.createElement('select'); selE.id = 'av-empresa';
+  empresas.forEach((nome) => selE.appendChild(Object.assign(document.createElement('option'),
+    { value: nome, textContent: nome, selected: nome === linhaInicial.empresa })));
+  const selB = document.createElement('select'); selB.id = 'av-emb';
+  const camsBox = document.createElement('span'); camsBox.id = 'av-cameras'; camsBox.className = 'nota';
+  escolha.append(Object.assign(document.createElement('label'), { textContent: 'Empresa' }), selE,
+                 Object.assign(document.createElement('label'), { textContent: 'Embarcação' }), selB);
+  caixa.appendChild(escolha);
+  const linhaDeCams = document.createElement('div'); linhaDeCams.className = 'ao-vivo-escolha';
+  linhaDeCams.appendChild(camsBox);
+  caixa.appendChild(linhaDeCams);
+
   const grade = document.createElement('div'); grade.className = 'grade-adm';
   caixa.appendChild(grade);
-  if (!cameras.length) {
-    const p = document.createElement('p'); p.className = 'nota';
-    p.textContent = 'esta embarcação não tem câmera cadastrada ainda';
-    caixa.appendChild(p);
-  }
-  for (const c of cameras) {
-    const jan = document.createElement('div'); jan.className = 'janela-adm';
-    const v = document.createElement('video');
-    v.muted = true; v.autoplay = true; v.playsInline = true;
-    const rot = document.createElement('div'); rot.className = 'rotulo-adm';
-    rot.textContent = c.rotulo + (c.no_ar ? '' : '  · fora do ar');
-    jan.append(v, rot);
-    grade.appendChild(jan);
-    if (c.no_ar) {
-      const id = 'admin-' + c.id;
-      v.dataset.admId = id;
-      try { window.Video.ligar(id, c.id, v); } catch (e) { /* sem player: fica o rótulo */ }
+  document.body.appendChild(caixa);
+
+  const embsDaEmpresa = () => frota.filter((l) => l.empresa === selE.value);
+  const embEscolhida = () => (embsDaEmpresa().find((l) => l.emb.id === selB.value) || embsDaEmpresa()[0] || {}).emb;
+
+  function pintaGrade(cams) {
+    for (const v of Array.from(grade.querySelectorAll('video'))) {
+      if (v.dataset.admId) { try { window.Video.parar(v.dataset.admId); } catch (e) { /* sem player */ } }
+    }
+    limpar(grade);
+    const emb = embEscolhida() || {};
+    titulo.textContent = 'Ao vivo — ' + (emb.nome || emb.id || '') + '  (' + cams.filter((c) => c.no_ar).length
+      + ' de ' + cams.length + ' no ar)';
+    if (!cams.length) {
+      const p = document.createElement('p'); p.className = 'nota';
+      p.textContent = 'nenhuma câmera marcada — marque acima as que quer acompanhar';
+      grade.appendChild(p); return;
+    }
+    for (const c of cams) {
+      const jan = document.createElement('div'); jan.className = 'janela-adm';
+      // o TIPO vai no rótulo: radar de óleo e FLIR são o que o observador (Petrobras/IBAMA) vê
+      const tipo = (c.tipo && c.tipo !== 'camera') ? '  · ' + String(c.tipo).toUpperCase() : '';
+      const v = document.createElement('video');
+      v.muted = true; v.autoplay = true; v.playsInline = true;
+      const rot = document.createElement('div'); rot.className = 'rotulo-adm';
+      rot.textContent = (c.rotulo || c.id) + tipo + (c.no_ar ? '' : '  · fora do ar');
+      if (c.no_ar) {
+        jan.append(v, rot);
+        grade.appendChild(jan);
+        const id = 'admin-' + c.id;
+        v.dataset.admId = id;
+        try { window.Video.ligar(id, c.id, v); } catch (e) { /* sem player: fica o rótulo */ }
+      } else {
+        // sem plateia o bordo não transmite e o admin não liga (D3: quem liga é o cliente).
+        // Melhor dizer isso do que entregar uma caixa preta muda.
+        const nota = document.createElement('div'); nota.className = 'rotulo-adm';
+        nota.textContent = 'sem imagem: o bordo só transmite com alguém assistindo — nenhum cliente na sala';
+        jan.append(rot, nota);
+        grade.appendChild(jan);
+      }
     }
   }
-  document.body.appendChild(caixa);
+
+  function pintaCameras() {
+    const emb = embEscolhida() || {};
+    const cams = emb.cameras || [];
+    limpar(camsBox);
+    if (!cams.length) {
+      camsBox.textContent = 'esta embarcação não tem câmera cadastrada ainda';
+      pintaGrade([]);
+      return;
+    }
+    const caixas = [];
+    for (const c of cams) {
+      const l = document.createElement('label'); l.className = 'av-cam';
+      const k = document.createElement('input'); k.type = 'checkbox'; k.checked = true; k.dataset.cam = c.id;
+      l.appendChild(k);
+      l.appendChild(document.createTextNode(' ' + c.rotulo + (c.no_ar ? ' (no ar)' : ' (fora do ar)')));
+      camsBox.appendChild(l);
+      caixas.push(k);
+    }
+    const pintar = () => pintaGrade(cams.filter((c) => {
+      const k = caixas.find((x) => x.dataset.cam === c.id);
+      return !!(k && k.checked);
+    }));
+    for (const k of caixas) k.onchange = pintar;
+    pintar();
+  }
+
+  function pintaEmbarques() {
+    const lista = embsDaEmpresa();
+    const anterior = selB.value;
+    limpar(selB);
+    for (const l of lista) selB.appendChild(Object.assign(document.createElement('option'),
+      { value: l.emb.id, textContent: (l.emb.nome || l.emb.id) }));
+    selB.value = lista.some((l) => l.emb.id === anterior) ? anterior : ((lista[0] || {}).emb || {}).id || '';
+    pintaCameras();
+  }
+
+  selE.onchange = pintaEmbarques;
+  selB.onchange = pintaCameras;
+  if (idInicial) { const l = frota.find((x) => x.emb.id === idInicial); if (l) selE.value = l.empresa; }
+  pintaEmbarques();
+}
+
+/* ============================================================================ DASHBOARD DO ADMIN
+   Padrão Dock Check (plano único 0.20.0, 25/11/2026). Dono: "tanto o dashboard do admin quanto o do
+   app de captura continuam horríveis, precisa ser algo mais próximo desse do Dock Check".
+
+   Uma leitura só (`GET /api/frota-resumo`, admin): cabeçalho com a bolinha de saúde que pulsa,
+   fileira de KPI com barra, câmeras por embarcação, rosca da distribuição geral, DISPONIBILIDADE
+   MEDIDA de 7 dias, diagnóstico de conexões, lista com os selos Crítico/Atenção/Operacional e os
+   alertas. O que não foi medido sai como "não medido" — nunca um zero que parece saudável.
+   As classes `dash-*` moram em `fronts/dashboard.css` (o mesmo arquivo do painel do bordo). */
+
+function dashTomDoEstado(estado) {
+  /* '' (sem retrato nenhum) é problema: silêncio do computador de captura não pode parecer saúde.
+     O vocabulário do semáforo é ok / atencao / problema (o campo do dia da disponibilidade é 'alerta'). */
+  if (estado === 'ok') return 'ok';
+  if (estado === 'atencao' || estado === 'alerta') return 'atencao';
+  return 'problema';
+}
+
+function dashTextoDoEstado(estado) {
+  if (estado === 'ok') return 'Operacional';
+  if (estado === 'atencao' || estado === 'alerta') return 'Atenção';
+  if (estado === 'problema') return 'Crítico';
+  return 'Sem dado';
+}
+
+function dashSelo(estado) {
+  const s = document.createElement('span');
+  const tom = dashTomDoEstado(estado);
+  s.className = 'dash-selo ' + (estado ? tom : 'neutro');
+  s.textContent = dashTextoDoEstado(estado);
+  return s;
+}
+
+function dashPonto(estado) {
+  const p = document.createElement('span');
+  p.className = 'dash-ponto ' + (estado ? dashTomDoEstado(estado) : 'neutro');
+  if (!estado) p.style.background = '#64748b';
+  return p;
+}
+
+function dashQuando(iso) {
+  /* "há 12 s" a partir do carimbo ISO do servidor. Sem carimbo, "sem notícia". */
+  if (!iso) return 'sem notícia';
+  const t = Date.parse(iso);
+  if (!isFinite(t)) return 'sem notícia';
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (s < 60) return 'há ' + s + ' s';
+  if (s < 3600) return 'há ' + Math.round(s / 60) + ' min';
+  if (s < 86400) return 'há ' + (s / 3600).toFixed(1) + ' h';
+  return 'há ' + (s / 86400).toFixed(1) + ' dias';
+}
+
+function dashKpi(icone, rotulo, valor, nota, pct, tom) {
+  /* O cartão de KPI do Dock Check: ícone em círculo, rótulo, número grande e a barra de progresso. */
+  const d = document.createElement('div');
+  d.className = 'dash-kpi' + (tom === 'problema' ? ' ruim' : '');
+  const i = document.createElement('div'); i.className = 'ico'; i.textContent = icone;
+  i.style.background = ({ ok: '#0f2a1a', atencao: '#2a2310', problema: '#2a1214' })[tom] || '#0d1420';
+  const corpo = document.createElement('div'); corpo.className = 'corpo';
+  const r = document.createElement('div'); r.className = 'rot'; r.textContent = rotulo;
+  const v = document.createElement('div'); v.className = 'num'; v.textContent = valor;
+  corpo.append(r, v);
+  if (pct !== null && pct !== undefined && isFinite(Number(pct))) {
+    const b = document.createElement('div'); b.className = 'dash-barra';
+    const f = document.createElement('i');
+    f.style.width = Math.max(0, Math.min(100, Number(pct))) + '%';
+    f.style.background = ({ ok: '#22c55e', atencao: '#f59e0b', problema: '#ef4444' })[tom] || '#3b82f6';
+    b.appendChild(f); corpo.appendChild(b);
+  }
+  if (nota) { const n = document.createElement('div'); n.className = 'rot'; n.textContent = nota; corpo.appendChild(n); }
+  d.append(i, corpo);
+  return d;
+}
+
+function dashCard(titulo, de) {
+  const c = document.createElement('div'); c.className = 'dash-card';
+  const h = document.createElement('h3'); h.textContent = titulo;
+  if (de) { const s = document.createElement('span'); s.className = 'de'; s.textContent = de; h.appendChild(s); }
+  c.appendChild(h);
+  return c;
+}
+
+function dashBarraItem(nome, conta, noAr, total) {
+  const g = document.createElement('div'); g.className = 'dash-barra-item';
+  const n = document.createElement('span'); n.className = 'nome'; n.textContent = nome;
+  const c = document.createElement('span'); c.className = 'conta'; c.textContent = conta;
+  const t = document.createElement('div'); t.className = 'trilha';
+  const verdes = total ? Math.round(100 * noAr / total) : 0;
+  const on = document.createElement('i'); on.style.width = verdes + '%'; on.style.background = '#22c55e';
+  const off = document.createElement('i'); off.style.width = (total ? (100 - verdes) : 100) + '%';
+  off.style.background = total ? '#334155' : '#1b2434';
+  t.append(on, off);
+  g.append(n, c, t);
+  return g;
+}
+
+function dashRosca(partes) {
+  /* A rosca de "Distribuição Geral": conic-gradient montado das partes reais, com o total no centro. */
+  const total = partes.reduce((a, p) => a + Number(p.quantos || 0), 0);
+  const caixa = document.createElement('div'); caixa.className = 'dash-rosca';
+  const anel = document.createElement('div'); anel.className = 'anel';
+  const disco = document.createElement('div');
+  disco.style.cssText = 'width:124px;height:124px;border-radius:99px;position:relative';
+  let acc = 0;
+  const paradas = [];
+  for (const p of partes) {
+    const q = Number(p.quantos || 0);
+    if (!q || !total) continue;
+    const de = 100 * acc / total, ate = 100 * (acc + q) / total;
+    paradas.push(p.cor + ' ' + de.toFixed(2) + '% ' + ate.toFixed(2) + '%');
+    acc += q;
+  }
+  disco.style.background = paradas.length
+    ? ('conic-gradient(' + paradas.join(',') + ')')
+    : 'conic-gradient(#1b2434 0% 100%)';
+  const miolo = document.createElement('div');
+  miolo.style.cssText = 'position:absolute;inset:14px;border-radius:99px;background:var(--painel)';
+  const centro = document.createElement('div'); centro.className = 'centro';
+  const b = document.createElement('b'); b.textContent = total ? Math.round(100 * (partes[0].quantos || 0) / total) + '%' : '—';
+  const s = document.createElement('span'); s.textContent = total ? 'operacionais' : 'sem dado';
+  centro.append(b, s);
+  disco.append(miolo, centro);
+  anel.appendChild(disco);
+  const legenda = document.createElement('div'); legenda.className = 'legenda';
+  for (const p of partes) {
+    const l = document.createElement('span');
+    const i = document.createElement('i'); i.style.background = p.cor;
+    const q = document.createElement('span'); q.className = 'qtd';
+    q.textContent = p.quantos + ' ' + p.rotulo;
+    l.append(i, q);
+    legenda.appendChild(l);
+  }
+  if (!total) legenda.appendChild(notaDe('nenhuma embarcação com retrato do bordo'));
+  caixa.append(anel, legenda);
+  return caixa;
+}
+
+function dashConexao(qual, estado, detalhe) {
+  const c = document.createElement('div'); c.className = 'dash-conexao';
+  c.style.borderLeftColor = ({ ok: '#22c55e', atencao: '#f59e0b', problema: '#ef4444' })[estado] || '#243044';
+  const q = document.createElement('div'); q.className = 'qual';
+  const pt = document.createElement('span'); pt.className = 'pt';
+  pt.style.background = ({ ok: '#22c55e', atencao: '#f59e0b', problema: '#ef4444' })[estado] || '#64748b';
+  q.append(pt, document.createTextNode(qual));
+  const d = document.createElement('div'); d.className = 'detalhe'; d.textContent = detalhe || '';
+  c.append(q, d);
+  return c;
+}
+
+function dashItemDaEmbarcacao(e, linhas) {
+  const item = document.createElement('div');
+  item.className = 'dash-item ' + (e.estado ? dashTomDoEstado(e.estado) : '');
+  const nome = document.createElement('div'); nome.className = 'nome';
+  nome.textContent = (e.nome || e.id) + '  ' + e.empresa;
+  const selo = document.createElement('div'); selo.appendChild(dashSelo(e.estado));
+  const emb = document.createElement('div'); emb.className = 'emb';
+  emb.textContent = dashQuando(e.em) + (e.maquina ? ' · ' + e.maquina : '')
+    + (e.versao_app ? ' · v' + e.versao_app : '');
+  const nums = document.createElement('div'); nums.className = 'numeros';
+  nums.textContent = 'CPU ' + numeroDaFrota(e.cpu_pct, '%') + ' · memória ' +
+    numeroDaFrota(e.memoria_pct, '%') + ' · HD do radar ' + numeroDaFrota(e.hd_radar_usado_pct, '%') +
+    ' · câmeras no ar ' + e.no_ar + ' de ' + e.cameras;
+  const disp = document.createElement('div'); disp.className = 'emb';
+  disp.textContent = 'disponibilidade (7 dias): cobertura ' +
+    ((e.disponibilidade || {}).cobertura_pct === undefined ? '—' : (e.disponibilidade.cobertura_pct + '%')) +
+    ' dos dias com retrato · ' + ((e.disponibilidade || {}).incidentes === undefined ? '—' : e.disponibilidade.incidentes)
+    + ' dia(s) com problema';
+  const acoes = document.createElement('div'); acoes.className = 'acoes';
+  const alvo = (linhas || []).find((l) => l.emb && l.emb.id === e.id);
+  if (alvo) {
+    acoes.appendChild(botao('Ver ao vivo (' + e.no_ar + ' no ar)', 'mini', () => abrirAoVivo(linhas, alvo.emb)));
+  }
+  /* A TELEMETRIA POR CÂMERA/ENCODER (dono, 24/11/2026: "informações de telemetria do computador") NA
+     GAVETA: o dashboard fica limpo e o número continua a um clique — sem tabela solta e sem duplicar. */
+  const individuais = e.individual || [];
+  let gaveta = null;
+  if (individuais.length) {
+    gaveta = document.createElement('details');
+    gaveta.className = 'dash-gaveta';
+    const resumo = document.createElement('summary');
+    resumo.textContent = 'Telemetria por câmera/encoder (' + individuais.length + ')';
+    gaveta.appendChild(resumo);
+    gaveta.appendChild(tabela([
+      { rotulo: 'Câmera/encoder', valor: (l) => l.rotulo || l.camera_id || 'fluxo' },
+      { rotulo: 'Estado', valor: (l) => l.estado || (l.processo ? 'sem processo (' + l.processo + ')' : '—') },
+      { rotulo: 'kbps', valor: (l) => (l.kbps === null || l.kbps === undefined ? '—' : Number(l.kbps).toFixed(0)) },
+      { rotulo: 'fps', valor: (l) => (l.fps === null || l.fps === undefined ? '—' : Number(l.fps).toFixed(1)) },
+      { rotulo: 'CPU', valor: (l) => (l.cpu_pct === null || l.cpu_pct === undefined ? '—' : Number(l.cpu_pct).toFixed(1) + '%') },
+      { rotulo: 'Memória', valor: (l) => (l.memoria_mb === null || l.memoria_mb === undefined ? '—' : Number(l.memoria_mb).toFixed(0) + ' MB') },
+    ], individuais, 'nenhum fluxo no ar agora'));
+  }
+  const partes = [nome, selo, emb, nums, disp];
+  if (gaveta) partes.push(gaveta);
+  partes.push(acoes);
+  item.append(...partes);
+  return item;
 }
 
 async function telaFrota(t) {
-  const r = await api('/api/empresas');
-  if (!r.ok) { t.appendChild(recado('não consegui ler a frota: ' + JSON.stringify(r.corpo), true)); return; }
-  const corpo = r.corpo || {};
+  /* Duas leituras: o resumo do dashboard (números medidos) e a árvore da área (para o "Ver ao vivo",
+     que abre o MESMO player do cliente com o seletor empresa → embarcação → câmeras). */
+  const r = await api('/api/frota-resumo');
+  if (!r.ok) { t.appendChild(recado('não consegui ler o dashboard: ' + JSON.stringify(r.corpo), true)); return; }
+  const d = r.corpo || {};
+  const k = d.kpis || {};
+  const embs = d.embarcacoes || [];
+  const alertas = d.alertas || [];
+  const arv = await api('/api/empresas');
   const linhas = [];
-  for (const e of (corpo.empresas || [])) {
-    for (const b of (e.embarcacoes || [])) linhas.push({ empresa: e.nome, emb: b });
+  if (arv.ok) {
+    const corpo = arv.corpo || {};
+    for (const e of (corpo.empresas || [])) for (const b of (e.embarcacoes || [])) linhas.push({ empresa: e.nome, emb: b });
+    for (const b of (corpo.embarcacoes_sem_empresa || [])) linhas.push({ empresa: 'sem empresa', emb: b });
   }
-  for (const b of (corpo.embarcacoes_sem_empresa || [])) linhas.push({ empresa: 'sem empresa', emb: b });
-  if (!linhas.length) { t.appendChild(recado('nenhuma embarcação cadastrada ainda', true)); return; }
-  linhas.sort((a, b) => ((PESO_DE_SAUDE[piorEstadoDo(a.emb.saude)] ?? 3) - (PESO_DE_SAUDE[piorEstadoDo(b.emb.saude)] ?? 3)));
+  const pior = alertas.some((a) => a.estado === 'problema') || embs.some((e) => e.estado === 'problema')
+    ? 'problema' : (alertas.length || embs.some((e) => e.estado === 'alerta') ? 'alerta' : (embs.length && !embs.some((e) => !e.estado) ? 'ok' : ''));
 
-  const resumo = (estado) => linhas.filter((l) => piorEstadoDo(l.emb.saude) === estado).length;
-  const topo = document.createElement('div'); topo.className = 'cartoes';
-  topo.appendChild(cartao('Embarcações', linhas.length, 'no escopo do seu papel'));
-  topo.appendChild(cartao('Com problema', resumo('problema'), 'pior estado primeiro'));
-  topo.appendChild(cartao('Em atenção', resumo('alerta'), 'perto do limiar'));
-  topo.appendChild(cartao('Ok', resumo('ok'), 'medido e saudável'));
+  /* ------------------------------------------------ cabeçalho (bolinha + atualizar/minimizar) */
+  const topo = document.createElement('div'); topo.className = 'dash-topo';
+  const tit = document.createElement('div'); tit.className = 'titulo';
+  tit.appendChild(dashPonto(pior));
+  const bloco = document.createElement('div');
+  const h2 = document.createElement('h2');
+  h2.textContent = pior === 'problema' ? 'Frota com problema'
+    : (pior === 'alerta' ? 'Frota em atenção' : (pior === 'ok' ? 'Frota operacional' : 'Frota sem dado do bordo'));
+  const quando = document.createElement('p'); quando.className = 'quando';
+  quando.textContent = 'atualizado ' + dashQuando(d.agora) + ' · auto-refresh 30 s' +
+    ' · o bordo reportou ' + dashQuando((d.conexoes || {}).ultimo_retrato_em);
+  bloco.append(h2, quando);
+  tit.appendChild(bloco);
+  const acoes = document.createElement('div'); acoes.className = 'acoes';
+  acoes.appendChild(botao('⟳ Atualizar', 'mini', () => desenhar(true)));
+  const bMin = botao('Minimizar', 'mini', () => {
+    const mim = document.body.classList.toggle('dash-min');
+    bMin.textContent = mim ? 'Expandir' : 'Minimizar';
+  });
+  acoes.appendChild(bMin);
+  topo.append(tit, acoes);
   t.appendChild(topo);
 
-  for (const { empresa, emb } of linhas) {
-    const s = emb.saude || {};
-    const cams = emb.cameras || [];
-    const caixa = document.createElement('div'); caixa.className = 'caixa-form';
-    const h = document.createElement('h2');
-    h.appendChild(document.createTextNode((emb.nome || emb.id) + '  '));
-    h.appendChild(seloDeSaude(piorEstadoDo(s) || 'problema'));
-    const quem = document.createElement('span'); quem.className = 'nota';
-    quem.textContent = '  ' + empresa + (s.maquina ? ' · máquina ' + s.maquina : '') +
-      (s.versao_app ? ' · versão ' + s.versao_app : '');
-    h.appendChild(quem);
-    caixa.appendChild(h);
+  /* ------------------------------------------------ KPI */
+  const fila = document.createElement('div'); fila.className = 'dash-fila';
+  fila.appendChild(dashKpi('⚓', 'Embarcações', String(k.embarcacoes || 0),
+                           (k.ok || 0) + ' ok · ' + (k.atencao || 0) + ' atenção · ' + (k.problema || 0) + ' crítico',
+                           null, pior));
+  fila.appendChild(dashKpi('🎥', 'Câmeras no ar', (k.cameras_no_ar || 0) + ' / ' + (k.cameras || 0),
+                           'das câmeras cadastradas', k.cameras ? 100 * (k.cameras_no_ar || 0) / k.cameras : 0,
+                           k.cameras && k.cameras_no_ar === k.cameras ? 'ok' : 'atencao'));
+  fila.appendChild(dashKpi('🖥', 'Computadores de captura', (k.bordo_reportando || 0) + ' / ' + (k.embarcacoes || 0),
+                           'com retrato recebido', k.embarcacoes ? 100 * (k.bordo_reportando || 0) / k.embarcacoes : 0,
+                           (k.bordo_reportando || 0) === (k.embarcacoes || 0) ? 'ok' : 'problema'));
+  fila.appendChild(dashKpi('📡', 'Fluxos no mediamtx', String(k.fluxos_no_ar || 0), 'prontos no lado terra', null, 'neutro'));
+  fila.appendChild(dashKpi((k.alertas ? '⛔' : '✅'), 'Alertas', String(k.alertas || 0),
+                           'sinais fora do limiar', null, k.alertas ? 'problema' : 'ok'));
+  t.appendChild(fila);
 
-    const sub = document.createElement('p'); sub.className = 'sub';
-    sub.textContent = (s.em ? ('último retrato: ' + s.em + (s.so ? ' · ' + s.so : ''))
-                            : 'este computador de captura nunca reportou') +
-      '  ·  câmeras no ar ' + cams.filter((c) => c.no_ar).length + ' de ' + cams.length;
-    caixa.appendChild(sub);
-
-    const discos = s.discos || [];
-    const pior = discos.reduce((a, x) => (Number(x && x.usado_pct) > Number(a && a.usado_pct) ? x : a), null);
-    const rede = s.rede || {};
-    const linha = document.createElement('div'); linha.className = 'frota-linha';
-    linha.appendChild(tileDaFrota('CPU', numeroDaFrota(s.cpu_pct, '%'),
-      (s.nao_medido || {}).cpu_memoria || 'medida instantânea',
-      tomDoNumero(s.cpu_pct, 75, 90)));
-    linha.appendChild(tileDaFrota('Memória', numeroDaFrota(s.memoria_pct, '%'),
-      s.memoria_disponivel_mb === null || s.memoria_disponivel_mb === undefined
-        ? 'sem medida'
-        : ('disponível ' + numeroDaFrota(s.memoria_disponivel_mb / 1000, ' GB') +
-           (s.memoria_total_mb ? ' de ' + numeroDaFrota(s.memoria_total_mb / 1000, ' GB') : '')),
-      tomDoNumero(s.memoria_pct, 80, 92)));
-    linha.appendChild(tileDaFrota('Disco', pior ? numeroDaFrota(pior.usado_pct, '%') : '—',
-      pior ? ((pior.nome || 'volume') + ' — ' + numeroDaFrota(pior.livre_gb, ' GB livres'))
-           : 'nenhum volume medido',
-      tomDoNumero(pior && pior.usado_pct, 88, 95)));
-    linha.appendChild(tileDaFrota('Rede (subindo)', rede.enviado_mbps === undefined ? '—' : numeroDaFrota(rede.enviado_mbps, ' Mbps', 2),
-      rede.enviado_mbps === undefined ? 'não medido neste bordo'
-        : ('baixando ' + numeroDaFrota(rede.recebido_mbps, ' Mbps', 2)), 'neutro'));
-    caixa.appendChild(linha);
-
-    const individuais = s.individual || [];
-    if (individuais.length) {
-      caixa.appendChild(tabela([
-        { rotulo: 'Câmera/encoder', valor: (l) => l.rotulo || l.camera_id || 'fluxo' },
-        { rotulo: 'Estado', valor: (l) => l.estado || (l.processo ? 'sem processo (' + l.processo + ')' : '—') },
-        { rotulo: 'kbps', valor: (l) => (l.kbps === null || l.kbps === undefined ? '—' : Number(l.kbps).toFixed(0)) },
-        { rotulo: 'fps', valor: (l) => (l.fps === null || l.fps === undefined ? '—' : Number(l.fps).toFixed(1)) },
-        { rotulo: 'CPU', valor: (l) => (l.cpu_pct === null || l.cpu_pct === undefined ? '—' : Number(l.cpu_pct).toFixed(1) + '%') },
-        { rotulo: 'Memória', valor: (l) => (l.memoria_mb === null || l.memoria_mb === undefined ? '—' : Number(l.memoria_mb).toFixed(0) + ' MB') },
-      ], individuais, 'nenhum fluxo no ar agora'));
-    } else {
-      caixa.appendChild(notaDe('Nenhum fluxo desta máquina no ar agora (individual por câmera).'));
+  /* ------------------------------------------------ câmeras por embarcação + distribuição geral */
+  const grade = document.createElement('div'); grade.className = 'dash-grade';
+  const cardCam = dashCard('Câmeras por embarcação', 'no ar / total');
+  const barras = document.createElement('div'); barras.className = 'dash-barras';
+  if (embs.length) {
+    for (const e of embs) {
+      barras.appendChild(dashBarraItem(e.nome, e.no_ar + ' / ' + e.cameras, e.no_ar, e.cameras));
     }
+  } else barras.appendChild(notaDe('nenhuma embarcação cadastrada ainda'));
+  cardCam.appendChild(barras);
+  const cardDist = dashCard('Distribuição geral', 'pelo último retrato de cada bordo');
+  cardDist.appendChild(dashRosca([
+    { rotulo: 'ok', quantos: k.ok || 0, cor: '#22c55e' },
+    { rotulo: 'em atenção', quantos: k.atencao || 0, cor: '#f59e0b' },
+    { rotulo: 'crítico', quantos: k.problema || 0, cor: '#ef4444' },
+  ]));
+  grade.append(cardCam, cardDist);
+  t.appendChild(grade);
 
-    caixa.appendChild(botao('Ver ao vivo (' + cams.filter((c) => c.no_ar).length + ' no ar)', 'mini',
-                            () => abrirAoVivo(emb, cams)));
-    t.appendChild(caixa);
+  /* ------------------------------------------------ disponibilidade (7 dias) — MEDIDA */
+  const cardDisp = dashCard('Disponibilidade (7 dias)',
+                            'medida pelo retrato que o bordo mandou (nada estimado)');
+  const somas = { retratos: 0, problema: 0, alerta: 0, ok: 0 };
+  const porDia = [];
+  for (const e of embs) {
+    const dd = (e.disponibilidade || {}).dias || [];
+    for (const dia of dd) {
+      let alvo = porDia.find((x) => x.dia === dia.dia);
+      if (!alvo) { alvo = { dia: dia.dia, retratos: 0, problema: 0, alerta: 0, ok: 0 }; porDia.push(alvo); }
+      for (const campo of ['retratos', 'problema', 'alerta', 'ok']) {
+        alvo[campo] += Number(dia[campo] || 0);
+        somas[campo] += Number(dia[campo] || 0);
+      }
+    }
   }
+  porDia.sort((a, b) => (a.dia < b.dia ? -1 : 1));
+  cardDisp.appendChild(metricasDaDisponibilidade(embs, porDia, somas));
+  cardDisp.appendChild(barrasDosDias(porDia));
+  cardDisp.appendChild(notaDe('Cada retrato é classificado pelo mesmo semáforo do painel. Cobertura = ' +
+    'dias com pelo menos um retrato ÷ 7; incidente = dia com retrato classificado como problema ' +
+    '(o silêncio do bordo conta como problema).'));
+  t.appendChild(cardDisp);
+
+  /* ------------------------------------------------ diagnóstico de conexões */
+  const cardConc = dashCard('Diagnóstico de conexões', 'o terra nunca abre conexão para o bordo');
+  const diag = document.createElement('div'); diag.className = 'dash-diag';
+  const cx = d.conexoes || {};
+  const idadeRetrato = cx.ultimo_retrato_em ? (Date.now() - Date.parse(cx.ultimo_retrato_em)) / 1000 : null;
+  diag.appendChild(dashConexao('Bordo → terra (retrato)', idadeRetrato === null ? 'problema'
+    : (idadeRetrato < 180 ? 'ok' : (idadeRetrato < 600 ? 'atencao' : 'problema')),
+    'último retrato ' + dashQuando(cx.ultimo_retrato_em)));
+  diag.appendChild(dashConexao('Bordo → terra (vídeo)', (cx.fluxos_no_ar || 0) > 0 ? 'ok' : 'atencao',
+    (cx.fluxos_no_ar || 0) + ' fluxo(s) no ar · última ingestão ' + dashQuando(cx.ultima_ingestao_em)));
+  diag.appendChild(dashConexao('Terra → bordo', 'ok',
+    'sem porta aberta no bordo: o terra só responde o que o bordo pergunta'));
+  diag.appendChild(dashConexao('Câmeras (todas as embarcações)', k.cameras && k.cameras_no_ar === k.cameras ? 'ok' : 'atencao',
+    (k.cameras_no_ar || 0) + ' de ' + (k.cameras || 0) + ' no ar'));
+  cardConc.appendChild(diag);
+  t.appendChild(cardConc);
+
+  /* ------------------------------------------------ embarcações e alertas */
+  const grade2 = document.createElement('div'); grade2.className = 'dash-grade dash-detalhe';
+  const cardEmbs = dashCard('Embarcações (' + embs.length + ')', 'pior estado primeiro');
+  const lista = document.createElement('div'); lista.className = 'dash-lista';
+  if (embs.length) for (const e of embs) lista.appendChild(dashItemDaEmbarcacao(e, linhas));
+  else lista.appendChild(notaDe('nenhuma embarcação cadastrada ainda'));
+  cardEmbs.appendChild(lista);
+  const cardAl = dashCard('Alertas (' + alertas.length + ')',
+                          alertas.length ? 'o que fazer está em cada linha' : 'nada fora do limiar');
+  cardAl.className += ' dash-alertas';
+  const listaAl = document.createElement('div'); listaAl.className = 'dash-lista';
+  if (alertas.length) {
+    for (const a of alertas.slice(0, 12)) {
+      const item = document.createElement('div');
+      item.className = 'dash-item ' + (a.estado === 'problema' ? 'problema' : 'alerta');
+      const nome = document.createElement('div'); nome.className = 'nome';
+      nome.textContent = (a.embarcacao || '') + ' · ' + (a.sinal || '');
+      const selo = document.createElement('div'); selo.appendChild(dashSelo(a.estado));
+      const det = document.createElement('div'); det.className = 'numeros';
+      det.textContent = (a.valor === null || a.valor === undefined ? 'não medido' : (a.valor + (a.unidade ? ' ' + a.unidade : '')))
+        + (a.o_que_fazer ? ' — ' + a.o_que_fazer : '');
+      const emb = document.createElement('div'); emb.className = 'emb';
+      emb.textContent = (a.empresa || '') + ' · ' + dashQuando(a.em);
+      item.append(nome, selo, det, emb);
+      listaAl.appendChild(item);
+    }
+  } else {
+    const vazio = document.createElement('div'); vazio.className = 'dash-vazio';
+    vazio.textContent = 'Nenhum alerta ativo — todos os sinais medidos estão dentro do limiar.';
+    listaAl.appendChild(vazio);
+  }
+  cardAl.appendChild(listaAl);
+  grade2.append(cardEmbs, cardAl);
+  t.appendChild(grade2);
+}
+
+function metricasDaDisponibilidade(embs, porDia, somas) {
+  const box = document.createElement('div'); box.className = 'dash-metricas';
+  const dias = porDia.length || 7;
+  const cobertura = dias ? Math.round(100 * porDia.filter((x) => x.retratos > 0).length / dias) : 0;
+  const incidentes = porDia.filter((x) => x.problema > 0).length;
+  for (const [rot, val] of [['Cobertura', cobertura + '%'], ['Incidentes', String(incidentes)],
+                            ['Retratos', String(somas.retratos)], ['Bordos', String(embs.length)]]) {
+    const m = document.createElement('div'); m.className = 'dash-metrica';
+    const b = document.createElement('b'); b.textContent = val;
+    const s = document.createElement('span'); s.textContent = rot;
+    m.append(b, s); box.appendChild(m);
+  }
+  return box;
+}
+
+function barrasDosDias(porDia) {
+  const caixa = document.createElement('div'); caixa.className = 'dash-dias';
+  const max = porDia.reduce((a, x) => Math.max(a, Number(x.retratos || 0)), 0) || 1;
+  if (!porDia.length) { caixa.appendChild(notaDe('nenhum retrato do bordo nos últimos 7 dias')); return caixa; }
+  for (const dia of porDia) {
+    const d = document.createElement('div'); d.className = 'dia';
+    const torre = document.createElement('div'); torre.className = 'torre';
+    const b = document.createElement('i');
+    const altura = Math.max(3, Math.round(52 * Number(dia.retratos || 0) / max));
+    b.style.height = altura + 'px';
+    b.style.background = dia.problema ? '#ef4444' : (dia.alerta ? '#f59e0b' : (dia.retratos ? '#22c55e' : '#334155'));
+    d.title = dia.dia + ' · ' + dia.retratos + ' retrato(s) — ' + dia.problema + ' problema, ' +
+      dia.alerta + ' atenção, ' + dia.ok + ' ok';
+    torre.appendChild(b);
+    const rot = document.createElement('b'); rot.textContent = dia.dia.slice(8, 10) + '/' + dia.dia.slice(5, 7);
+    const qtd = document.createElement('span'); qtd.className = 'qtd'; qtd.textContent = String(dia.retratos || 0);
+    d.append(torre, rot, qtd);
+    caixa.appendChild(d);
+  }
+  return caixa;
 }
 
 async function telaSaudeDoBordo(t) {
@@ -2656,6 +3015,10 @@ function cartaoDaCamera(c, emb) {
   if (c.achada_pela_varredura) selos.appendChild(seloDe('neutro', 'achada pela varredura'));
   if (c.local) selos.appendChild(seloDe('neutro', c.local));
   if (c.leitores) selos.appendChild(seloDe('neutro', c.leitores + ' assistindo'));
+  /* O TIPO no selo (plano único, 25/11/2026): é o que o observador (Petrobras/IBAMA) vê de todas as
+     empresas — radar de óleo e FLIR. O selo deixa o admin conferir num relance o que ele declarou. */
+  if (c.tipo === 'radar') selos.appendChild(seloDe('alerta', 'radar de óleo'));
+  else if (c.tipo === 'flir') selos.appendChild(seloDe('alerta', 'FLIR (térmica)'));
   caixa.appendChild(selos);
 
   const enc = c.encoder || {};
@@ -2680,6 +3043,10 @@ function cartaoDaCamera(c, emb) {
     if (!r.ok) mostrarRecado('recusado: ' + JSON.stringify(r.corpo), true);
   }));
   const sel = document.createElement('select');
+  /* `data-papel`: a prova de tela acha o menu da QUALIDADE sem confundir com o do TIPO (o cartão tem os
+     dois desde a 0.20.0). */
+  sel.dataset.papel = 'alvo';
+  sel.title = 'qualidade de envio desta câmera (kbps) — desce para o PC de captura';
   for (const a of ALVOS_DE_ENVIO) { const o = document.createElement('option'); o.value = a; o.textContent = a + ' kbps'; sel.appendChild(o); }
   sel.value = String(c.alvo || '').replace(/k$/i, '');   // `cameras.alvo` guarda "800k"; o menu e' "800"
   acoes.appendChild(sel);
@@ -2688,6 +3055,25 @@ function cartaoDaCamera(c, emb) {
       embarcacao_id: emb.id, camera_id: c.id, chave: 'alvo_kbps', valor: sel.value }) });
     await atualizar();
     if (r.ok) mostrarRecado('qualidade publicada para o PC de captura: ' + sel.value + ' kbps', false);
+    else mostrarRecado('recusado: ' + ((r.corpo && r.corpo.erro) || JSON.stringify(r.corpo)), true);
+  }));
+  /* TIPO da câmera (plano único, 25/11/2026 — "quando eu puder renomear, o sistema saberá qual imagem é
+     do radar de óleo e/ou câmera flir para que petrobrás/ibama possam acessar"). É o que decide o que o
+     observador vê de TODAS as empresas. O bordo PROPÕE o tipo no anúncio; escolher aqui faz o admin
+     MANDAR: a partir da escolha, o anúncio do bordo não sobrescreve mais (`tipo_definido_pelo_admin`). */
+  const tipo = document.createElement('select');
+  tipo.dataset.papel = 'tipo';
+  for (const par of [['camera', 'câmera comum'], ['radar', 'radar de óleo'], ['flir', 'FLIR (térmica)']]) {
+    const o = document.createElement('option'); o.value = par[0]; o.textContent = par[1]; tipo.appendChild(o);
+  }
+  tipo.value = ['camera', 'radar', 'flir'].includes(c.tipo) ? c.tipo : 'camera';
+  tipo.title = 'o tipo desta câmera: é o que o observador (Petrobras/IBAMA) vê de todas as empresas';
+  acoes.appendChild(tipo);
+  acoes.appendChild(botao('aplicar tipo', 'mini', async () => {
+    const r = await api('/api/cameras/' + encodeURIComponent(c.id) + '/editar',
+      { method: 'POST', body: JSON.stringify({ tipo: tipo.value }) });
+    await atualizar();
+    if (r.ok) mostrarRecado('tipo gravado: ' + tipo.value + ' — o anúncio do bordo não sobrescreve mais', false);
     else mostrarRecado('recusado: ' + ((r.corpo && r.corpo.erro) || JSON.stringify(r.corpo)), true);
   }));
   // D3 do dono (24/11/2026): "nao tem ligar agora do admin, so quem visualiza e' o cliente". O admin NAO
@@ -2735,3 +3121,78 @@ function relogio() { const d = new Date(); const p = (n) => String(n).padStart(2
   $('relogio-servidor').textContent = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; }
 setInterval(relogio, 1000); relogio();
 abrir();
+
+/* ==================================== IMAGENS GRAVADAS A BORDO (plano único, 25/11/2026)
+   Dono: "ainda não consigo acessar as imagens na área do admin, precisa resolver isso". O backend já
+   servia (`/api/hd/catalogo`, `/api/hd/pedir`, `/api/hd/baixar`) — faltava a TELA. O computador de
+   captura grava o tempo todo no HD dele (anel, o radar de óleo inclusive); aqui o admin escolhe a
+   embarcação, vê os blocos por data e hora, pede o trecho e baixa o que já chegou em terra. O lado
+   terra NUNCA abre conexão para o bordo: o pedido fica esperando o bordo buscar (a única certeza da
+   arquitetura é de que ele pode enviar). */
+async function telaHdDoBordo(t) {
+  const embs = A.embarcacoes || [];
+  if (!embs.length) { t.appendChild(recado('nenhuma embarcação cadastrada ainda', true)); return; }
+  const escolhida = (A.hd && A.hd.embarcacao_id) || embs[0].id;
+  const barra = document.createElement('div'); barra.className = 'linha-form';
+  const rot = document.createElement('label'); rot.textContent = 'Embarcação';
+  const sel = document.createElement('select'); sel.id = 'hd-emb';
+  embs.forEach((e) => sel.appendChild(Object.assign(document.createElement('option'),
+    { value: e.id, textContent: (e.nome || e.id) + (e.cliente_nome ? ' · ' + e.cliente_nome : ''),
+      selected: e.id === escolhida })));
+  barra.appendChild(rot); barra.appendChild(sel); t.appendChild(barra);
+  sel.onchange = () => { A.hd = { embarcacao_id: sel.value }; desenhar(true); };
+
+  const r = await api('/api/hd/catalogo?embarcacao_id=' + encodeURIComponent(escolhida));
+  if (!r.ok) {
+    t.appendChild(recado('não consegui ler o catálogo do bordo: ' + JSON.stringify(r.corpo), true));
+    return;
+  }
+  const dados = r.corpo || { catalogos: [], pedidos: [] };
+  const blocos = [];
+  for (const c of (dados.catalogos || [])) {
+    for (const b of (c.blocos || [])) {
+      blocos.push({ camera_id: c.camera_id, rotulo: c.rotulo || c.camera_id, arquivo: b.arquivo,
+                    inicio: String(b.inicio || ''), bytes: b.bytes || 0 });
+    }
+  }
+  blocos.sort((a, b) => String(b.inicio).localeCompare(String(a.inicio)));
+  const pedidos = {};
+  for (const p of (dados.pedidos || [])) pedidos[p.camera_id + '|' + p.arquivo] = p;
+
+  const caixa = document.createElement('div'); caixa.className = 'caixa-form';
+  caixa.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Trechos no HD do computador de captura' }));
+  caixa.appendChild(notaDe(blocos.length
+    ? blocos.length + ' trecho(s) publicado(s) por esta embarcação. O pedido vai ao bordo e o download abre quando o trecho chega em terra.'
+    : 'o computador de captura desta embarcação ainda não publicou blocos. A gravação contínua a bordo nasce '
+      + 'desligada e quem liga é o próprio PC de captura (o lado terra nunca abre conexão para o bordo) — sem '
+      + 'ela não há catálogo para pedir.'));
+  const linhas = blocos.map((b) => {
+    const p = pedidos[b.camera_id + '|' + b.arquivo];
+    const linha = { camera: b.rotulo, quando: b.inicio.replace('T', ' ').slice(0, 19),
+      tamanho: (b.bytes / (1024 * 1024)).toFixed(1).replace('.', ',') + ' MB' };
+    linha.situacao = !p ? 'no HD do barco'
+      : (p.estado === 'enviado' ? 'pronto em terra'
+        : (p.estado === 'recusado' ? 'o bordo recusou: ' + (p.motivo || 'sem motivo informado')
+          : 'pedido: ' + (p.estado || 'aguardando o bordo')));
+    if (p && p.estado === 'enviado' && p.trecho) {
+      const a = document.createElement('a'); a.className = 'acao mini';
+      a.href = '/api/hd/baixar?id=' + encodeURIComponent(p.id); a.textContent = 'baixar';
+      linha.trecho = a;
+    } else if (p) {
+      linha.trecho = document.createTextNode('—');
+    } else {
+      linha.trecho = botao('pedir', 'mini', async () => {
+        const rr = await api('/api/hd/pedir', { method: 'POST',
+          body: JSON.stringify({ camera_id: b.camera_id, arquivo: b.arquivo }) });
+        if (!rr.ok) { mostrarRecado('recusado: ' + ((rr.corpo && rr.corpo.erro) || JSON.stringify(rr.corpo)), true); return; }
+        desenhar(true);
+        mostrarRecado('pedido enviado: o trecho aparece quando o bordo enviar', false);
+      });
+    }
+    return linha;
+  });
+  caixa.appendChild(tabela([{ rotulo: 'Câmera', campo: 'camera' }, { rotulo: 'Quando (início do trecho)', campo: 'quando' },
+    { rotulo: 'Tamanho', campo: 'tamanho' }, { rotulo: 'Situação', campo: 'situacao' },
+    { rotulo: 'Trecho', campo: 'trecho' }], linhas, 'nenhum trecho publicado por esta embarcação'));
+  t.appendChild(caixa);
+}

@@ -56,9 +56,11 @@ def _cliente_entra(navegador, amb, cam: str):
     pagina.fill("#senha", senha_de_demo())
     pagina.click("form#form-entrar button[type=submit]")
     pagina.wait_for_selector("#sistema:not(.oculto)", timeout=25000)
-    pagina.click('.item[data-tela="transmissao"]')
-    pagina.wait_for_selector(".transmissao-linha", timeout=20000)
-    pagina.click(f"#iniciar-{cam}")
+# PLANO UNICO (25/11/2026): a tela "Transmitir" saiu do cliente - o controle de transmissao
+    # (iniciar/parar/contagem/gravar) mora na GRADE, no quadro de cada camera. O cliente ja'
+    # cai nessa tela ao entrar; o botao do quadro e' o `[data-papel="iniciar"]`.
+    pagina.wait_for_selector(f'.janela[data-cam="{cam}"] [data-papel="iniciar"]', timeout=20000)
+    pagina.click(f'.janela[data-cam="{cam}"] [data-papel="iniciar"]')
     return ctxx, pagina
 
 

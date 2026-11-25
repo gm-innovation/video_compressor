@@ -20,6 +20,16 @@ RAIZ = pathlib.Path(__file__).resolve().parent.parent
 # `ambiente.json` que esta' no repositorio, e passaria a falar com a producao em vez de responder em casa.
 os.environ["LECSOR_SEM_AMBIENTE"] = "1"
 PROVAS = (
+    # RODADA 0.20.0 — DASHBOARDS NO PADRAO DOCK CHECK (dono, 25/11/2026: "tanto o dashboard do admin
+    # quanto o do app de captura continuam horriveis, precisa ser algo mais proximo desse do Dock
+    # Check"): a leitura unica do admin (`/api/frota-resumo`, SO' ADMIN) com fileira de KPI, a
+    # disponibilidade MEDIDA de 7 dias (retrato a retrato), o diagnostico de conexoes e os alertas com
+    # "o que fazer" — e o painel do bordo vestindo a MESMA linguagem (`fronts/dashboard.css`).
+    "tests/test-dashboard-frota.py",
+    # ...e o ADMIN acessa o GRAVADO A BORDO pela tela (dono, 25/11/2026: "ainda nao consigo acessar as
+    # imagens na area do admin, precisa resolver isso"): escolhe a embarcacao, ve o catalogo que o PC de
+    # captura publicou, pede o trecho e baixa o que chegou em terra.
+    "tests/e2e-hd-do-admin.py",
     # RODADA 0.18.0 — CAMERA IP: o ENDERECO (IP) e o SEGREDO da camera de rede vivem NO PC DE CAPTURA
     # (dono, 25/11/2026: "senha nao pode vazar, tem que tudo ficar no bordo, entao nao vamos poder
     # inserir nem o ip no admin"). A maquina de captura cadastra/edita/remove a camera de rede; o admin

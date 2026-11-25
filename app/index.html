@@ -29,14 +29,14 @@
     <button class="item on" data-tela="visualizar"><span class="ic">▦</span>Visualizar</button>
     <button class="item" data-tela="alertas"><span class="ic">🔔</span>Alertas</button>
     <button class="item" data-tela="gravacoes"><span class="ic">🎬</span>Gravações</button>
-    <button class="item" data-tela="radar_hd"><span class="ic">🛰</span>Radar de óleo (HD)</button>
-    <button class="item" data-tela="relatorios"><span class="ic">📊</span>Relatórios</button>
+    <button class="item" data-tela="radar_hd"><span class="ic">🛰</span>Imagens gravadas a bordo</button>
 
     <!-- "Pessoas" saiu (dono, 25/11/2026): era tabela vazia com texto fixo de LGPD — sem dado e sem
-         ação. "Avisos" saiu: só mexia num localStorage, sem nenhuma rota. -->
-    <div class="grupo">Transmissão</div>
-    <button class="item" data-tela="transmissao"><span class="ic">▶</span>Transmitir</button>
-    <button class="item" data-tela="configuracao"><span class="ic">⏱</span>Tempo de transmissão</button>
+         ação. "Avisos" saiu: só mexia num localStorage, sem nenhuma rota.
+         (plano único, 25/11/2026) Saíram também "Relatórios" (lia tabelas `analytics_*` que ninguém
+         escreve), "Transmitir" (repetia o controle que mora na GRADE) e "Tempo de transmissão" (o
+         teto é do ADMIN — chave `teto_s`); com isso o grupo "Transmissão" deixou de existir.
+         O HD saiu do nome "Radar de óleo": ele é o acesso às imagens gravadas a bordo. -->
 
     <div class="grupo">Câmeras</div>
     <button class="item" data-tela="cameras"><span class="ic">🎥</span>Câmeras</button>

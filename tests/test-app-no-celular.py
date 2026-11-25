@@ -139,22 +139,23 @@ def main() -> int:
             checar("a tela de entrada cabe na largura do telefone",
                    largura_conteudo <= LARGURA + 2 and largura_janela <= LARGURA + 2,
                    f"conteudo {largura_conteudo}px / janela {largura_janela}px / tela {LARGURA}px {culpados}")
-            cabe, onde = cabe_na_tela(pag, '[data-tela="transmissao"]')
-            checar("o botao do menu 'Transmitir' cabe no telefone", cabe, onde)
+            cabe, onde = cabe_na_tela(pag, '[data-tela="visualizar"]')
+            checar("o botao do menu 'Visualizar' cabe no telefone", cabe, onde)
 
-            # 2) a tela Transmitir, com as cameras do cliente
-            pag.tap('[data-tela="transmissao"]')
-            pag.wait_for_selector(".transmissao-linha", timeout=20000)
+            # 2) a GRADE com as cameras do cliente (plano unico, 25/11/2026: a tela "Transmitir" saiu —
+            #    o controle mora no quadro de cada camera, dentro da janela)
+            pag.tap('[data-tela="visualizar"]')
+            pag.wait_for_selector('.janela [data-papel="iniciar"]', timeout=20000)
             largura_conteudo, largura_janela, culpados = estoura_para_o_lado(pag)
-            checar("a tela 'Transmitir' cabe na largura do telefone",
+            checar("a GRADE de transmissao cabe na largura do telefone",
                    largura_conteudo <= LARGURA + 2 and largura_janela <= LARGURA + 2,
                    f"conteudo {largura_conteudo}px / janela {largura_janela}px / tela {LARGURA}px {culpados}")
-            cabe, onde = cabe_na_tela(pag, ".transmissao-linha")
-            checar("a linha da camera cabe no telefone", cabe, onde)
+            cabe, onde = cabe_na_tela(pag, ".janela")
+            checar("o quadro da camera cabe no telefone", cabe, onde)
 
             # 3) alvo de dedo e TOQUE de verdade no iniciar
-            cam = pag.locator(".transmissao-linha").first.get_attribute("data-camera")
-            botao = pag.locator(f"#iniciar-{cam}")
+            cam = pag.locator(".janela").first.get_attribute("data-cam")
+            botao = pag.locator(f'.janela[data-cam="{cam}"] [data-papel="iniciar"]')
             caixa = botao.bounding_box() or {"height": 0, "width": 0}
             checar("o botao de iniciar tem alvo de dedo (>= 32 px de altura)",
                    caixa["height"] >= 32, f"{caixa['height']:.0f}px de altura")
@@ -162,7 +163,7 @@ def main() -> int:
             dito = ""
             fim = time.time() + 20
             while time.time() < fim:
-                linhas = pag.locator(".transmissao-linha").first.inner_text()
+                linhas = pag.locator(f'[data-estado="{cam}"]').inner_text()
                 if linhas and linhas.strip():
                     dito = linhas
                 if "pedido enviado" in dito.lower() or "no ar" in dito.lower():
@@ -172,15 +173,9 @@ def main() -> int:
                    "pedido enviado" in dito.lower() or "no ar" in dito.lower(),
                    dito.replace("\n", " · ")[:90])
 
-            # 4) a tela de tempo tambem cabe
-            pag.tap('[data-tela="configuracao"]')
-            pag.wait_for_selector("#tempo-maximo", timeout=20000)
-            largura_conteudo, largura_janela, culpados = estoura_para_o_lado(pag)
-            checar("a tela 'Tempo de transmissao' cabe na largura do telefone",
-                   largura_conteudo <= LARGURA + 2 and largura_janela <= LARGURA + 2,
-                   f"conteudo {largura_conteudo}px / janela {largura_janela}px / tela {LARGURA}px {culpados}")
-            cabe, onde = cabe_na_tela(pag, "#tempo-maximo")
-            checar("o campo de tempo cabe no telefone", cabe, onde)
+            # 4) o chip do escopo (o tipo de cliente) cabe — o tempo e' do ADMIN, a tela do cliente saiu
+            cabe, onde = cabe_na_tela(pag, "#conta-papel")
+            checar("o chip do escopo (tipo de cliente) cabe no telefone", cabe, onde)
 
             ctx.close()
             navegador.close()

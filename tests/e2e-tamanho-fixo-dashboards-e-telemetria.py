@@ -319,14 +319,30 @@ def main() -> int:
             bordo = navegador.new_context(viewport={"width": 1280, "height": 900}).new_page()
             bordo.on("pageerror", lambda e: erros.append(str(e)))
             bordo.goto(base + "/bordo")
-            bordo.wait_for_selector("#painel .tf", timeout=ESPERA)
+            # O DASHBOARD DO BORDO NA LINGUAGEM DO DOCK CHECK (plano unico 0.20.0, 25/11/2026): o cartao
+            # virou `.dash-kpi` (o MESMO do dashboard do admin) e a primeira dobra ganhou o cabecalho com
+            # a bolinha de saude e o diagnostico de conexoes.
+            bordo.wait_for_selector("#painel .dash-kpi", timeout=ESPERA)
             painel = bordo.evaluate("""() => {
-              const tiras = Array.from(document.querySelectorAll('#painel .tf'));
+              const tiras = Array.from(document.querySelectorAll('#painel .dash-kpi'));
+              const cor = (t) => {
+                const i = t.querySelector('.dash-barra i');
+                const bg = i ? getComputedStyle(i).backgroundColor : '';
+                return bg.includes('34, 197, 94') ? 'ok'
+                     : bg.includes('245, 158, 11') ? 'atencao'
+                     : bg.includes('239, 68, 68') ? 'problema' : 'neutro';
+              };
               return {
                 quantos: tiras.length,
                 rotulos: tiras.map((t) => t.querySelector('.rot').textContent.trim()),
                 numeros: tiras.map((t) => t.querySelector('.num').textContent.trim()),
-                estados: tiras.map((t) => t.className.replace('tf', '').trim()),
+                estados: tiras.map(cor),
+                barra: tiras.filter((t) => t.querySelector('.dash-barra i')).length,
+                topo: !!document.querySelector('#dash-topo .titulo h2'),
+                topoTexto: (document.querySelector('#dash-topo .titulo h2') || {}).textContent || '',
+                ponto: !!document.querySelector('#dash-topo .dash-ponto'),
+                conexoes: Array.from(document.querySelectorAll('#dash-diag .dash-conexao'))
+                                  .map((c) => c.querySelector('.qual').textContent.trim()),
                 individual: !!document.querySelector('#individual .tabela, #individual .fraco'),
                 // Nada de VALOR de segredo: um token/chave real tem 40+ caracteres opacos seguidos. O
                 // painel PODE dizer a palavra "token" (ele informa PRESENTE/AUSENTE) — o que nao pode e'
@@ -341,8 +357,14 @@ def main() -> int:
             checar("o dashboard do bordo tem os QUATRO numeros (CPU, memoria, disco, rede)",
                    painel["quantos"] == 4 and any("CPU" in r for r in painel["rotulos"]), str(painel["rotulos"]))
             checar("cada numero vem com um estado (verde/ambar/vermelho)",
-                   all(e in ("ok", "atencao", "ruim", "neutro") for e in painel["estados"]),
+                   all(e in ("ok", "atencao", "problema", "neutro") for e in painel["estados"]),
                    str(painel["estados"]))
+            checar("os cartoes trazem a barra de progresso do Dock Check", painel["barra"] >= 3,
+                   str(painel["barra"]))
+            checar("a primeira dobra tem o cabecalho com a bolinha de saude",
+                   painel["topo"] and painel["ponto"], painel["topoTexto"])
+            checar("a primeira dobra tem o diagnostico de conexoes (4 rotas)",
+                   len(painel["conexoes"]) == 4, str(painel["conexoes"]))
             checar("a CPU tem VALOR (nao e' um '—' sem motivo)",
                    painel["numeros"][0] not in ("", "—") or "não medido" in bordo.inner_text("body")[:4000],
                    painel["numeros"][0])
@@ -361,29 +383,39 @@ def main() -> int:
             adm.click("form#form-entrar button[type=submit]")
             adm.wait_for_selector(".sistema", timeout=ESPERA)
             adm.click("button[data-tela=frota]")
-            adm.wait_for_selector(".frota-linha", timeout=ESPERA)
+            # O DASHBOARD NA LINGUAGEM DO DOCK CHECK (plano unico 0.20.0): fileira de KPI, disponibilidade
+            # de 7 dias medida, diagnostico de conexoes e a lista com selo por embarcacao (a telemetria
+            # por camera/encoder virou gaveta dentro do item).
+            adm.wait_for_selector(".dash-item", timeout=ESPERA)
             frota = adm.evaluate("""() => {
-              const tiras = Array.from(document.querySelectorAll('.frota-linha .frota-num'));
+              const itens = Array.from(document.querySelectorAll('.dash-item'));
+              const kpi = Array.from(document.querySelectorAll('.dash-fila .dash-kpi'));
               return {
-                quantos: tiras.length,
-                rotulos: tiras.map((t) => t.querySelector('.rot').textContent.trim()),
-                valores: tiras.map((t) => t.querySelector('.val').textContent.trim()),
-                individual: !!document.querySelector('.caixa-form table'),
-                embarcacoes: document.querySelectorAll('.caixa-form h2').length,
+                quantos: itens.length,
+                kpis: kpi.map((k) => k.querySelector('.rot').textContent.trim()),
+                selos: itens.map((i) => ((i.querySelector('.dash-selo') || {}).textContent || '')),
+                texto: itens.map((i) => i.innerText),
+                dias: document.querySelectorAll('.dash-dias .dia').length,
+                conexoes: document.querySelectorAll('.dash-conexao').length,
+                individual: !!document.querySelector('.dash-item .dash-gaveta table'),
                 temAoVivo: !!Array.from(document.querySelectorAll('button')).find(
                   (b) => /Ver ao vivo/.test(b.textContent)),
                 segredo: /LECSOR_TOKEN|senha_hash/i.test(document.body.innerHTML),
               };
             }""")
-            print("       ", json.dumps(frota, ensure_ascii=False))
-            checar("o dashboard do admin mostra as QUATRO medidas por embarcacao (multiplo de 4)",
-                   frota["quantos"] >= 4 and frota["quantos"] % 4 == 0
-                   and frota["rotulos"][:4] == ["CPU", "Memória", "Disco", "Rede (subindo)"],
-                   f"{frota['quantos']} tira(s): " + str(frota["rotulos"][:4]))
-            checar("os numeros sao os do retrato do bordo (62,5 % de CPU, disco 91 %)",
-                   any(v.startswith("62,5") or v.startswith("62.5") for v in frota["valores"])
-                   and any(v.startswith("91") for v in frota["valores"]), str(frota["valores"]))
-            checar("o admin ve a camada INDIVIDUAL por camera", frota["individual"])
+            print("       ", json.dumps({k: v for k, v in frota.items() if k != "texto"}, ensure_ascii=False))
+            texto_da_frota = " ".join(frota["texto"])
+            checar("o dashboard do admin abre com a fileira de KPI do Dock Check",
+                   len(frota["kpis"]) >= 5, str(frota["kpis"]))
+            checar("a disponibilidade de 7 dias vem medida (7 colunas)",
+                   frota["dias"] == 7, str(frota["dias"]))
+            checar("o diagnostico de conexoes esta na tela", frota["conexoes"] >= 3,
+                   str(frota["conexoes"]))
+            checar("os numeros do retrato do bordo chegam ao dashboard (CPU 62,5 % e disco 91 %)",
+                   ("62,5" in texto_da_frota or "62.5" in texto_da_frota) and "91" in texto_da_frota,
+                   texto_da_frota[:300].replace("\n", " | "))
+            checar("cada embarcacao vem com o selo do semaforo", all(frota["selos"]), str(frota["selos"]))
+            checar("o admin ve a camada INDIVIDUAL por camera (gaveta)", frota["individual"])
             checar("a tela do admin nao vaza segredo", not frota["segredo"])
             checar("existe o botao 'Ver ao vivo' por embarcacao", frota["temAoVivo"])
 
@@ -401,14 +433,18 @@ def main() -> int:
                 celulas: c.querySelectorAll('.janela-adm').length,
                 videos: c.querySelectorAll('video').length,
                 rotulos: Array.from(c.querySelectorAll('.rotulo-adm')).map((r) => r.textContent.trim()),
+                sem_imagem: Array.from(c.querySelectorAll('.rotulo-adm')).filter(
+                  (r) => /sem imagem/i.test(r.textContent)).length,
                 texto: c.innerText,
                 controlesDeAcao: botoes.filter((b) => /ligar|parar|gravar/i.test(b)).length,
               };
             }""")
             print("       ", json.dumps({k: v for k, v in ao_vivo.items() if k != "texto"}, ensure_ascii=False))
             checar("o admin abre o VIDEO ao vivo da embarcacao (uma celula por camera)",
-                   ao_vivo["celulas"] >= 1 and ao_vivo["videos"] == ao_vivo["celulas"],
-                   f"{ao_vivo['celulas']} celula(s)")
+                   ao_vivo["celulas"] >= 1
+                   and ao_vivo["videos"] + ao_vivo["sem_imagem"] == ao_vivo["celulas"],
+                   f"{ao_vivo['celulas']} celula(s), {ao_vivo['videos']} video(s),"
+                   f" {ao_vivo['sem_imagem']} com o recado honesto")
             checar("o rotulo diz qual camera esta' sendo vista",
                    any("Proa" in r for r in ao_vivo["rotulos"]), str(ao_vivo["rotulos"]))
             checar("a tela do admin e' SOMENTE LEITURA (sem ligar/parar/gravar)",

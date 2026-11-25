@@ -237,8 +237,13 @@ def main() -> int:
                    carta_cam01.locator("input.nome-camera").input_value() == "Proa",
                    f"{carta_cam01.locator('input.nome-camera').input_value()!r}")
             checar("o menu de qualidade ja' vem no valor atual daquela camera",
-                   carta_cam01.locator("select").input_value() == "800",
-                   f"{carta_cam01.locator('select').input_value()!r}")
+                   carta_cam01.locator('select[data-papel="alvo"]').input_value() == "800",
+                   f"{carta_cam01.locator('select[data-papel=\"alvo\"]').input_value()!r}")
+            # O TIPO (plano único, 25/11/2026): o cartão tem os DOIS menus (qualidade e tipo) — o tipo é
+            # o que o observador (Petrobras/IBAMA) vê de todas as empresas.
+            checar("e o cartao tem o menu de TIPO, vindo no valor atual da camera",
+                   carta_cam01.locator('select[data-papel="tipo"]').input_value() == "camera",
+                   f"{carta_cam01.locator('select[data-papel=\"tipo\"]').input_value()!r}")
             checar("e a qualidade aparece por extenso na ficha (sem 'k kbps')",
                    "800 kbps" in corpo and "k kbps" not in corpo)
 
@@ -258,7 +263,7 @@ def main() -> int:
                    bool(rotulo) and rotulo[0] == "Proa de boreste", f"{rotulo}")
 
             print("\n== 5. escolher a qualidade de envio publica o alvo daquela camera ==")
-            carta_cam01.locator("select").select_option("500")
+            carta_cam01.locator('select[data-papel="alvo"]').select_option("500")
             carta_cam01.locator("text=aplicar qualidade").click()
             checar("a tela confirma a qualidade publicada",
                    esperar_texto(pag, "qualidade publicada"), palco(pag)[:250].replace("\n", " | "))
@@ -266,6 +271,20 @@ def main() -> int:
             alvo = con.execute("SELECT valor FROM config_bordo WHERE camera_id='cam-01' AND chave='alvo_kbps'").fetchone()
             con.close()
             checar("o alvo da camera saiu como configuracao (alvo_kbps=500)", bool(alvo) and alvo[0] == "500", f"{alvo}")
+
+            print("\n== 5b. declarar o TIPO da camera no cartao (radar de oleo / FLIR) ==")
+            # Plano único, 25/11/2026 — "quando eu puder renomear, o sistema saberá qual imagem é do radar
+            # de óleo e/ou câmera flir para que petrobrás/ibama possam acessar": o admin DECLARA o tipo no
+            # cartão e, a partir daí, o anúncio do bordo não sobrescreve mais (tipo_definido_pelo_admin=1).
+            carta_cam01.locator('select[data-papel="tipo"]').select_option("radar")
+            carta_cam01.locator("text=aplicar tipo").click()
+            checar("a tela confirma o tipo gravado",
+                   esperar_texto(pag, "tipo gravado"), palco(pag)[:250].replace("\n", " | "))
+            con = sqlite3.connect(str(banco))
+            linha_tipo = con.execute("SELECT tipo,tipo_definido_pelo_admin FROM cameras WHERE id='cam-01'").fetchone()
+            con.close()
+            checar("o tipo ficou gravado no banco (radar) e marcado como decidido pelo admin",
+                   bool(linha_tipo) and linha_tipo[0] == "radar" and linha_tipo[1] == 1, f"{linha_tipo}")
 
             print("\n== 6. ativar / desativar a camera ==")
             carta_cam01.locator("text=desativar").click()

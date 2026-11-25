@@ -65,12 +65,18 @@ def _espera_texto(pagina, seletor: str, limite_s: float = 30.0) -> str:
 
 def _espera_botao(pagina, seletor: str, pedaco: str, limite_s: float = 30.0) -> str:
     """Espera o TEXTO do botao virar o pedaco esperado (o botao passa por 'gravando...' antes de
-    'Parar gravacao' — devolver o primeiro texto nao-nulo leria o meio do caminho)."""
+    'Parar gravacao' — devolver o primeiro texto nao-nulo leria o meio do caminho).
+
+    Desde 24/11/2026 os botoes da GRADE sao ICONES com o nome completo no `title`/`aria-label`; por
+    isso a espera le' o TEXTO junto do NOME ACESSIVEL.
+    """
     fim = time.time() + limite_s
     texto = ""
     while time.time() < fim:
         try:
-            texto = pagina.locator(seletor).inner_text()
+            e = pagina.locator(seletor).first
+            texto = ((e.inner_text() or '') + ' ' + (e.get_attribute("title") or '') + ' '
+                     + (e.get_attribute("aria-label") or ''))
         except Exception:  # noqa: BLE001
             texto = ""
         if pedaco.lower() in texto.lower():
@@ -118,9 +124,11 @@ def rodar(amb, ctx: dict) -> Jornada:
         pagina.fill("#senha", __import__("ambiente").senha_de_demo())
         pagina.click("form#form-entrar button[type=submit]")
         pagina.wait_for_selector("#sistema:not(.oculto)", timeout=25000)
-        pagina.click('.item[data-tela="transmissao"]')
-        pagina.wait_for_selector(".transmissao-linha", timeout=20000)
-        pagina.click(f"#iniciar-{cam}")
+# PLANO UNICO (25/11/2026): a tela "Transmitir" saiu do cliente - o controle de transmissao
+        # (iniciar/parar/contagem/gravar) mora na GRADE, no quadro de cada camera. O cliente ja'
+        # cai nessa tela ao entrar; o botao do quadro e' o `[data-papel="iniciar"]`.
+        pagina.wait_for_selector(f'.janela[data-cam="{cam}"] [data-papel="iniciar"]', timeout=20000)
+        pagina.click(f'.janela[data-cam="{cam}"] [data-papel="iniciar"]')
         no_ar = _espera_estado(pagina, cam, "no ar", 60.0)
         tem_fluxo = amb.fluxo_no_ar(cam, segundos=60)
         j.checar("a transmissao esta' no ar (com fluxo de verdade do bordo) para o cliente gravar",
@@ -130,7 +138,9 @@ def rodar(amb, ctx: dict) -> Jornada:
             return j
 
         # ------------------------------------------------------- 2) GRAVA (e a tela diz que grava)
-        botao = f"#gravar-{cam}"
+        # PLANO UNICO (25/11/2026): a tela "Transmitir" saiu — o controle (iniciar/parar/gravar) mora no
+        # quadro de cada camera, dentro da janela da GRADE.
+        botao = f'.janela[data-cam="{cam}"] [data-papel="gravar"]'
         j.checar("a tela do cliente oferece GRAVAR aquela transmissao",
                  pagina.locator(botao).count() > 0, botao)
         if pagina.locator(botao).count() == 0:
