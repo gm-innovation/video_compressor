@@ -12,7 +12,7 @@ Print que acompanha o 2º pedido: `image_59e027.png` (2026-11-25 08:33:28) — 4
 "parada"** no card; as duas de cima mostram o último quadro, as duas de baixo só o aviso
 ("⚠ O envio caiu quando o serviço foi reiniciado" / "⚠ nenhum envio registrado para esta câmera").
 
-Status: **aguardando "aprovado"** (nada implementado ainda).
+Status: **"aprovado" em 25/11/2026 — implementado, provado e publicado (ver 5. RESULTADO, no fim).**
 
 ---
 
@@ -113,3 +113,54 @@ dentro). **Sem medir, isto vira opinião** — é a Fase 1.
 3. Com qualquer câmera parada, o tamanho das **outras** e a posição das imagens **não** mudam (medido
    antes/depois).
 4. Suíte verde, release publicada, lado terra com os arquivos novos provados pela porta pública.
+
+---
+
+## 5. RESULTADO (25/11/2026) — implementado, medido e provado
+
+### 5.1 Medição da Fase 1 — o print do dono (`image_59e027.png`, 775x735)
+
+Medidor: `%LOCALAPPDATA%\Temp\medir-print.py` (acha as bordas azuis das células). As **quatro** células
+com "parada" mediram:
+
+| célula | caixa | conteúdo claro |
+|---|---|---|
+| [19:366 x 20:367] | **347x347 = 1,00:1** | 343x343 |
+| [368:715 x 20:367] | **347x347 = 1,00:1** | 343x343 |
+| [19:366 x 369:716] | **347x347 = 1,00:1** | 343x343 |
+| [368:715 x 369:716] | **347x347 = 1,00:1** | 343x343 |
+
+Ou seja: com as quatro paradas, a grade usou **1,00:1** (um quadrado) — não os 16:9 do fluxo. É o critério
+"a MENOR proporção" pegado no flagrante: uma câmera parada publica um quadro fora do padrão e ele manda em
+todas. Foi o que confirmou a Fase 4.
+
+### 5.2 Medição depois da correção — no app de verdade (Chromium, a grade medida)
+
+Medido dentro do teste novo (`tests/e2e-tela-cheia-e-pausa.py`, seção 4b), na grade, com um fluxo 16:9:
+
+| estado da proporção | célula | imagem pintada | área de imagem |
+|---|---|---|---|
+| **1:1** (o que a câmera parada forçava pelo critério antigo) | 582x582 | 582x327 | **190.532 px²** |
+| **16:9** (a do fluxo — o que a mediana sustenta agora) | 1028x578 | 1028x578 | **594.441 px²** |
+
+**Ganho de 3,12x na área da imagem (+212%)** — é este o tamanho que o dono via "diminuir".
+
+### 5.3 O que mudou (arquivo:linha)
+
+| # | Arquivo | Mudança |
+|---|---|---|
+| 1 | `ground/api.py` | `SEGUNDOS_DE_CARENCIA = 8`, `SAIDAS_PENDENTES`, `pendurar_saida()`, `cancelar_saida()`, `saidas_vencidas()`, `sair_da_tela()` (extraída); handlers `/api/transmissao/<id>/encerrar` e `/api/transmissao/sair` com `pendente`; batimento cancela o pedido pendente; o vigia executa as saídas vencidas |
+| 2 | `app/app.js` | `alternarTelaCheia(alvo)` (a tela cheia sai do `<video>` e vai para a janela, nas 3 chamadas); o destaque monta o MESMO `montarControle()` da grade; o tick de 1 s alcança o destaque; `proporcaoDeclarada(c)` + o piso `ALTURA_MINIMA_DO_VIDEO = 90`; `proporcaoDaGrade()` = **mediana** (era o mínimo); a proporção declarada entra antes da imagem; `avisarQueSaio(pendente)`, `pagehide → pendente:true`, `baterPonto()` no arranque |
+| 3 | `fronts/vms.css` | `.janela:fullscreen` (a janela ocupa a tela, `aspect-ratio` sai de cena) + `.janela:fullscreen .card-cam` no rodapé + o aviso acima do card |
+| 4 | `tools/regressao-0130.py` | as duas provas novas na suíte (31 → **33 provas**) |
+
+### 5.4 Provas (executadas em 25/11/2026)
+
+- `tests/e2e-tela-cheia-e-pausa.py` — **novo**: tela cheia entra na JANELA (`document.fullscreenElement` é
+  a `.janela`, com o card e o controle dentro); o destaque carrega o controle da grade com estado pintado,
+  botão de parar visível e **contagem andando** (`· 14:58 → · 14:55`); a mediana (3x 16:9 + 1 retrato =
+  16:9, e a MENOR daria 0,56:1); um quadro 1x1 não sobrescreve a proporção conhecida; a medição da 5.2.
+- `tests/e2e-recarga-nao-derruba.py` — **novo**: `pendente` não fecha a sessão e responde a carência; o
+  batimento cancela; sem ninguém voltar o vigia fecha sozinho; a saída PEDIDA fecha na hora; e num Chromium
+  de verdade o **F5 com a transmissão no ar mantém a sessão aberta** e o botão continua "Parar transmissão".
+- `tools/regressao-0130.py` → **TUDO VERDE (33 provas)**.

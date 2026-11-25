@@ -74,6 +74,16 @@ select.pil{padding:7px 9px}
 .janela{position:relative;display:block;background:#000;border:1px solid #16202f;
   border-radius:5px;overflow:hidden;min-height:0;min-width:0;aspect-ratio:var(--razao,1.7777778)}
 .janela.selecionada{outline:2px solid var(--azul);outline-offset:1px}
+/* ---------- TELA CHEIA NA JANELA (dono, 25/11/2026) ----------
+   A tela cheia e' pedida na JANELA, nunca no `<video>`: na tela do video o navegador renderiza SO' ele, e
+   o card (com a contagem e o "Continuar conectado") e o aviso do ultimo minuto — que sao IRMAOS do
+   video — desapareciam. Era por isso que a sessao morria sem o cliente ter onde clicar. Aqui a janela
+   ocupa a tela inteira (`aspect-ratio` sai de cena: largura e altura estao as duas definidas) e o card
+   fica no rodape, sobre a imagem. */
+.janela:fullscreen{aspect-ratio:auto;width:100%;height:100%;border:0;border-radius:0;background:#000}
+.janela:fullscreen .card-cam{height:44px;padding:4px 12px}
+.janela:fullscreen .img-cam .st-aviso{left:16px;right:16px;bottom:66px}
+.destaque:fullscreen{background:#000}
 /* a area DA IMAGEM e' a celula inteira: o card nao come mais altura (ele flutua SOBRE a imagem) */
 .img-cam{position:absolute;inset:0;overflow:hidden;background:#000}
 /* `contain`: a imagem entra INTEIRA (a caixa ja esta na proporcao dela, entao nao sobra faixa) */

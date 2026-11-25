@@ -407,6 +407,53 @@ TEMPO_MAXIMO_PADRAO = 900
 # batimento ("estou aqui") passou a ser mandado SO' pela tela do video — antes ele corria em qualquer tela
 # e a sessao nunca expirava. Cobre tambem tela fechada / computador desligado.
 SEGUNDOS_SEM_BATIMENTO = 60
+# A RECARGA NAO E' SAIDA (dono, 25/11/2026: "quando recarrego a pagina, a transmissao e' interrompida").
+# O `pagehide` da tela dispara IGUAL numa recarga (F5 / Ctrl+R) e ao fechar a aba — e o pedido de saida
+# encerra a transmissao e apaga o que o cliente gravou. O pedido que vem marcado `pendente` (e' o que a
+# tela manda no `pagehide`) fica PENDENTE por esta carencia: a pagina RECARREGADA bate ponto em seguida e
+# CANCELA; quem nao volta, sai. A saida PEDIDA pelo cliente (botao "parar transmissao" / "Sair") nao passa
+# por aqui — vale na hora, como sempre valeu.
+SEGUNDOS_DE_CARENCIA = 8
+SAIDAS_PENDENTES: dict[str, dict] = {}   # email -> {"prazo", "tipo", "ids", "embarcacao", "ip"}
+
+
+def pendurar_saida(email: str, tipo: str, ids: list | None = None, embarcacao_id: str = "",
+                   ip: str = "") -> None:
+    """Guarda o pedido de saida da tela pela carencia: a recarga volta e cancela."""
+    SAIDAS_PENDENTES[email] = {"prazo": time.monotonic() + SEGUNDOS_DE_CARENCIA, "tipo": tipo,
+                               "ids": list(ids or []), "embarcacao": embarcacao_id or "", "ip": ip}
+
+
+def cancelar_saida(email: str) -> bool:
+    """A tela voltou (batimento/continuar): o pedido de saida pendente nao vale mais."""
+    return SAIDAS_PENDENTES.pop(email, None) is not None
+
+
+def saidas_vencidas(agora: float | None = None) -> list[dict]:
+    """Os pedidos de saida cuja carencia passou sem a tela voltar."""
+    t = agora if agora is not None else time.monotonic()
+    return [dict(v, email=e) for e, v in list(SAIDAS_PENDENTES.items()) if v["prazo"] <= t]
+
+
+def _executar_saida(item: dict) -> None:
+    """Cumpriu a carencia: a tela NAO voltou — fecha as sessoes e apaga a gravacao (a regra do dono)."""
+    email = item["email"]
+    if item["tipo"] == "sair":
+        sair_da_tela(email, item.get("embarcacao") or "", item.get("ip") or "")
+        return
+    for tid in item["ids"]:
+        with conexao() as c:
+            linha = c.execute("SELECT * FROM transmissoes WHERE id=?", (tid,)).fetchone()
+        if not linha:
+            continue
+        t = dict(linha)
+        if fechar_transmissao(tid, "encerrada", "a tela do cliente foi fechada"):
+            parar_se_ninguem_vendo(t["embarcacao_id"], t["camera_id"], t["fluxo_id"],
+                                   "nao havia mais ninguem vendo")
+            auditar({"id": None, "email": email}, "transmissao_encerrada",
+                    f"{t['camera_id']} (a tela nao voltou depois da recarga)", item.get("ip") or "")
+
+
 SEGUNDOS_SEM_RESPOSTA = 30         # a maquina de captura nao respondeu a ordem (nunca foi entregue)
 # BORDO MUDO (Fase 6, P0 — dono, 24/11/2026: "acabei de desinstalar o app de captura ... e a transmissao
 # continua, como continua transmitindo se eu desinstalei o app?"). O batimento de 60 s acima e' do
@@ -1376,6 +1423,16 @@ def _vigiar_uma_vez(agora: dt.datetime | None = None) -> dict:
         if            fechar_transmissao(t["id"], "sem_sinal",
                                "a maquina de captura nao concluiu o pedido (sem resposta)"):
             feitas["sem_resposta"].append(t["id"])
+    # A RECARGA NAO E' SAIDA: o pedido de saida que a tela mandou no `pagehide` so' vale se a tela NAO
+    # voltar dentro da carencia — a pagina RECARREGADA bate ponto e cancela (`cancelar_saida`). Quem nao
+    # volta, sai: as sessoes caem e o que ele gravou e' apagado (a regra do dono).
+    for item in saidas_vencidas():
+        SAIDAS_PENDENTES.pop(item["email"], None)
+        try:
+            _executar_saida(item)
+            feitas.setdefault("saidas_da_tela", []).append(item["email"])
+        except Exception as e:
+            print("[api] aviso: saida da tela pendente:", type(e).__name__, e, flush=True)
     # gravacao pronta que ninguem baixou (a tela morreu sem avisar): o arquivo sai sozinho no prazo
     try:
         vencidas = apagar_gravacoes_vencidas()
@@ -1485,6 +1542,44 @@ def apagar_gravacoes_do_cliente(u, motivo: str, ip: str = "", embarcacao_id: str
         auditar(u, "gravacoes_apagadas",
                 f"{g['camera_id']} de {u['email']} ({r.get('bytes', 0)} B) — {motivo}", ip)
     return feito
+
+
+def sair_da_tela(email: str, embarcacao_id: str = "", ip: str = "", id_usuario=None) -> dict:
+    """O CLIENTE SAIU DA TELA: as sessoes dele caem e o que ele gravou e' APAGADO. O historico e a
+    auditoria ficam — sempre se sabe quais acoes foram tomadas e por quem (o dono, 18/11/2026).
+
+    Dois caminhos chegam aqui: o pedido da PROPRIA tela (na hora) e o fim da carencia do `pagehide`
+    (a recarga nao voltou — ver `pendurar_saida`). E' o mesmo trabalho nos dois.
+    """
+    quem = {"id": id_usuario, "email": email}
+    with conexao() as c:
+        abertas = [dict(x) for x in c.execute(
+            "SELECT * FROM transmissoes WHERE usuario_email=? AND estado IN ('pedida','no_ar')",
+            (email,)).fetchall()]
+    fechadas = 0
+    for t in abertas:
+        if t.get("gravando"):
+            # gravando, a sessao NAO morre no meio (o dono fixou: gravacao nao e' picada); a tela do
+            # cliente esta' saindo, entao a gravacao PARA e o arquivo fica pronto para ser apagado
+            # junto (o aviso nao teria onde aparecer: a tela foi embora).
+            try:
+                r = gravacao_modulo.parar(t["id"])
+                registrar_gravacao_pronta(t["id"], r)
+                with conexao() as c:
+                    c.execute("UPDATE transmissoes SET gravando=0 WHERE id=?", (t["id"],))
+                auditar(quem, "gravacao_parada",
+                        f"{t['camera_id']} ({r.get('bytes', 0)} B) — o cliente saiu da tela", ip)
+            except Exception:
+                pass
+        if fechar_transmissao(t["id"], "encerrada", "a tela do cliente foi fechada"):
+            fechadas += 1
+            parar_se_ninguem_vendo(t["embarcacao_id"], t["camera_id"], t["fluxo_id"],
+                                   "o cliente saiu da tela")
+    feito = apagar_gravacoes_do_cliente(quem, "o cliente saiu da tela", ip, embarcacao_id)
+    auditar(quem, "cliente_saiu_da_tela",
+            f"{fechadas} sessao(oes) fechada(s), {len(feito['apagadas'])} gravacao(oes) "
+            f"apagada(s), {feito['bytes']} B", ip)
+    return {"sessoes_fechadas": fechadas, **feito}
 
 
 def gravacoes_recentes(limite: int = 50) -> list:
@@ -4392,6 +4487,8 @@ class Handler(SimpleHTTPRequestHandler):
             t, erro, codigo = self._transmissao_da_tela(tid, u)
             if codigo:
                 return self._json(codigo, {"erro": erro})
+            # a tela ESTA' VIVA: se havia um pedido de saida pendente (a pagina recarregou), cai.
+            cancelar_saida(u["email"])
             with conexao() as c:
                 c.execute("UPDATE transmissoes SET batimento_em=? WHERE id=?", (em_iso(), tid))
             return self._json(200, {"ok": True, "estado": t["estado"], "agora": em_iso()},
@@ -4408,6 +4505,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(codigo, {"erro": erro})
             if t["estado"] not in ("pedida", "no_ar"):
                 return self._json(409, {"erro": "esta transmissao ja' terminou — use Reconectar"})
+            cancelar_saida(u["email"])   # o cliente esta' na tela e quer seguir: pedido pendente cai
             seg = int(t["segundos_max"] or 0) or TEMPO_MAXIMO_PADRAO
             agora = dt.datetime.now(dt.timezone.utc)
             termina = (agora + dt.timedelta(seconds=seg)).isoformat(timespec="seconds")
@@ -4428,6 +4526,13 @@ class Handler(SimpleHTTPRequestHandler):
             t, erro, codigo = self._transmissao_da_tela(tid, u)
             if codigo:
                 return self._json(codigo, {"erro": erro})
+            if self._corpo().get("pendente"):
+                # veio do `pagehide` (pode ser RECARGA): fica pendente pela carencia e a pagina
+                # recarregada cancela no primeiro batimento (`cancelar_saida`).
+                emb = t["embarcacao_id"] if t else ""
+                pendurar_saida(u["email"], "encerrar", [tid], emb, self.client_address[0])
+                return self._json(200, {"ok": True, "pendente": True, "carencia_s": SEGUNDOS_DE_CARENCIA},
+                                  {"Cache-Control": "no-store"})
             fechada = fechar_transmissao(tid, "encerrada", "a transmissao foi encerrada na tela do cliente")
             if fechada:
                 parar_se_ninguem_vendo(t["embarcacao_id"], t["camera_id"], t["fluxo_id"],
@@ -4524,35 +4629,13 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(401, {"erro": "entre no sistema"})
             d = self._corpo()
             emb = str(d.get("embarcacao_id") or "").strip()
-            with conexao() as c:
-                abertas = [dict(x) for x in c.execute(
-                    """SELECT * FROM transmissoes WHERE usuario_email=? AND estado IN ('pedida','no_ar')""",
-                    (u["email"],)).fetchall()]
-            fechadas = 0
-            for t in abertas:
-                if t.get("gravando"):
-                    # gravando, a sessao NAO morre no meio (o dono fixou: gravacao nao e' picada); a
-                    # tela do cliente esta' saindo, entao a gravacao PARA e o arquivo fica pronto para
-                    # ser apagado junto (o aviso nao teria onde aparecer: a tela foi embora).
-                    try:
-                        r = gravacao_modulo.parar(t["id"])
-                        registrar_gravacao_pronta(t["id"], r)
-                        with conexao() as c:
-                            c.execute("UPDATE transmissoes SET gravando=0 WHERE id=?", (t["id"],))
-                        auditar(u, "gravacao_parada",
-                                f"{t['camera_id']} ({r.get('bytes', 0)} B) — o cliente saiu da tela",
-                                self.client_address[0])
-                    except Exception:
-                        pass
-                if fechar_transmissao(t["id"], "encerrada", "a tela do cliente foi fechada"):
-                    fechadas += 1
-                    parar_se_ninguem_vendo(t["embarcacao_id"], t["camera_id"], t["fluxo_id"],
-                                           "o cliente saiu da tela")
-            feito = apagar_gravacoes_do_cliente(u, "o cliente saiu da tela", self.client_address[0], emb)
-            auditar(u, "cliente_saiu_da_tela",
-                    f"{fechadas} sessao(oes) fechada(s), {len(feito['apagadas'])} gravacao(oes) "
-                    f"apagada(s), {feito['bytes']} B", self.client_address[0])
-            return self._json(200, {"ok": True, "sessoes_fechadas": fechadas, **feito},
+            if d.get("pendente"):
+                # veio do `pagehide`: pode ser RECARGA — fica pendente e a pagina que voltar cancela.
+                pendurar_saida(u["email"], "sair", [], emb, self.client_address[0])
+                return self._json(200, {"ok": True, "pendente": True, "carencia_s": SEGUNDOS_DE_CARENCIA},
+                                  {"Cache-Control": "no-store"})
+            return self._json(200, {"ok": True, **sair_da_tela(u["email"], emb, self.client_address[0],
+                                                              u["id"])},
                               {"Cache-Control": "no-store"})
         if rota == "/api/transmissao/teto":
             # TETO DO PRODUTO (plano, Fase 3 P2): so' o ADMINISTRADOR define o maximo que qualquer

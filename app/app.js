@@ -60,6 +60,10 @@ async function abrir() {
   }
   if (S.embarcacoes.length) S.embarcacaoId = S.embarcacoes[0].id;
   await atualizar();
+  /* A RECARGA NAO E' SAIDA (dono, 25/11/2026): o `pagehide` da pagina que sai avisou o lado terra e o
+     pedido ficou PENDENTE por alguns segundos — esta pagina, que acabou de voltar, cancela no primeiro
+     "estou aqui". Sem isto, recarregar (F5) interrompia a transmissao. */
+  baterPonto();
   if (!S.timer) S.timer = setInterval(atualizar, 5000);
   // RELOGIO DE 1 s DA CONTAGEM (dono, 24/11/2026): o contador da transmissao anda a cada segundo na
   // propria tela, sem depender do ciclo de 5 s do servidor — o cliente ve o tempo correndo de fato.
@@ -184,6 +188,21 @@ function camerasDaPagina() {
    entra inteira, sem corte e sem faixa preta; a sobra da tela vira margem do painel. */
 const LACO_DA_GRADE = 5;
 
+/* A PROPORCAO VEM DO FLUXO DECLARADO (dono, 25/11/2026: "quando as transmissões estão pausadas, a tela
+   diminui"). O `<video>` de uma camera PARADA entrega um tamanho que nao e' o do fluxo (zero, um quadro
+   de "sem sinal" quadrado). A grade usa UMA proporcao para todas as celulas — entao a camera parada
+   encolhia a grade inteira, e as imagens junto. A resolucao do encoder (que o lado terra ja' conhece)
+   e' a verdade: ela entra primeiro e o metadado do video so' CORRIGE se for um tamanho plausivel. */
+const ALTURA_MINIMA_DO_VIDEO = 90;
+
+function proporcaoDeclarada(c) {
+  const m = /^(\d{2,5})\s*[xX*]\s*(\d{2,5})$/.exec(String((c.encoder && c.encoder.resolucao) || '').trim());
+  if (!m) return 0;
+  const l = Number(m[1]), a = Number(m[2]);
+  const r = l / a;
+  return (l > 0 && a > 0 && r >= 0.2 && r <= 5) ? r : 0;
+}
+
 function proporcaoDaImagem(img, v, c) {
   /* A proporcao REAL da camera e' guardada para ESCOLHER a grade (quantas colunas dao a MAIOR imagem)
      e para o `<video>` se ajustar sozinho com `object-fit:contain`. A area da imagem NAO e' mais
@@ -192,6 +211,10 @@ function proporcaoDaImagem(img, v, c) {
      a imagem entra inteira, do maior tamanho que cabe. */
   const aplicar = () => {
     if (!v.videoWidth || !v.videoHeight) return;
+    /* camera PARADA/caindo entrega um quadro de "sem sinal" (1x1, 16x16, 320x180 de barras): tamanho que
+       NAO e' o do fluxo. Abaixo do minimo, vale a proporcao DECLARADA (a resolucao do encoder) — e a
+       grade nao encolhe por causa de uma camera fora do ar. */
+    if (v.videoHeight < ALTURA_MINIMA_DO_VIDEO) return;
     const r = v.videoWidth / v.videoHeight;
     const mudou = S.proporcao[c.id] !== r;
     S.proporcao[c.id] = r;
@@ -203,12 +226,19 @@ function proporcaoDaImagem(img, v, c) {
   aplicar();
 }
 
-/* A proporção da grade é a MENOR das conhecidas: assim nenhuma linha fica mais alta que o cálculo. */
+/* A proporção da grade é a MEDIANA das conhecidas (era a MENOR até a 0.17.0). Com uma câmera de forma
+   diferente — uma de retrato, ou o quadro quadrado de uma câmera parada —, a MENOR encolhia TODAS as
+   células e, junto, a imagem de todas as outras (dono, 25/11/2026: "quando as transmissões estão
+   pausadas, a tela diminui"). A mediana deixa a maioria mandar; quem está fora da forma entra na célula
+   com sobra (barras), sem encolher ninguém. */
 function proporcaoDaGrade(grade) {
   const vistas = Array.from(grade.querySelectorAll('.janela'))
     .map((j) => S.proporcao[j.dataset.cam])
-    .filter((r) => r > 0);
-  return vistas.length ? Math.min.apply(null, vistas) : 16 / 9;
+    .filter((r) => r > 0)
+    .sort((a, b) => a - b);
+  if (!vistas.length) return 16 / 9;
+  const meio = Math.floor(vistas.length / 2);
+  return vistas.length % 2 ? vistas[meio] : (vistas[meio - 1] + vistas[meio]) / 2;
 }
 
 /* A CELULA TEM A FORMA DO VIDEO E A GRADE CENTRALIZA O PAINEL (dono, 24/11/2026: "deve haver outra
@@ -318,10 +348,14 @@ function desenharVisualizar() {
     jan.className = 'janela' + (S.selecionadas.has(c.id) ? ' selecionada' : '');
     jan.dataset.cam = c.id;
     jan.dataset.noAr = c.no_ar ? '1' : '0';
+    /* a proporcao DECLARADA entra antes de qualquer imagem: a grade tem tamanho ESTAVEL mesmo com a
+       camera parada (o metadado do video so' corrige, e so' se for um tamanho plausivel). */
+    if (!S.proporcao[c.id]) { const declarada = proporcaoDeclarada(c); if (declarada) S.proporcao[c.id] = declarada; }
     const v = document.createElement('video');
     v.id = 'v-' + c.id; v.muted = true; v.autoplay = true; v.playsInline = true;
     v.onclick = () => selecionar(c.id);
-    v.ondblclick = () => (v.requestFullscreen ? v.requestFullscreen() : null);
+    // o duplo clique abre a JANELA em tela cheia (o card e o aviso vão junto — ver alternarTelaCheia)
+    v.ondblclick = (ev) => { ev.stopPropagation(); alternarTelaCheia(jan); };
     const marca = document.createElement('span'); marca.className = 'marca-dagua'; marca.dataset.relogio = '1';
     const rot = document.createElement('span'); rot.className = 'rotulo-cam';
     const ponto = document.createElement('span'); ponto.className = 'ponto' + (c.no_ar ? '' : ' ruim');
@@ -434,6 +468,15 @@ function janelaDa(cameraId) {
    seleção de qualidade por câmera, que é da operação. */
 function cameraPorId(id) { return S.cameras.find((c) => c.id === id) || null; }
 
+/* TELA CHEIA NA JANELA, NUNCA NO `<video>` (dono, 25/11/2026). Na tela do próprio `<video>` o navegador
+   renderiza SÓ ele: o card (com a contagem e o botão "Continuar conectado") e o aviso do último minuto
+   são IRMÃOS dele e desaparecem — era por isso que a sessão morria sem o cliente ter onde clicar. Na
+   janela, tudo entra junto; e o `Esc` continua saindo (é o navegador). */
+function alternarTelaCheia(alvo) {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else if (alvo && alvo.requestFullscreen) alvo.requestFullscreen();
+}
+
 function abrirDestaque(ids) {
   const lista = (ids || []).map(cameraPorId).filter(Boolean).slice(0, 4);
   if (!lista.length) { alert('selecione de 1 a 4 câmeras para destacar'); return; }
@@ -447,10 +490,7 @@ function abrirDestaque(ids) {
     : lista.length + ' câmeras em destaque: ' + lista.map((c) => c.rotulo).join(' · ');
   topo.appendChild(titulo);
   const bCheia = document.createElement('button'); bCheia.className = 'pil'; bCheia.textContent = 'Tela cheia do destaque';
-  bCheia.onclick = () => {
-    if (document.fullscreenElement) document.exitFullscreen();
-    else if (caixa.requestFullscreen) caixa.requestFullscreen();
-  };
+  bCheia.onclick = () => alternarTelaCheia(caixa);
   const bVoltar = document.createElement('button'); bVoltar.className = 'pil'; bVoltar.textContent = 'Voltar à grade';
   bVoltar.onclick = () => fecharDestaque();
   topo.appendChild(bCheia); topo.appendChild(bVoltar);
@@ -462,17 +502,26 @@ function abrirDestaque(ids) {
   caixa.appendChild(grade);
   for (const c of lista) {
     const jan = document.createElement('div');
-    jan.className = 'janela'; jan.dataset.camDestaque = c.id;
+    jan.className = 'janela'; jan.dataset.camDestaque = c.id; jan.dataset.cam = c.id;
+    if (!S.proporcao[c.id]) { const declarada = proporcaoDeclarada(c); if (declarada) S.proporcao[c.id] = declarada; }
     const v = document.createElement('video');
     v.id = 'vdestaque-' + c.id; v.muted = true; v.autoplay = true; v.playsInline = true;
     const img = document.createElement('div'); img.className = 'img-cam'; img.appendChild(v);
     proporcaoDaImagem(img, v, c);   // a área da imagem recebe a proporção REAL da câmera
     const card = document.createElement('div'); card.className = 'card-cam';
-    const rot = document.createElement('div'); rot.className = 'rotulo-cam';
+    const rot = document.createElement('span'); rot.className = 'rotulo-cam';
     rot.textContent = c.rotulo;
     card.appendChild(rot);
+    /* O DESTAQUE TEM O MESMO CONTROLE DA GRADE (dono, 25/11/2026: "quando o vídeo está em tela cheia, a
+       contagem regressiva e o botão para permanecer conectado não aparecem e quando o tempo se esgota, a
+       transmissão é interrompida"). A contagem, o aviso do último minuto e os botões vêm do MESMO
+       `montarControle` da grade — nada de uma segunda versão da regra. */
+    const ctrlS = document.createElement('span');
+    ctrlS.className = 'controle-transmissao'; ctrlS.dataset.st = c.id;
+    card.appendChild(ctrlS);
     jan.appendChild(img); jan.appendChild(card);
     grade.appendChild(jan);
+    montarControle(c, ctrlS, jan, img);
     window.Video.ligar('destaque-' + c.id, c.id, v);
   }
   document.body.appendChild(caixa);
@@ -1069,9 +1118,16 @@ function atualizarControle(c, el) {
 function tickDaContagem() {
   if (S.tela !== 'visualizar') return;
   const palco = $('palco');
+  /* o DESTAQUE (e a tela cheia) tem o MESMO controle: sem ele aqui, a contagem so' andava na grade e
+     no destaque ficava congelada (dono, 25/11/2026). */
+  const destaque = document.getElementById('destaque');
   for (const c of (S.cameras || [])) {
     const el = palco.querySelector(`[data-st="${c.id}"]`);
     if (el) atualizarControle(c, el);
+    if (destaque) {
+      const el2 = destaque.querySelector(`[data-st="${c.id}"]`);
+      if (el2) atualizarControle(c, el2);
+    }
   }
 }
 
@@ -1460,10 +1516,7 @@ $('btn-destaque').addEventListener('click', () => {
   }
   abrirDestaque(alvos.slice(0, 4));
 });
-$('btn-cheia').addEventListener('click', () => {
-  const alvo = $('palco');
-  if (document.fullscreenElement) document.exitFullscreen(); else if (alvo.requestFullscreen) alvo.requestFullscreen();
-});
+$('btn-cheia').addEventListener('click', () => alternarTelaCheia($('palco')));
 /* RECOLHER/ABRIR O MENU (dono, 24/11/2026: "pode inclusive colocar um botao para colapsar o sidemenu e
    aumentar ainda mais o espaco util"). O estado fica guardado no navegador, a barra fica `inert`
    (nada de tabular por dentro de uma barra de 0 px) e a grade se recalcula sozinha. */
@@ -1496,9 +1549,9 @@ document.addEventListener('keydown', (ev) => {
 });
 /* O cliente saiu da tela (fechou, desligou o computador): avisa o lado terra na hora — e' o que faz o
    arquivo da gravacao ser apagado. Sem isto, a varredura do lado terra apaga sozinha depois do prazo. */
-function avisarQueSaio() {
+function avisarQueSaio(pendente) {
   try {
-    const corpo = JSON.stringify({ embarcacao_id: S.embarcacaoId || '' });
+    const corpo = JSON.stringify({ embarcacao_id: S.embarcacaoId || '', pendente: !!pendente });
     const bolo = new Blob([corpo], { type: 'application/json' });
     if (!(navigator.sendBeacon && navigator.sendBeacon('/api/transmissao/sair', bolo))) {
       fetch('/api/transmissao/sair', { method: 'POST', body: corpo, keepalive: true });
@@ -1515,7 +1568,9 @@ window.addEventListener('beforeunload', (ev) => {
   }
 });
 
-window.addEventListener('pagehide', avisarQueSaio);
+/* O `pagehide` dispara IGUAL numa recarga (F5) e ao fechar a aba: o pedido vai marcado `pendente` e o
+   lado terra o segura por alguns segundos — a pagina que RECARREGAR cancela no primeiro batimento. */
+window.addEventListener('pagehide', () => avisarQueSaio(true));
 /* a janela mudou de tamanho: a grade é recalculada (a imagem da câmera continua inteira, sem corte) */
 window.addEventListener('resize', () => ajustarGrade());
 /* O palco muda de tamanho SEM a janela mudar: barra lateral recolhida, tela cheia/Destaque, zoom e o
@@ -1568,7 +1623,13 @@ setInterval(relogios, 1000); setInterval(() => { if (S.tela === 'visualizar') pi
 setInterval(baterPonto, 10000);
 /* fechou a aba/navegador: avisa na hora; desligar o computador fica por conta do batimento */
 window.addEventListener('pagehide', () => {
-  for (const id of (S.minhas || [])) navigator.sendBeacon('/api/transmissao/' + id + '/encerrar');
+  for (const id of (S.minhas || [])) {
+    const bolo = new Blob([JSON.stringify({ pendente: true })], { type: 'application/json' });
+    const url = '/api/transmissao/' + id + '/encerrar';
+    if (!(navigator.sendBeacon && navigator.sendBeacon(url, bolo))) {
+      fetch(url, { method: 'POST', body: '{"pendente":true}', keepalive: true, headers: { 'Content-Type': 'application/json' } });
+    }
+  }
 });
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') baterPonto(); });
 abrir();

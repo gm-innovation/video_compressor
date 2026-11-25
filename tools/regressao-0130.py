@@ -20,6 +20,12 @@ RAIZ = pathlib.Path(__file__).resolve().parent.parent
 # `ambiente.json` que esta' no repositorio, e passaria a falar com a producao em vez de responder em casa.
 os.environ["LECSOR_SEM_AMBIENTE"] = "1"
 PROVAS = (
+    # RODADA 0.17.0 — a TELA CHEIA leva a contagem e o botao junto (era pedida no <video>, e o card e o
+    # aviso sao IRMAOS dele: a sessao morria sem o cliente ter onde clicar); RECARREGAR a pagina nao
+    # derruba mais a transmissao (`pendente` + carencia de 8 s, cancelada pelo batimento de volta); e a
+    # proporcao da grade passa a ser a MEDIANA (a MENOR encolhia todas as celulas com uma camera parada)
+    "tests/e2e-tela-cheia-e-pausa.py",
+    "tests/e2e-recarga-nao-derruba.py",
     # RODADA 0.15.0 — o card do controle vira UMA linha de 34 px e a imagem para de encolher (inclusive ao
     # reconectar), a grade passa a aproveitar o espaco e a remedir sozinha (ResizeObserver), o BORDO MUDO
     # (> 180 s sem sinal) encerra a sessao no lado terra, e o /bordo ganha o DASHBOARD DE VERDADE (as 4
