@@ -293,11 +293,14 @@ function desenhar(forcado) {
   if (timerEnvios) { clearInterval(timerEnvios); timerEnvios = null; }
   if (timerTempo) { clearInterval(timerTempo); timerTempo = null; }
   if (timerProducao) { clearInterval(timerProducao); timerProducao = null; }
-  const despacho = { empresas: telaEmpresas, painel: telaPainel, fases: telaFases, medicoes: telaMedicoes, decisoes: telaDecisoes,
-    evidencias: telaEvidencias, documentos: telaDocumentos, clientes: telaClientes, embarcacoes: telaEmbarcacoes,
-    cameras: telaCameras, usuarios: telaUsuarios, tempo: telaTempoReal, producao: telaProducao, analises: telaAnalises, marcas: telaMarcas, envios: telaEnvios,
-    auditoria: telaAuditoria, saude: telaSaude, config_bordo: telaConfigDoBordo,
-    saude_bordo: telaSaudeDoBordo, licencas: telaLicencas, frota: telaFrota };
+  /* Menu e despacho são a MESMA lista (dono, 25/11/2026: nada de tela sem função): as telas antigas
+     (clientes/embarcacoes/cameras/producao/tempo/analises/marcas) saíram — o que elas faziam vive
+     dentro de "Empresas e configuração" e do "Monitoramento (frota)". */
+  const despacho = { empresas: telaEmpresas, frota: telaFrota,
+    painel: telaPainel, fases: telaFases, medicoes: telaMedicoes, decisoes: telaDecisoes,
+    evidencias: telaEvidencias, documentos: telaDocumentos,
+    licencas: telaLicencas, usuarios: telaUsuarios, auditoria: telaAuditoria, envios: telaEnvios,
+    config_bordo: telaConfigDoBordo, saude_bordo: telaSaudeDoBordo, saude: telaSaude };
   (despacho[A.tela] || telaPainel)(tela);
 }
 

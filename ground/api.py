@@ -465,20 +465,46 @@ def pode_ver_camera(usuario, camera: sqlite3.Row | None) -> bool:
     return pode_ver_embarcacao(usuario, camera["embarcacao_id"])
 
 
-def eh_camera_de_radar(camera) -> bool:
-    """O radar de oleo desta embarcacao e' uma linha de `cameras` — o que o separa das outras e' o NOME
-    que o bordo declara (id, rotulo, fluxo ou alvo dizem "radar"). E' o unico criterio usado para o
-    `observador` ver radar e nao ver camera nenhuma (plano de 19/11/2026, Fase 4)."""
+def tipo_da_camera(camera) -> str:
+    """O TIPO da camera: `camera` | `radar` | `flir`, gravado no cadastro do bordo (coluna `tipo`).
+    Para uma linha antiga, sem a coluna, cai no NOME — o criterio que o observador usava antes
+    (id/rotulo/fluxo_id/local/alvo dizendo "radar" ou "flir")."""
     if camera is None:
-        return False
+        return ""
+    try:
+        tipo = str(camera["tipo"] or "").strip().lower()
+    except (KeyError, IndexError, TypeError):
+        try:
+            tipo = str(camera.get("tipo") or "").strip().lower()
+        except Exception:  # noqa: BLE001
+            tipo = ""
+    if tipo in ("camera", "radar", "flir"):
+        return tipo
     try:
         partes = [str(camera[k] or "") for k in ("id", "rotulo", "fluxo_id", "local", "alvo")]
     except (KeyError, IndexError, TypeError):
         try:
             partes = [str(camera.get(k) or "") for k in ("id", "rotulo", "fluxo_id", "local", "alvo")]
         except Exception:  # noqa: BLE001
-            return False
-    return "radar" in " ".join(partes).lower()
+            return "camera"
+    nome = " ".join(partes).lower()
+    if "flir" in nome:
+        return "flir"
+    return "radar" if "radar" in nome else "camera"
+
+
+def pode_o_observador_ver(camera) -> bool:
+    """O que o OBSERVADOR (Petrobras/IBAMA, tipo 4 do dono) ve de TODAS as empresas: o radar de oleo e
+    a camera FLIR (se houver) — e nada mais. Dono (25/11/2026): "petrobras ou ibama pode acessar todas
+    as embarcacoes de todas as empresas, mas apenas do radar de oleo e camera flir se tiver". O
+    criterio e' o TIPO gravado no cadastro, nao mais o nome."""
+    return tipo_da_camera(camera) in ("radar", "flir")
+
+
+def eh_camera_de_radar(camera) -> bool:
+    """O radar de oleo da embarcacao (tipo `radar`). O observador usa `pode_o_observador_ver`, que
+    aceita tambem a FLIR."""
+    return tipo_da_camera(camera) == "radar"
 
 
 
@@ -1103,13 +1129,14 @@ def arvore_do_painel(usuario) -> dict:
     for linha in linhas_cam:
         if not pode_ver_camera(usuario, linha):
             continue
-        if usuario is not None and usuario["papel"] == PAPEL_OBSERVADOR and not eh_camera_de_radar(linha):
-            continue  # o observador (Petrobras) ve o radar de oleo, e so' ele
+        if usuario is not None and usuario["papel"] == PAPEL_OBSERVADOR and not pode_o_observador_ver(linha):
+            continue  # o observador (Petrobras/IBAMA) ve o radar de oleo e a FLIR, e so' eles
         cam = dict(linha)
         p = mt.get(cam["fluxo_id"], {})
         est = estados.get(cam["id"], {})
         por_embarcacao.setdefault(cam["embarcacao_id"], []).append({
             "id": cam["id"], "rotulo": cam["rotulo"], "fluxo_id": cam["fluxo_id"],
+            "tipo": tipo_da_camera(cam),
             "ativo": cam["ativo"], "alvo": cam["alvo"], "local": cam["local"],
             "achada_pela_varredura": e_camera_da_varredura(cam["id"]),
             "no_ar": bool(p.get("ready")) and bool(p.get("tracks")),
@@ -1767,6 +1794,17 @@ def inicializar(semear_demo: bool = False) -> None:
                            ("alvo", "TEXT DEFAULT ''")):
             if nome not in colunas:
                 c.execute(f"ALTER TABLE cameras ADD COLUMN {nome} {tipo}")
+        # TIPO da camera (dono, 25/11/2026): "petrobras ou ibama pode acessar todas as embarcacoes de
+        # todas as empresas, mas apenas do radar de oleo e camera flir se tiver". O filtro do
+        # observador deixa de ser por NOME e passa a ser por TIPO gravado: camera | radar | flir.
+        # Instalacao que ATUALIZA ganha a coluna aqui e o backfill pelo nome de hoje (quem diz "radar"
+        # vira 'radar'; 'flir' vira 'flir'; o resto fica 'camera'). Sem passo manual no cliente.
+        if "tipo" not in colunas:
+            c.execute("ALTER TABLE cameras ADD COLUMN tipo TEXT NOT NULL DEFAULT 'camera'")
+            nome_cam = ("lower(COALESCE(id,'')||' '||COALESCE(rotulo,'')||' '||COALESCE(fluxo_id,'')"
+                        "||' '||COALESCE(local,'')||' '||COALESCE(alvo,''))")
+            c.execute(f"UPDATE cameras SET tipo='flir' WHERE {nome_cam} LIKE '%flir%'")
+            c.execute(f"UPDATE cameras SET tipo='radar' WHERE tipo='camera' AND {nome_cam} LIKE '%radar%'")
         # RADAR por embarcacao (Fase 6): instalacao que ATUALIZA ganha as colunas aqui, sem passo
         # manual no cliente — a config da embarcacao (fonte, modo, taxa, alvo) mora nestas colunas.
         colunas_emb = {r["name"] for r in c.execute("PRAGMA table_info(embarcacoes)")}
@@ -3403,8 +3441,8 @@ class Handler(SimpleHTTPRequestHandler):
                 for cam in c.execute(sql, ((emb,) if emb else ())).fetchall():
                     if not pode_ver_camera(u, cam):
                         continue
-                    if u["papel"] == PAPEL_OBSERVADOR and not eh_camera_de_radar(cam):
-                        continue  # tipo 4: radar de oleo de todas as empresas, e so' ele
+                    if u["papel"] == PAPEL_OBSERVADOR and not pode_o_observador_ver(cam):
+                        continue  # tipo 4: radar de oleo e FLIR de todas as empresas, e so' eles
                     p = mt.get(cam["fluxo_id"], {})
                     no_ar = bool(p.get("ready")) and bool(p.get("tracks"))
                     # por que NAO esta no ar: estado e motivo do ultimo envio (a tela avisa em vez de
@@ -3424,6 +3462,7 @@ class Handler(SimpleHTTPRequestHandler):
                         else:
                             motivo = "sem sinal"
                     saida.append({"id": cam["id"], "rotulo": cam["rotulo"], "embarcacao_id": cam["embarcacao_id"],
+                                  "tipo": tipo_da_camera(cam),
                                   "local": cam["local"], "no_ar": no_ar, "motivo": motivo, "tracks": p.get("tracks", []),
                                   "leitores": len(p.get("readers", [])), "encoder": perfil_encoder(cam["fluxo_id"])})
                 # O fluxo que CHEGA no lado terra nao tinha como aparecer: so' linha cadastrada era
@@ -4359,6 +4398,17 @@ class Handler(SimpleHTTPRequestHandler):
             entrada = str(d.get("entrada") or ("rede" if ip else "usb")).strip().lower()
             if entrada not in ("usb", "rede"):
                 return self._json(422, {"erro": "entrada invalida: use 'usb' (dshow/HDMI) ou 'rede' (IP)"})
+            # TIPO da camera (dono, 25/11/2026): 'camera' | 'radar' | 'flir'. E' o que decide o que o
+            # observador (Petrobras/IBAMA) ve. Sem informar, o nome decide — o mesmo criterio de antes,
+            # para o cadastro que ja' existe continuar funcionando.
+            tipo = str(d.get("tipo") or "").strip().lower()
+            if tipo not in ("", "camera", "radar", "flir"):
+                return self._json(422, {"erro": "tipo invalido: use 'camera', 'radar' ou 'flir'"})
+            if not tipo:
+                nome_cam = " ".join(str(x or "") for x in (
+                    d.get("id"), d.get("rotulo"), d.get("fluxo_id"),
+                    d.get("local"), d.get("alvo"))).lower()
+                tipo = "flir" if "flir" in nome_cam else ("radar" if "radar" in nome_cam else "camera")
             if ip and not self._local():
                 # D1 do dono (25/11/2026): "nao vamos poder inserir nem o ip no admin, o cadastro das
                 # cameras ip terao que ser no app de captura". O endereco so' entra por aqui a partir
@@ -4398,11 +4448,11 @@ class Handler(SimpleHTTPRequestHandler):
                                atualizado_em=excluded.atualizado_em""",
                           (d["id"], "entrada", entrada, em_iso()))
                 c.execute("""INSERT OR REPLACE INTO cameras
-                             (id,embarcacao_id,rotulo,fluxo_id,local,ativo,ip,porta,protocolo,canal,alvo)
-                             VALUES (?,?,?,?,?,1,?,?,?,?,?)""",
+                             (id,embarcacao_id,rotulo,fluxo_id,local,ativo,ip,porta,protocolo,canal,alvo,tipo)
+                             VALUES (?,?,?,?,?,1,?,?,?,?,?,?)""",
                           (d["id"], d["embarcacao_id"], d["rotulo"], d["fluxo_id"], d.get("local", ""),
                            ip, porta, str(d.get("protocolo") or "rtsp"), str(d.get("canal") or ""),
-                           str(d.get("alvo") or "")))
+                           str(d.get("alvo") or ""), tipo))
             # ESPELHO NO BANCO (Fase 1, 0.8.0): o cadastro TAMBEM vai para o Supabase, que e' a base de
             # verdade do dono. So' o lado terra tem a chave de servico; falha aqui NAO impede cadastrar
             # nesta maquina (o SQLite e' o banco de operacao), mas aparece na resposta e em /api/saude.
@@ -5206,6 +5256,13 @@ class Handler(SimpleHTTPRequestHandler):
         # e' o id.
         cid = re.sub(r"[^a-zA-Z0-9_\-]", "-", str(d.get("id") or "").strip()) or fluxo
         rotulo = (str(d.get("rotulo") or fluxo).strip() or fluxo)[:120]
+        # TIPO (dono, 25/11/2026): o bordo declara o tipo e ele viaja junto com o cadastro — e' o que faz
+        # o observador (Petrobras/IBAMA) ver radar/FLIR e o menu "Radar de oleo (HD)" aparecer. Sem tipo
+        # no aviso, o nome decide (o cadastro antigo continua funcionando).
+        tipo = str(d.get("tipo") or "").strip().lower()
+        if tipo not in ("camera", "radar", "flir"):
+            _nome = f"{cid} {rotulo} {fluxo}".lower()
+            tipo = "flir" if "flir" in _nome else ("radar" if "radar" in _nome else "camera")
         ativo = 0 if str(d.get("ativo", 1)).strip().lower() in ("0", "false", "nao", "não") else 1
         # REMOCAO: o bordo avisa que a camera saiu de operacao (o dono removeu na tela) e o lado terra
         # apaga o cadastro — desativar escondia, mas a camera continuava para sempre na lista do cliente.
@@ -5242,12 +5299,12 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(403, {"erro": "licenca desta embarcacao nao libera a captura",
                                         "licenca": _bloqueio, "embarcacao_id": emb,
                                         "dica": "fale com o admin: a licenca pode ser reemitida ou prorrogada"})
-            c.execute("""INSERT INTO cameras (id,embarcacao_id,rotulo,fluxo_id,local,ativo)
-                         VALUES (?,?,?,?,?,?)
+            c.execute("""INSERT INTO cameras (id,embarcacao_id,rotulo,fluxo_id,local,ativo,tipo)
+                         VALUES (?,?,?,?,?,?,?)
                          ON CONFLICT(id) DO UPDATE SET rotulo=excluded.rotulo,
                              embarcacao_id=excluded.embarcacao_id, fluxo_id=excluded.fluxo_id,
-                             ativo=excluded.ativo, local='bordo'""",
-                      (cid, emb, rotulo, fluxo, "bordo", ativo))
+                             ativo=excluded.ativo, tipo=excluded.tipo, local='bordo'""",
+                      (cid, emb, rotulo, fluxo, "bordo", ativo, tipo))
         # ESPELHO: o lado terra e' quem tem a chave de servico — e' aqui que o cadastro do bordo
         # tambem entra no Supabase (o anexo do dono: a tabela `cameras` da nuvem parada em 1 linha).
         try:

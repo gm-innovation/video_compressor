@@ -38,7 +38,10 @@ CREATE TABLE IF NOT EXISTS cameras (
   canal         TEXT DEFAULT '',
   -- alvo de bitrate DESTA camera: duas cenas diferentes nao precisam do mesmo alvo (e' o que
   -- aparecia como "a cam-02 perde qualidade" sem numero nenhum para comparar).
-  alvo          TEXT DEFAULT ''
+  alvo          TEXT DEFAULT '',
+  -- TIPO (dono, 25/11/2026): 'camera' | 'radar' | 'flir'. E' o que decide o que o observador
+  -- (Petrobras/IBAMA) ve de todas as empresas: o radar de oleo e a FLIR (se houver), e nada mais.
+  tipo          TEXT NOT NULL DEFAULT 'camera'
 );
 
 CREATE TABLE IF NOT EXISTS usuarios (

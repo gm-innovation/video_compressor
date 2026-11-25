@@ -211,6 +211,16 @@
         <input id="rede-porta" placeholder="Porta (ex.: 554)" maxlength="5">
         <input id="rede-canal" placeholder="Canal do gravador (ex.: 101)" maxlength="10">
       </div>
+      <!-- TIPO (dono, 25/11/2026): é o que o observador (Petrobras/IBAMA) enxerga — radar de óleo e
+           FLIR (se houver), de todas as empresas. Sem escolher, o nome do fluxo decide. -->
+      <div class="linha-form">
+        <label for="rede-tipo" class="fraco" style="min-width:0">Tipo</label>
+        <select id="rede-tipo">
+          <option value="camera">Câmera comum</option>
+          <option value="radar">Radar de óleo</option>
+          <option value="flir">FLIR (térmica)</option>
+        </select>
+      </div>
       <button id="btn-rede">Cadastrar câmera de rede</button>
       <div class="assistente" id="rede-dica">O nome do fluxo vira o identificador; a porta padrão é a
       554 (RTSP). A senha você põe no arquivo de segredo desta máquina — a tela mostra se já está lá.</div>
@@ -637,7 +647,8 @@ if (botaoRede) {
       r = await fetch('/api/cameras', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rotulo: rotulo || fluxo, fluxo_id: fluxo, entrada: 'rede', ip: ip,
-                               porta: porta, protocolo: 'rtsp', canal: canal }) });
+                               porta: porta, protocolo: 'rtsp', canal: canal,
+                               tipo: (($('rede-tipo') || {}).value || 'camera') }) });
       j = await r.json().catch(() => ({}));
     } catch (e) { dica.textContent = 'não consegui falar com o servidor local: ' + e.message; return; }
     if (r.ok) {
@@ -647,6 +658,7 @@ if (botaoRede) {
         : ('falta o segredo: ponha a senha no arquivo ' + (s.arquivo || '(desta máquina)') +
            ' — uma linha "usuario:senha".'));
       for (const id of ['rede-rotulo', 'rede-fluxo', 'rede-ip', 'rede-porta', 'rede-canal']) $(id).value = '';
+      const sel = $('rede-tipo'); if (sel) sel.value = 'camera';
       carregarCamerasDeRede();
     } else {
       dica.textContent = 'recusado: ' + (j.erro || JSON.stringify(j));

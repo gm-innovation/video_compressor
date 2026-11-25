@@ -23,7 +23,7 @@ Sobe a API de verdade (banco proprio) e abre um Chromium de verdade (Playwright)
   5) escolher a qualidade de envio publica o `alvo_kbps` daquela camera;
   6) ativar/desativar muda o estado da camera;
   7) "ligar agora" da' retorno na cara (nunca silencio) e a chave da licenca se gera NA embarcacao;
-  8) as telas antigas continuam alcancaveis (nada de link salvo quebrando) e a tela nao tem erro de JS.
+  8) o menu esta' enxuto (as telas antigas sairam, a camera se edita DENTRO da empresa) e nao ha erro de JS.
 
     python tests/e2e-admin-unificado.py
 """
@@ -306,10 +306,16 @@ def main() -> int:
             con.close()
             checar("e a licenca fica presa a' aquela embarcacao", bool(lic) and lic[0] == EMB, f"{lic}")
 
-            print("\n== 8. as telas antigas continuam alcancaveis e a tela nao tem erro de JS ==")
-            pag.click("button[data-tela=cameras]")
-            checar("a tela antiga de cameras abre pelo grupo 'Avancado'",
-                   esperar_texto(pag, "Câmera: onde ela está"), palco(pag)[:160].replace("\n", " | "))
+            print("\n== 8. o menu do admin esta' enxuto (as telas antigas sairam) e a tela nao tem erro de JS ==")
+            # 0.19.0 (dono, 25/11/2026: "muita redundancia, telas inuteis ou que nao funcionam"): as
+            # telas antigas (clientes/embarcacoes/cameras/producao/tempo/analises/marcas) SAIRAM do menu —
+            # a camera se edita DENTRO da empresa (a area unica). O que nao esta' no menu nao abre.
+            antigas = ["clientes", "embarcacoes", "cameras", "producao", "tempo", "analises", "marcas"]
+            restantes = [t for t in antigas
+                         if pag.evaluate("(t) => !!document.querySelector('button[data-tela=' + t + ']')", t)]
+            checar("as telas antigas sairam do menu do admin", not restantes, f"ainda no menu: {restantes}")
+            checar("e a area unica (Empresas e configuracao) continua",
+                   pag.evaluate("() => !!document.querySelector('button[data-tela=empresas]')"))
             checar("sem erro de javascript na area unica", not erros, "; ".join(erros[:3]))
             navegador.close()
 
@@ -349,7 +355,7 @@ def main() -> int:
         return 1
     print("RESULTADO: tudo passou — a area unica mostra empresa -> embarcacao -> cameras (com o nome da "
           "varredura), publica o nome e a qualidade para o PC de captura, liga/desliga e gera a chave no "
-          "lugar certo; as telas antigas seguem alcancaveis.")
+          "lugar certo; e o menu esta' enxuto (as telas antigas sairam).")
     return 0
 
 

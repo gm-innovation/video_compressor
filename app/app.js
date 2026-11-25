@@ -119,6 +119,14 @@ async function atualizar() {
   S.cameras = novas;
   if (S.selecionadas.size === 0) S.cameras.forEach((c) => S.selecionadas.add(c.id));
   for (const id of Array.from(S.selecionadas)) if (!S.cameras.some((c) => c.id === id)) S.selecionadas.delete(id);
+  /* P2 (dono, 25/11/2026): o item "Radar de óleo (HD)" só faz sentido quando a embarcação TEM radar de
+     óleo (câmera de tipo 'radar'). Sem radar, o item sai do menu — nada de tela que não serve. */
+  const btRadar = document.querySelector('button[data-tela="radar_hd"]');
+  if (btRadar) {
+    const temRadar = S.cameras.some((c) => c.tipo === 'radar');
+    btRadar.classList.toggle('oculto', !temRadar);
+    if (!temRadar && S.tela === 'radar_hd') trocarTela('visualizar');
+  }
   const an = await api('/api/analises');
   if (an.ok && an.corpo) {
     S.analises = an.corpo;
@@ -781,9 +789,7 @@ const TELAS = {
   gravacoes: ['Gravações', 'Trechos gravados pela operação (depende da retenção da embarcação).'],
   radar_hd: ['Radar de óleo (HD)', 'As imagens do radar ficam gravadas o tempo todo no computador de captura. Procure por data e hora e peça o trecho que quiser ver.'],
   relatorios: ['Relatórios', 'Indicadores medidos pelo sistema: disponibilidade, contagens e qualidade do link.'],
-  pessoas: ['Pessoas', 'Cadastro usado pelas análises de vídeo — só liga com a autorização registrada.'],
   cameras: ['Câmeras', 'Câmeras liberadas para a sua empresa e o estado de cada uma.'],
-  avisos: ['Avisos', 'Preferências de notificação deste usuário.'],
   transmissao: ['Transmitir', 'Você abre a transmissão da câmera: a ordem vai até a máquina de captura da embarcação.'],
   configuracao: ['Tempo de transmissão', 'Quanto tempo cada transmissão pode durar antes de parar.']
 };
@@ -917,31 +923,15 @@ function desenharTela() {
         cx.appendChild(h);
       }
     }
-  } else if (t === 'pessoas') {
-    tabelaEmPalco([{ rotulo: 'Pessoa', campo: 'nome' }, { rotulo: 'Cadastrada em', campo: 'data' }], [],
-      'Reconhecimento de pessoas está desligado: dado sensível (LGPD) — só liga com a autorização registrada pelo responsável.');
   } else if (t === 'cameras') {
-    tabelaEmPalco([{ rotulo: 'Câmera', campo: 'rotulo' }, { rotulo: 'Local', campo: 'local' },
+    /* A coluna Tipo (dono, 25/11/2026): radar de óleo e FLIR (térmica) aparecem nomeados — o
+       observador (Petrobras/IBAMA) vê só esses dois; o cliente vê os seus. */
+    const tipoDa = (l) => ({ radar: 'Radar de óleo', flir: 'FLIR (térmica)' }[l.tipo] || 'Câmera');
+    tabelaEmPalco([{ rotulo: 'Câmera', campo: 'rotulo' }, { rotulo: 'Tipo', valor: tipoDa },
+                   { rotulo: 'Local', campo: 'local' },
                    { rotulo: 'Estado', valor: (l) => (l.no_ar ? 'no ar' : 'fora do ar') },
                    { rotulo: 'Resolução', valor: (l) => (l.encoder && l.encoder.resolucao) || '—' },
                    { rotulo: 'Bitrate', valor: (l) => (l.encoder && l.encoder.bitrate) || '—' }], S.cameras, 'Nenhuma câmera liberada.');
-  } else if (t === 'avisos') {
-    const p = $('palco');
-    const salvo = localStorage.getItem('lecsor-avisos') || 'queda de câmera';
-    /* A caixa só é remontada quando a preferência muda (antes era refeita a cada ciclo de 5 s). */
-    let cx = p.querySelector('.avisos-caixa');
-    if (!cx) { limpar(p); p.dataset.montado = ''; cx = document.createElement('div'); cx.className = 'avisos-caixa'; p.appendChild(cx); }
-    if (cx.dataset.marca !== salvo) {
-      cx.dataset.marca = salvo;
-      limpar(cx);
-      const d = document.createElement('div'); d.className = 'vazio';
-      d.innerHTML = 'Notificações ativas: <b>' + salvo + '</b>.';
-      const b = document.createElement('button'); b.className = 'acao'; b.textContent = 'Alternar alerta de queda de câmera';
-      b.style.cssText = 'margin-top:10px;background:#1b2330;border:1px solid #243044;border-radius:9px;padding:9px 14px';
-      b.onclick = () => { const novo = salvo.includes('queda de câmera') ? 'nenhum aviso' : 'queda de câmera';
-        localStorage.setItem('lecsor-avisos', novo); desenharTela(); };
-      cx.appendChild(d); cx.appendChild(b);
-    }
   } else if (t === 'transmissao') {
     desenharTransmissao();
   } else if (t === 'configuracao') {

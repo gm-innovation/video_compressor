@@ -75,6 +75,11 @@ PROVAS = (
     "tests/test-fluxo-no-lado-terra.py",
     # observador / Petrobras (Fase 4)
     "tests/e2e-observador-do-radar.py",
+    # RODADA 0.19.0 — O OBSERVADOR FILTRA POR TIPO, NAO POR NOME (dono, 25/11/2026: "petrobras ou ibama
+    # pode acessar ... mas apenas do radar de oleo e camera flir se tiver"). A camera ganha a coluna
+    # `tipo` (camera|radar|flir); o radar pelo TIPO aparece mesmo sem "radar" no nome; a FLIR aparece; a
+    # camera com "radar" no NOME mas tipo 'camera' NAO aparece. A migracao faz o backfill pelo nome.
+    "tests/test-observador-por-tipo.py",
     # o que a 0.8.0 ja' provava e passa por estas rotas
     "tests/test-papeis-de-config.py",
     "tests/test-cadastro-so-pelo-admin.py",

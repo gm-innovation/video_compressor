@@ -467,23 +467,41 @@ class Ambiente:
             return {}
 
     def camera_do_bordo(self, camera_id: str, fonte: str = "live:sintetica", fluxo: str = "",
-                        bitrate: str = "2500k", resolucao: str = "1280x720", fps: int = 30) -> None:
+                        bitrate: str = "2500k", resolucao: str = "1280x720", fps: int = 30,
+                        tipo: str = "") -> None:
         """Cadastra A CAMERA DO BARCO no banco do bordo (na bancada ela e' sintetica: nao ha' camera).
 
         Os campos `srt_host`/`srt_port` sao os do lado terra — e' para la' que o bordo publica o SRT.
+
+        O `tipo` (dono, 25/11/2026) e' 'radar' quando o id diz radar (o mesmo criterio do cadastro de
+        verdade no bordo): e' ele que o observador (Petrobras/IBAMA) e o menu "Radar de oleo (HD)" usam.
         """
         fluxo = fluxo or camera_id
+        tipo = tipo or ("flir" if "flir" in camera_id.lower()
+                        else ("radar" if "radar" in camera_id.lower() else "camera"))
         agora = time.strftime("%Y-%m-%dT%H:%M:%S")
+        tem_tipo = any(l[1] == "tipo" for l in sql(self.banco_bordo, "PRAGMA table_info(cameras)"))
         reg = sql(self.banco_bordo, "SELECT id FROM cameras WHERE id=?", (camera_id,))
         if reg:
-            escrever_sql(self.banco_bordo,
-                         "UPDATE cameras SET embarcacao_id=?, fluxo_id=?, ativo=1, alvo=? WHERE id=?",
-                         (self.embarcacao, fluxo, bitrate, camera_id))
+            if tem_tipo:
+                escrever_sql(self.banco_bordo,
+                             "UPDATE cameras SET embarcacao_id=?, fluxo_id=?, ativo=1, alvo=?, tipo=? WHERE id=?",
+                             (self.embarcacao, fluxo, bitrate, tipo, camera_id))
+            else:
+                escrever_sql(self.banco_bordo,
+                             "UPDATE cameras SET embarcacao_id=?, fluxo_id=?, ativo=1, alvo=? WHERE id=?",
+                             (self.embarcacao, fluxo, bitrate, camera_id))
         else:
-            escrever_sql(self.banco_bordo,
-                         """INSERT INTO cameras (id,embarcacao_id,rotulo,fluxo_id,local,ativo,alvo)
-                            VALUES (?,?,?,?,'',1,?)""",
-                         (camera_id, self.embarcacao, f"Smoke {camera_id}", fluxo, bitrate))
+            if tem_tipo:
+                escrever_sql(self.banco_bordo,
+                             """INSERT INTO cameras (id,embarcacao_id,rotulo,fluxo_id,local,ativo,alvo,tipo)
+                                VALUES (?,?,?,?,'',1,?,?)""",
+                             (camera_id, self.embarcacao, f"Smoke {camera_id}", fluxo, bitrate, tipo))
+            else:
+                escrever_sql(self.banco_bordo,
+                             """INSERT INTO cameras (id,embarcacao_id,rotulo,fluxo_id,local,ativo,alvo)
+                                VALUES (?,?,?,?,'',1,?)""",
+                             (camera_id, self.embarcacao, f"Smoke {camera_id}", fluxo, bitrate))
         # colunas REAIS de `ingestoes` (db/schema-ingestao.sql): nao ha' `fps_alvo` nem `srt_port` —
         # a porta do SRT e' a 8890 (o produto a assume quando a linha nao diz outra coisa).
         antigo = sql(self.banco_bordo, "SELECT id FROM ingestoes WHERE fluxo_id=?", (fluxo,))

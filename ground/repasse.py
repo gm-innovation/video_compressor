@@ -253,6 +253,12 @@ def publicar_cadastro(camera: dict, destino: str | None = None, remover: bool = 
     corpo = {"id": camera.get("id") or fluxo, "fluxo_id": fluxo,
              "rotulo": camera.get("rotulo") or fluxo,
              "ativo": 0 if str(camera.get("ativo", 1)).strip() in ("0", "False", "false") else 1}
+    # O TIPO da camera (dono, 25/11/2026) viaja com o cadastro: e' ele que faz o lado terra saber quem e'
+    # radar de oleo / FLIR (o observador Petrobras/IBAMA e o menu "Radar de oleo (HD)" dependem disto).
+    # Nunca vai endereco, porta, protocolo nem credencial.
+    _tipo = str(camera.get("tipo") or "").strip().lower()
+    if _tipo in ("camera", "radar", "flir"):
+        corpo["tipo"] = _tipo
     if remover:
         # avisa o lado terra que a camera saiu de operacao: ele APAGA o cadastro (nao e' desativar)
         corpo["remover"] = True

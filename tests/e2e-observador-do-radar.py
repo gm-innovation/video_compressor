@@ -79,13 +79,13 @@ def semear(banco: pathlib.Path) -> None:
     for eid, cid, nome in ((EMB_A, EMPRESA_A, "Embarcacao A"), (EMB_B, EMPRESA_B, "Embarcacao B")):
         con.execute("INSERT OR REPLACE INTO embarcacoes (id,cliente_id,nome,imo,estado,radar_fonte)"
                     " VALUES (?,?,?,?,?,?)", (eid, cid, nome, "", "em operacao", "dshow:EZCAP"))
-    for cid, eid, rotulo, alvo in ((RADAR_A, EMB_A, "Radar de oleo (A)", "radar-ppi"),
-                                   (CAM_A, EMB_A, "Camera do conves (A)", ""),
-                                   (RADAR_B, EMB_B, "Radar de oleo (B)", "radar-ppi"),
-                                   (CAM_B, EMB_B, "Camera da popa (B)", "")):
+    for cid, eid, rotulo, alvo, tipo in ((RADAR_A, EMB_A, "Radar de oleo (A)", "radar-ppi", "radar"),
+                                         (CAM_A, EMB_A, "Camera do conves (A)", "", "camera"),
+                                         (RADAR_B, EMB_B, "Radar de oleo (B)", "radar-ppi", "radar"),
+                                         (CAM_B, EMB_B, "Camera da popa (B)", "", "camera")):
         con.execute("""INSERT OR REPLACE INTO cameras
-                       (id,embarcacao_id,rotulo,fluxo_id,local,ativo,ip,porta,protocolo,canal,alvo)
-                       VALUES (?,?,?,?,'',1,'','','dshow','',?)""", (cid, eid, rotulo, cid, alvo))
+                       (id,embarcacao_id,rotulo,fluxo_id,local,ativo,ip,porta,protocolo,canal,alvo,tipo)
+                       VALUES (?,?,?,?,'',1,'','','dshow','',?,?)""", (cid, eid, rotulo, cid, alvo, tipo))
     # O HD do radar de cada embarcacao (o que o PC de captura publica; aqui o catalogo e' do teste)
     for cid, eid, hora in ((RADAR_A, EMB_A, "2026-11-19T08:00:00"), (RADAR_B, EMB_B, "2026-11-19T09:30:00")):
         blocos = [{"arquivo": f"{hora[11:13]}-00.mp4", "inicio": hora, "bytes": 1_500_000, "segundos": 300}]

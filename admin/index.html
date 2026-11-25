@@ -77,31 +77,27 @@
     <!-- DASHBOARD DO ADMIN (dono, 24/11/2026): saúde das máquinas + vídeo ao vivo num lugar só. -->
     <button class="item" data-tela="frota"><span class="ic">🛰</span>Monitoramento (frota)</button>
 
-    <div class="grupo">Projeto</div>
+    <!-- OPERAÇÃO (dono, 25/11/2026: "várias telas redundantes ou sem função efetiva"): só fica o que
+         opera o produto. Clientes/Embarcações/Câmeras/Produção/Tempo real vivem DENTRO de "Empresas e
+         configuração" e do "Monitoramento (frota)"; Análises e Marcas e zonas saíram (não têm quem
+         produza o dado — o agente de bordo não existe). -->
+    <div class="grupo">Operação</div>
+    <button class="item" data-tela="licencas"><span class="ic">🔑</span>Licenças</button>
+    <button class="item" data-tela="usuarios"><span class="ic">👥</span>Usuários</button>
+    <button class="item" data-tela="auditoria"><span class="ic">🛡</span>Auditoria</button>
+    <button class="item" data-tela="config_bordo"><span class="ic">🎛</span>Configuração do bordo</button>
+    <button class="item" data-tela="saude_bordo"><span class="ic">🩺</span>Saúde do bordo</button>
+    <button class="item" data-tela="saude"><span class="ic">⚙</span>Saúde do sistema</button>
+    <button class="item" data-tela="envios"><span class="ic">📥</span>Enviar vídeo</button>
+
+    <!-- PROJETO LECSOR: a gestão do projeto (fases/evidências/ADR) — não é operação do produto. -->
+    <div class="grupo">Projeto LECSOR</div>
     <button class="item" data-tela="painel"><span class="ic">📈</span>Painel</button>
     <button class="item" data-tela="fases"><span class="ic">🧭</span>Fases</button>
     <button class="item" data-tela="medicoes"><span class="ic">📐</span>Medições</button>
     <button class="item" data-tela="decisoes"><span class="ic">📌</span>Decisões</button>
     <button class="item" data-tela="evidencias"><span class="ic">🗂</span>Evidências</button>
     <button class="item" data-tela="documentos"><span class="ic">📄</span>Documentos</button>
-
-    <!-- As telas antigas continuam aqui de propósito: nada de link salvo quebrando (P0.6 do plano).
-         O caminho normal é a área "Empresas e configuração", onde tudo isso vive vinculado ao cliente. -->
-    <div class="grupo">Avançado (telas antigas)</div>
-    <button class="item" data-tela="clientes"><span class="ic">🏢</span>Clientes</button>
-    <button class="item" data-tela="embarcacoes"><span class="ic">🚢</span>Embarcações</button>
-    <button class="item" data-tela="cameras"><span class="ic">🎥</span>Câmeras</button>
-    <button class="item" data-tela="licencas"><span class="ic">🔑</span>Licenças</button>
-    <button class="item" data-tela="producao"><span class="ic">📊</span>Produção</button>
-    <button class="item" data-tela="tempo"><span class="ic">⏱</span>Tempo real</button>
-    <button class="item" data-tela="envios"><span class="ic">📥</span>Enviar vídeo</button>
-    <button class="item" data-tela="usuarios"><span class="ic">👥</span>Usuários</button>
-    <button class="item" data-tela="analises"><span class="ic">🧠</span>Análises</button>
-    <button class="item" data-tela="marcas"><span class="ic">✏️</span>Marcas e zonas</button>
-    <button class="item" data-tela="auditoria"><span class="ic">🛡</span>Auditoria</button>
-    <button class="item" data-tela="saude_bordo"><span class="ic">🩺</span>Saúde do bordo</button>
-    <button class="item" data-tela="config_bordo"><span class="ic">🎛</span>Configuração do bordo</button>
-    <button class="item" data-tela="saude"><span class="ic">⚙</span>Saúde do sistema</button>
 
     <div class="chip-conta">
       <span class="bolinha" id="iniciais">··</span>
