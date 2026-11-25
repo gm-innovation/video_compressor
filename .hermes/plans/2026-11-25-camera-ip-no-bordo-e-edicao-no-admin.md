@@ -12,7 +12,7 @@ Decisão do dono que **manda no desenho** (25/11/2026, verbatim, resposta a D1):
 > não entendo nada disso, senha não pode vazar, então tem que tudo ficar no bordo, então não vamos poder
 > inserir nem o ip no admin, o cadastro das câmeras ip terão que ser no app de captura
 
-Status: **revisado com a decisão acima — aguardando "aprovado"** (nada implementado).
+Status: **CONCLUÍDO (25/11/2026)** — o dono aprovou ("aprovado") e a rodada virou a **0.18.0**; código, provas (34/34 verdes na `regressao-0130`), release e deploy escritos. Ver **seção 5** (resultado) no fim.
 
 ---
 
@@ -141,3 +141,48 @@ salvo — **não** editam nada.
   Efeito colateral a tratar nas provas: os testes que hoje entram como **operador** para configurar
   (`tests/e2e-licenca-no-admin.py`, `tests/e2e-escopo-no-admin.py`, `tests/e2e-admin-unificado.py`, entre
   outros) passam a precisar do papel admin — **nenhuma** prova pode ficar medindo o operador editando.
+
+---
+
+## 5. RESULTADO (25/11/2026, rodada 0.18.0)
+
+O dono aprovou e a rodada foi implementada, provada e publicada.
+
+**1. O endereço e a senha da câmera de rede vivem SÓ no PC de captura.** O formulário do admin deixou de ter
+os campos de IP/porta/canal (item 4 da tabela) e o aviso da tela passou a dizer que a câmera IP é cadastrada no
+próprio PC de captura. O painel do bordo (`/bordo`, servido pela própria máquina, sem login) ganhou o bloco
+**"Câmeras de rede (IP)"**: rótulo, IP, porta, protocolo, canal e o aviso "este produto nunca pede senha". O
+cadastro grava no banco do bordo e o `_anuncio_bordo` segue publicando ao terra **sem** o endereço.
+
+**2. A senha não circula** (`ground/segredo_camera.py`, novo): arquivo `usuario:senha` em
+`%PROGRAMDATA%\LECSOR\segredos\cam-<id>.txt` (Windows) / `~/.lecsor/segredos/cam-<id>.txt` (Linux), com
+`LECSOR_SEGREDOS` para a pasta e `LECSOR_CAM_<ID>_SEGREDO` tendo precedência (cofre/serviço do Windows). A
+API devolve só o **estado** (`configurado`, `origem`, `arquivo`) — nunca o valor; campo de senha no corpo do
+cadastro é recusado (**422**); o log do ffmpeg é redigido (`_redigir_log`). **Limite honesto:** o ffmpeg ainda
+recebe a URL com a credencial na linha de comando — visível a um admin local daquela máquina; a mitigação
+registrada é a redação do log e o proxy local (mediamtx) como opção futura.
+
+**3. O apontamento.** `ground/ingestao.py` e `ground/qualidade.py` passaram a tratar `tipo="rede"` (RTSP) pelo
+mesmo caminho de `camera`/`sintetica`/`radar`, com `camera_id` separado do `fluxo_id`. Sem segredo configurado a
+captura **recusa** subir e diz o caminho do arquivo, em vez de pintar "sem sinal". D2: a câmera de rede convive
+com a de HDMI/split.
+
+**4. Edição no admin.** Novas rotas `POST /api/clientes/<id>/editar` e `POST /api/embarcacoes/<id>/editar`
+(nome + identificador; D3 = identificador renomeável, transação nos filhos, auditoria de→para). O `prompt()` do
+botão "editar" da câmera virou **formulário no próprio cartão** (`formularioDeEdicao`, novo). D4 = só admin
+(`PAPEL_CONFIGURA = ("admin",)`, `pode_configurar`), exceto o painel do bordo (`_maquina_de_captura()`), que é a
+própria máquina de captura.
+
+**5. Roteamento (defeito corrigido na rodada).** Medido: `/api/cameras/detalhe` e `/api/cameras/<id>/segredo`
+eram **encaminhados ao lado terra** pelo servidor do bordo e respondiam **502** (o terra não tem o cadastro local
+nem o segredo). Corrigido em `eh_rota_de_captura` (o CRUD da câmera — `segredo`/`editar`/`remover`/`nome`/`ativo`
+— é DESTA máquina) e `/api/cameras/detalhe` entrou na lista de rotas locais; o `GET /api/cameras/<id>/segredo`
+foi adicionado.
+
+**6. Provas.** `tests/test-camera-ip-no-bordo.py` (novo, 211 linhas) — sobe a `ground/api.py` de verdade com a
+máquina de captura declarada e prova 201/estado do segredo/422/401/detalhe. `tools/regressao-0130.py` →
+**34 provas, TUDO VERDE**; `unittest discover` OK; `py_compile` e `node --check` OK. `tests/test-papeis-de-config.py`
+atualizado (operador remoto → **401**; admin → **201**).
+
+**Publicação:** `desktop/package.json` → **0.18.0**; nota da release escrita em `tools/publicar-releases.py`
+(`VERSOES_PUBLICADAS[0] = "0.18.0"`), com o texto ancorado nos pedidos verbatim do dono.

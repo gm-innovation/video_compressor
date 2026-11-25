@@ -13,6 +13,7 @@ from pathlib import Path
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ferramentas import caminho_banco, caminho_ffmpeg, caminho_ffprobe  # noqa: E402  (embutidos no app)
+import segredo_camera  # noqa: E402  (segredo da camera de rede: vive SO' no PC de captura)
 
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -158,10 +159,11 @@ def ajuste_encode(bitrate: str, fps: int, codec: str = "libx264") -> list[str]:
 def _comando(fonte: str, fluxo_id: str, bitrate: str, codec: str, repetir: bool, tipo: str,
              srt_host: str, srt_port: int, audio: bool = False, fonte2: str | None = None,
              fps: int = 30, arquivo_saida: str | None = None, copiar: bool = False,
-             dispositivo: str | None = None, resolucao: str = "1920x1080") -> list[str]:
+             dispositivo: str | None = None, resolucao: str = "1920x1080",
+             camera_id: str | None = None) -> list[str]:
     destino = (f"srt://{srt_host}:{srt_port}?mode=caller&latency=200&pkt_size=1316&streamid=publish:{fluxo_id}")
     cmd = [caminho_ffmpeg(), "-hide_banner", "-nostdin", "-loglevel", "warning"]
-    if tipo in ("camera", "sintetica", "radar"):
+    if tipo in ("camera", "sintetica", "radar", "rede"):
         if tipo == "sintetica":
             # O GERADOR sintetico (testsrc2) NAO e' fonte de tempo real: sem `-re` ele produz o mais
             # rapido que a maquina consegue. Medido em 23/11/2026 pelo smoke: 238 quadros em 0,38 s de
@@ -172,7 +174,8 @@ def _comando(fonte: str, fluxo_id: str, bitrate: str, codec: str, repetir: bool,
         # o envio e' CONTINUO, igual a operacao. Sem -t: so para quando o dono mandar parar.
         # RADAR entra aqui desde a Fase 3 (17/11/2026): os quadros do radar chegam por `pipe:0`,
         # gerados pelo `radar_drq.quadros_ao_vivo` — mesma cadeia (SRT -> mediamtx -> lado terra).
-        cmd += _args_fonte_viva(tipo, dispositivo, resolucao, fps)
+        # REDE (25/11/2026): camera IP/RTSP cadastrada NO BORDO; a credencial sai do arquivo local.
+        cmd += _args_fonte_viva(tipo, dispositivo, resolucao, fps, camera_id)
     else:
         cmd += ["-re"]
         if tipo == "arquivo" and repetir:
@@ -242,8 +245,13 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
             registrar_camera: bool = True, abrir_log: bool = True, fps: int = 30,
             guardar_arquivo: bool = False, copiar: bool = False,
             dispositivo: str | None = None, resolucao: str = "1920x1080",
-            radar_modo: str = "ppi", radar_taxa: str = "30fps") -> dict:
-    """Sobe a ingestao. Devolve o registro (com id) para a tela acompanhar."""
+            radar_modo: str = "ppi", radar_taxa: str = "30fps",
+            camera_id: str | None = None) -> dict:
+    """Sobe a ingestao. Devolve o registro (com id) para a tela acompanhar.
+
+    `camera_id` existe para a camera de REDE: e' o id do CADASTRO (o nome do arquivo do segredo local),
+    que nao e' sempre igual ao `fluxo_id`.
+    """
     garantir_schema()
     ENVIOS.mkdir(parents=True, exist_ok=True); LOG_DIR.mkdir(parents=True, exist_ok=True)
     if tipo is None:
@@ -260,7 +268,7 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
     slug = re.sub(r"[^a-z0-9]+", "-", base_nome).strip("-")[:38] or "envio"
     fluxo_id = fluxo_id or f"envio-{slug}"
     fluxo_id = re.sub(r"[^a-zA-Z0-9_\-]", "-", fluxo_id)
-    camera_id = fluxo_id
+    camera_id = camera_id or fluxo_id
     fonte2 = None
     origem_pagina = ""
     if tipo == "url" and not MEDIA_RE.search(fonte) and not CDN_RE.search(fonte):
@@ -276,6 +284,17 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
         # guarda o seletor unico: a coluna `fonte` e' a identidade da camera (duas cameras de
         # mesmo nome passam a ter linhas distintas e uma nao bloqueia a outra)
         dispositivo = _normalizar_dispositivo(dispositivo)
+    if tipo == "rede":
+        # CAMERA DE REDE (25/11/2026): o endereco vem do cadastro deste PC e a credencial do arquivo
+        # LOCAL. Sem segredo configurado aqui a captura NAO sobe: recusar e dizer o que falta e' melhor
+        # que tentar abrir um RTSP sem credencial e pintar "sem sinal" na tela do dono.
+        dispositivo = str(dispositivo or "").strip()
+        if not dispositivo:
+            return {"erro": "informe o endereco da camera de rede (ip ou ip:porta/canal)"}
+        if not segredo_camera.configurado(camera_id):
+            return {"erro": ("camera de rede sem segredo configurado NESTA maquina: crie o arquivo "
+                             f"{segredo_camera.caminho(camera_id)} com uma linha `usuario:senha` "
+                             "(o segredo nunca sai do PC de captura)")}
     if tipo == "radar":
         # Fonte viva "de sinal": o radar nao tem resolucao de camera nem negociacao — a imagem e' a
         # PPI/quadro cru 1.024x1.024 do desenhador e vai para o ffmpeg por `pipe:0`. O alvo padrao e'
@@ -285,12 +304,19 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
         repetir = False
         if not bitrate or bitrate == "auto":
             bitrate = "1500k"
-    elif tipo in ("camera", "sintetica"):
+    elif tipo in ("camera", "sintetica", "rede"):
         # fonte viva: nao ha arquivo para sondar. A resolucao vem do pedido e o alvo e' fixo
         # (o numero medido passa a ser o do envio CONTINUO, lido do -progress do ffmpeg).
-        s = {"resolucao": _resolucao_valida(resolucao, "1920x1080" if tipo == "sintetica" else "1280x720"),
+        # REDE: a camera negocia o proprio tamanho — o pedido e' so' declaracao ate' o `_sondar_publicado`.
+        if tipo == "rede":
+            declarado = (dispositivo or "")
+        elif tipo == "camera":
+            declarado = (dispositivo or DISPOSITIVO_PADRAO)
+        else:
+            declarado = "testsrc2"
+        s = {"resolucao": _resolucao_valida(resolucao, "1920x1080" if tipo != "camera" else "1280x720"),
              "fps": float(fps or 30), "bitrate_kbps": None,
-             "dispositivo": (dispositivo or DISPOSITIVO_PADRAO) if tipo == "camera" else "testsrc2"}
+             "dispositivo": declarado}
         repetir = False
         if not bitrate or bitrate == "auto":
             bitrate = "2500k" if tipo == "sintetica" else "1500k"
@@ -308,7 +334,7 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
     arquivo_saida = str(ENVIOS / "log" / f"{fluxo_id}-{int(time.time())}.ts") if guardar_arquivo else None
     cmd = _comando(fonte, fluxo_id, bitrate, codec, repetir, tipo, srt_host, srt_port, audio=audio,
                    fonte2=fonte2, fps=fps, arquivo_saida=arquivo_saida, copiar=copiar,
-                   dispositivo=dispositivo, resolucao=resolucao)
+                   dispositivo=dispositivo, resolucao=resolucao, camera_id=camera_id)
     log = LOG_DIR / f"{fluxo_id}-{int(time.time())}.log"
     saida = open(log, "ab", buffering=0) if abrir_log else subprocess.DEVNULL
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE if tipo == "radar" else None,
@@ -324,15 +350,17 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (fluxo_id, camera_id, rotulo or slug,
              origem_pagina or (f"dshow:{dispositivo or DISPOSITIVO_PADRAO}" if tipo == "camera"
-                               else (f"lavfi:testsrc2:{resolucao}" if tipo == "sintetica"
-                                     else (f"radar:{fonte}:{radar_modo}:{radar_taxa}" if tipo == "radar"
-                                           else fonte))),
+                               else f"rtsp:{dispositivo}" if tipo == "rede"
+                               else f"lavfi:testsrc2:{resolucao}" if tipo == "sintetica"
+                               else f"radar:{fonte}:{radar_modo}:{radar_taxa}" if tipo == "radar"
+                               else fonte),
              tipo, 1 if repetir else 0, codec, bitrate,
              s.get("resolucao"), s.get("fps"), s.get("bitrate_kbps"), "iniciando", proc.pid, str(log),
              srt_host, agora(), agora()))
         ident = cur.lastrowid
-        if tipo in ("camera", "sintetica"):
-            # a resolucao real da webcam so se sabe DEPOIS que ela publica: sonda o caminho uma vez
+        if tipo in ("camera", "sintetica", "rede"):
+            # a resolucao real da webcam (ou da camera de rede) so se sabe DEPOIS que ela publica:
+            # sonda o caminho uma vez
             threading.Thread(target=_sondar_publicado, args=(ident, fluxo_id), daemon=True).start()
         if registrar_camera:
             c.execute("""INSERT INTO cameras (id, embarcacao_id, rotulo, fluxo_id, local, ativo)
@@ -341,7 +369,7 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
                       (camera_id, embarcacao_id, rotulo or slug, fluxo_id, "envio"))
             # o alvo escolhido no envio fica GRAVADO na camera: e' assim que duas cameras com cenas
             # diferentes passam a ter alvos diferentes (e a tela consegue comparar os dois numeros)
-            if tipo in ("camera", "sintetica", "radar"):
+            if tipo in ("camera", "sintetica", "radar", "rede"):
                 try:
                     c.execute("UPDATE cameras SET alvo=? WHERE id=?", (str(bitrate), camera_id))
                 except sqlite3.OperationalError:
@@ -422,6 +450,25 @@ def _motivo_da_falha(codigo: int, log: Path, r: dict) -> str | None:
     return None
 
 
+def _redigir_log(log) -> None:
+    """Tira credencial de camera de REDE do log do ffmpeg.
+
+    A URL com a senha so' existe na linha de comando do processo (limite honesto declarado no plano
+    aprovado). Se o ffmpeg imprimir essa URL no stderr (erro de conexao, por exemplo), o log deste PC
+    ficaria com a senha em texto — aqui ela sai mascarada. Best-effort: nunca derruba o envio.
+    """
+    try:
+        p = Path(log)
+        if not p.exists() or p.stat().st_size == 0 or p.stat().st_size > 5_000_000:
+            return
+        bruto = p.read_text(encoding="utf-8", errors="replace")
+        limpo = segredo_camera.redigir(bruto)
+        if limpo != bruto:
+            p.write_text(limpo, encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _bombear(ident: int, proc: subprocess.Popen, log: Path):
     """Le o -progress do ffmpeg e mantem a tabela ingestoes atualizada."""
     ultimo, ultima_amostra, inicio, ultima_gravacao = {}, time.time(), time.time(), 0.0
@@ -465,6 +512,7 @@ def _bombear(ident: int, proc: subprocess.Popen, log: Path):
                               (ident, agora(), r["bitrate_saida_kbps"], r["fps"], r["velocidade"], r["tamanho_mb"], r["corte_pct"]))
     finally:
         codigo = proc.wait()
+        _redigir_log(log)
         with conexao() as c:
             r = c.execute("SELECT * FROM ingestoes WHERE id=?", (ident,)).fetchone()
             if r and r["estado"] != "parado":
@@ -626,8 +674,17 @@ def ligar_camera(camera_id: str) -> dict:
             return {"erro": "camera nao encontrada"}
         ult = c.execute("SELECT * FROM ingestoes WHERE fluxo_id=? ORDER BY id DESC LIMIT 1",
                         (cam["fluxo_id"],)).fetchone()
-    if cam["ip"]:
-        return {"erro": "esta camera e por endereco (RTSP) e precisa de credencial: use Enviar video"}
+    if str(cam["ip"] or "").strip():
+        # CAMERA DE REDE (dono, 25/11/2026): "o app de captura precisa visualizar esse ip e fazer o
+        # apontamento". O endereco vem do cadastro DESTE PC e a credencial, do arquivo local — nunca
+        # do lado terra. Sem segredo nesta maquina a ligacao e' recusada com o caminho do arquivo.
+        anterior = dict(ult) if ult else {}
+        alvo_cam = (cam["alvo"] if "alvo" in cam.keys() else "") or ""
+        return ao_vivo(tipo="rede", dispositivo=endereco_da_camera(cam), rotulo=cam["rotulo"],
+                       fluxo_id=cam["fluxo_id"], bitrate=alvo_cam or anterior.get("bitrate_alvo") or "1500k",
+                       srt_host=anterior.get("srt_host") or "187.127.60.250",
+                       srt_port=int(anterior.get("srt_port") or 8890),
+                       embarcacao_id=cam["embarcacao_id"], camera_id=cam["id"])
     d = dict(ult) if ult else {}
     # alvo POR CAMERA tem prioridade sobre o ultimo envio: e' o ajuste que o dono fixou nesta camera
     alvo_cam = (cam["alvo"] if "alvo" in cam.keys() else "") or ""
@@ -791,9 +848,53 @@ def listar_dispositivos() -> dict:
     return d
 
 
-def _args_fonte_viva(tipo: str, dispositivo: str | None, resolucao: str, fps: int) -> list[str]:
+def endereco_da_camera(cam) -> str:
+    """O endereco de uma camera de REDE, SEM credencial: "10.0.0.7:554/1".
+
+    Dono (25/11/2026): "o app de captura precisa visualizar esse ip e fazer o apontamento". Este texto e'
+    a IDENTIDADE do apontamento (vai para a tela, para a coluna `fonte` e para o log); a credencial NAO
+    entra aqui — ela e' lida do arquivo local na hora de montar a URL (ver `segredo_camera`).
+    """
+    if cam is None:
+        return ""
+    def _pega(k, padrao=""):
+        try:
+            v = cam[k]
+        except Exception:  # noqa: BLE001  (linha sem a coluna)
+            return padrao
+        return str(v or "").strip() or padrao
+    ip = _pega("ip")
+    if not ip:
+        return ""
+    porta = _pega("porta", "554") or "554"
+    canal = _pega("canal")
+    if canal.startswith("/"):
+        caminho = canal[1:]
+    elif canal:
+        caminho = "Streaming/Channels/" + canal       # convencao Hikvision/Intelbras (a mesma do detalhe)
+    else:
+        caminho = ""
+    if "://" in ip:
+        base = ip
+    elif re.search(r":\d+$", ip):
+        base = ip
+    else:
+        base = f"{ip}:{porta}"
+    return base + ("/" + caminho if caminho else "")
+
+
+def _args_fonte_viva(tipo: str, dispositivo: str | None, resolucao: str, fps: int,
+                     camera_id: str | None = None) -> list[str]:
     if tipo == "sintetica":
         return ["-f", "lavfi", "-i", f"testsrc2=size={resolucao or '1920x1080'}:rate={fps or 30}"]
+    if tipo == "rede":
+        # CAMERA DE REDE (RTSP): o endereco vem do cadastro do BORDO e a credencial do arquivo LOCAL
+        # (nunca do banco, nunca do lado terra). Sem segredo configurado aqui NAO se monta URL: quem
+        # chama ja' avisou na tela — melhor recusar do que abrir um RTSP sem credencial.
+        url = segredo_camera.url_com_segredo(str(dispositivo or ""), str(camera_id or ""))
+        if not url:
+            raise RuntimeError("camera de rede sem segredo configurado nesta maquina")
+        return ["-rtsp_transport", "tcp", "-rtbufsize", "256M", "-fflags", "nobuffer", "-i", url]
     if tipo == "radar":
         # Os quadros do radar chegam CRUS por `pipe:0` (1 byte por pixel, tons de cinza, 1.024x1.024 =
         # o numero de amostras por radial). Nada de dshow, nada de tamanho pedido: o radar nao negocia
@@ -954,7 +1055,8 @@ def gravar_alvo_da_camera(camera_id: str | None, alvo: str | None) -> bool:
 def ao_vivo(*, tipo: str = "camera", dispositivo: str | None = None, resolucao: str = "1920x1080",
             fps: int = 30, rotulo: str | None = None, fluxo_id: str | None = None, bitrate: str = "auto",
             embarcacao_id: str = "bancada", srt_host: str = "127.0.0.1", srt_port: int = 8890,
-            radar_fonte: str | None = None, radar_modo: str = "ppi", radar_taxa: str = "30fps") -> dict:
+            radar_fonte: str | None = None, radar_modo: str = "ppi", radar_taxa: str = "30fps",
+            camera_id: str | None = None) -> dict:
     """Envio CONTINUO de uma fonte viva (webcam do notebook ou fonte sintetica), igual a operacao.
 
     Sem duracao determinada e sem laço de arquivo: o ffmpeg le a camera e publica em SRT ate
@@ -965,8 +1067,19 @@ def ao_vivo(*, tipo: str = "camera", dispositivo: str | None = None, resolucao: 
     ou 30 fps) e empurra no ffmpeg. Dai para a frente e' a MESMA cadeia da camera: o radar aparece como
     mais uma camera, com alvo de bitrate escolhido na tela.
     """
-    if tipo not in ("camera", "sintetica", "radar"):
-        return {"erro": "fonte ao vivo invalida: use 'camera' (webcam), 'sintetica' ou 'radar' (.drq)"}
+    if tipo not in ("camera", "sintetica", "radar", "rede"):
+        return {"erro": ("fonte ao vivo invalida: use 'camera' (webcam), 'rede' (camera IP), "
+                         "'sintetica' ou 'radar' (.drq)")}
+    if tipo == "rede":
+        # CAMERA IP: o endereco ja' vem apontado pelo cadastro DESTE PC (dono, 25/11/2026) e a
+        # credencial sai do arquivo local. Sem segredo configurado aqui, nao sobe: a tela diz o que falta.
+        endereco = str(dispositivo or "").strip()
+        if not endereco:
+            return {"erro": "camera de rede sem endereco: cadastre o IP no app de captura"}
+        if not segredo_camera.configurado(str(camera_id or fluxo_id or endereco)):
+            return {"erro": ("camera de rede sem segredo configurado NESTA maquina: crie o arquivo "
+                             f"{segredo_camera.caminho(str(camera_id or fluxo_id or endereco))} com uma "
+                             "linha `usuario:senha` (o segredo nunca sai do PC de captura)")}
     if tipo == "radar":
         # A fonte do radar e' PLUGAVEL (decisao A do dono): arquivo `.drq` ou o radar da embarcacao por
         # TCP (`tcp://host:porta`). O que NAO esta' medido (protocolo de fio do radar original, placa de
@@ -1025,7 +1138,7 @@ def ao_vivo(*, tipo: str = "camera", dispositivo: str | None = None, resolucao: 
     # o SSIM mostrado era de um ajuste que nao era o que ia para a rede.
     alvo_vivo = str(bitrate or "auto").strip()
     if alvo_vivo in ("", "auto"):
-        alvo_vivo = alvo_da_camera(ident) or ("1500k" if tipo in ("camera", "radar") else "2500k")
+        alvo_vivo = alvo_da_camera(ident) or ("1500k" if tipo in ("camera", "radar", "rede") else "2500k")
     # Mede a QUALIDADE (SSIM) do MESMO ajuste antes de entrar no ar: a fonte ainda esta livre e a
     # tela mostra o numero com a hora. Se a medicao falhar, o envio segue — qualidade e informacao,
     # nao pode impedir a operacao. RADAR nao passa por aqui: a fonte e' SINAL, nao video, e a
@@ -1040,7 +1153,11 @@ def ao_vivo(*, tipo: str = "camera", dispositivo: str | None = None, resolucao: 
             # respondia "fluxo nao encontrado" e o SSIM nunca aparecia para quem envia pela tela.
             dados_medicao = {"tipo": tipo, "resolucao": resolucao, "fps": fps, "bitrate_alvo": alvo_vivo,
                              "fonte": (f"dshow:{dispositivo}" if tipo == "camera"
-                                       else f"lavfi:testsrc2:{resolucao}"),
+                                       else (f"rtsp:{dispositivo}" if tipo == "rede"
+                                             else f"lavfi:testsrc2:{resolucao}")),
+                             # rede: o endereco identifica a fonte e a credencial sai do arquivo LOCAL
+                             "endereco": (str(dispositivo or "") if tipo == "rede" else ""),
+                             "camera_id": str(camera_id or ident or ""),
                              "srt_host": srt_host, "srt_port": srt_port}
             m = _qualidade.medir_se_preciso(ident, validade_s=600, segundos=8, bitrate=alvo_vivo,
                                             dados=dados_medicao)
@@ -1055,7 +1172,8 @@ def ao_vivo(*, tipo: str = "camera", dispositivo: str | None = None, resolucao: 
                    bitrate=alvo_vivo, tipo=tipo, repetir=False,
                    dispositivo=dispositivo, resolucao=("1024x1024" if tipo == "radar" else resolucao),
                    fps=fps, embarcacao_id=embarcacao_id, srt_host=srt_host, srt_port=srt_port,
-                   radar_modo=radar_modo, radar_taxa=radar_taxa)
+                   radar_modo=radar_modo, radar_taxa=radar_taxa,
+                   camera_id=str(camera_id or ident or ""))
 
 
 def liberar_camera(dispositivo: str | None = None, espera: float = 1.5) -> dict:
@@ -1163,16 +1281,27 @@ def prontidao_das_cameras() -> dict:
         ultimos = {}
         for r in c.execute("SELECT id, fluxo_id, fonte, pid, estado FROM ingestoes ORDER BY id DESC"):
             ultimos.setdefault(dict(r)["fluxo_id"], dict(r))
-        cameras = [dict(x) for x in c.execute("SELECT id, rotulo, fluxo_id, ip, ativo FROM cameras "
-                                              "ORDER BY rotulo")]
+        cameras = [dict(x) for x in c.execute("SELECT id, rotulo, fluxo_id, ip, porta, protocolo, canal, "
+                                              "ativo FROM cameras ORDER BY rotulo")]
     saida = {"maquina_de_captura": maquina_de_captura(), "dispositivos": sorted(locais),
              "cameras": []}
     for cam in cameras:
         ult = ultimos.get(cam["fluxo_id"]) or {}
         dispositivo = (ult.get("fonte") or "").replace("dshow:", "")
         estado, motivo = "pronta", ""
+        endereco = endereco_da_camera(cam)
         if cam.get("ip"):
-            estado, motivo = "por_endereco", "camera por endereco (RTSP): precisa de credencial e nao e' stand-by local"
+            # CAMERA DE REDE (25/11/2026): nao ha dispositivo dshow para conferir. A tela precisa saber
+            # duas coisas: PARA ONDE o app esta' apontando e se o segredo existe NESTA maquina.
+            vivo = _envio_vivo_do_fluxo(cam["fluxo_id"])
+            if not segredo_camera.configurado(str(cam["id"])):
+                estado, motivo = "sem_segredo", ("falta o segredo nesta maquina: crie o arquivo "
+                                                 + str(segredo_camera.caminho(str(cam["id"])))
+                                                 + " com uma linha `usuario:senha`")
+            elif vivo:
+                estado, motivo = "no_ar", f"no ar desde {vivo.get('atualizado_em') or ''}"
+            else:
+                estado, motivo = "pronta", f"apontando para {endereco}"
         elif not locais:
             estado, motivo = "sem_dispositivo", disp.get("motivo") or "o ffmpeg nao encontrou entrada de video nesta maquina"
         else:
@@ -1186,8 +1315,12 @@ def prontidao_das_cameras() -> dict:
                 dono = _camera_em_uso(dispositivo or None)
                 if dono:
                     estado, motivo = "em_uso", f"em uso pelo envio {dono.get('fluxo_id')}"
+        rede = bool(str(cam.get("ip") or "").strip())
         saida["cameras"].append({"id": cam["id"], "rotulo": cam["rotulo"], "fluxo_id": cam["fluxo_id"],
                                  "estado": estado, "motivo": motivo,
+                                 "tipo": ("rede" if rede else "usb"),
+                                 "aponta_para": (endereco if rede else _normalizar_dispositivo(dispositivo or "")),
+                                 "segredo_configurado": (segredo_camera.configurado(str(cam["id"])) if rede else None),
                                  "dispositivo": _normalizar_dispositivo(dispositivo or "")})
     return saida
 

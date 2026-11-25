@@ -20,6 +20,11 @@ RAIZ = pathlib.Path(__file__).resolve().parent.parent
 # `ambiente.json` que esta' no repositorio, e passaria a falar com a producao em vez de responder em casa.
 os.environ["LECSOR_SEM_AMBIENTE"] = "1"
 PROVAS = (
+    # RODADA 0.18.0 — CAMERA IP: o ENDERECO (IP) e o SEGREDO da camera de rede vivem NO PC DE CAPTURA
+    # (dono, 25/11/2026: "senha nao pode vazar, tem que tudo ficar no bordo, entao nao vamos poder
+    # inserir nem o ip no admin"). A maquina de captura cadastra/edita/remove a camera de rede; o admin
+    # (lado terra) ve so' o nome. Cadastro remoto (sem a maquina se declarar) continua recusado.
+    "tests/test-camera-ip-no-bordo.py",
     # RODADA 0.17.0 — a TELA CHEIA leva a contagem e o botao junto (era pedida no <video>, e o card e o
     # aviso sao IRMAOS dele: a sessao morria sem o cliente ter onde clicar); RECARREGAR a pagina nao
     # derruba mais a transmissao (`pendente` + carencia de 8 s, cancelada pelo batimento de volta); e a

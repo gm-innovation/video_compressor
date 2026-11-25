@@ -47,3 +47,13 @@ button.acao.mini{padding:5px 10px;font-size:12px}
 .saude-emb .linha-selos{margin:0 0 6px}
 .saude-emb ul.sinais{margin:4px 0 0 18px;padding:0;font-size:12.5px;color:var(--texto2)}
 .saude-emb ul.sinais li{margin:2px 0;line-height:1.35}
+/* ------------- EDITAR NO LUGAR (0.18.0, dono 25/11/2026: "não vejo onde editar as câmeras,
+   embarcações e clientes"). O formulário abre DENTRO do próprio cartão, com os valores atuais. D3: o
+   identificador é renomeável; D4: só o admin (o backend recusa o resto). --------------------------- */
+.form-edicao{margin:10px 0 4px;padding:10px 12px;border:1px dashed var(--borda2);border-radius:10px;background:#0d1420}
+.form-edicao .linha-form{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+.form-edicao .linha-form > div{flex:1 1 180px;min-width:150px}
+.form-edicao .linha-form input{width:100%;padding:7px 9px;border-radius:8px;border:1px solid var(--borda2);
+  background:#0b1220;color:var(--texto);font:inherit;box-sizing:border-box}
+.form-edicao .linha-form:last-child{gap:8px}
+.form-edicao .linha-form:last-child > div{flex:0 0 auto;min-width:0}

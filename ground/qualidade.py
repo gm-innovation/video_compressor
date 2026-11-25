@@ -55,6 +55,13 @@ def _fonte_args(d: dict) -> list[str]:
         return ingestao._args_fonte_viva("camera", disp, res, fps)
     if tipo == "sintetica" or fonte.startswith("lavfi:"):
         return ingestao._args_fonte_viva("sintetica", None, res, fps)
+    if tipo == "rede" or fonte.startswith("rtsp:"):
+        # CAMERA DE REDE: a medicao de SSIM usa a MESMA entrada do envio — o endereco e' do cadastro
+        # local e a credencial sai do arquivo do PC de captura (nunca do banco, nunca do lado terra).
+        endereco = str(d.get("endereco") or "").strip()
+        if not endereco and fonte.startswith("rtsp:"):
+            endereco = fonte.split(":", 1)[1]
+        return ingestao._args_fonte_viva("rede", endereco, res, fps, str(d.get("camera_id") or ""))
     return ["-re", "-i", fonte]
 
 
@@ -108,7 +115,10 @@ def medir(fluxo_id: str, segundos: float = SEGUNDOS_PADRAO, bitrate: str | None 
     pasta = Path(tempfile.mkdtemp(prefix="qualidade-"))
     alvo_arq, original_arq = pasta / "alvo.mp4", pasta / "original.mkv"
     try:
-        cmd = _comando(d, segundos, alvo_arq, original_arq, bitrate=bitrate)
+        try:
+            cmd = _comando(d, segundos, alvo_arq, original_arq, bitrate=bitrate)
+        except Exception as e:  # noqa: BLE001  (camera de rede sem segredo local, fonte invalida...)
+            return {"erro": f"nao consegui medir a qualidade: {e}", "fluxo_id": fluxo_id}
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=segundos + 180, errors="replace")
         if p.returncode != 0 or not alvo_arq.exists() or not original_arq.exists():
             ultima = ((p.stderr or "").strip().splitlines() or ["sem detalhe"])[-1][:240]

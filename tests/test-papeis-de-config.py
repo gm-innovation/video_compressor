@@ -12,9 +12,13 @@ Quem pode, provado:
   |---------------------------------------|---------|-----------------|----------|-------|
   | publicar config do bordo              |   nao   |       nao       |   sim    |  sim  |
   | ver desejada x aplicada               |   nao   |       nao       |   sim    |  sim  |
-  | cadastrar camera REMOTO               |   nao   |       nao       |   sim    |  sim  |
-  | cadastrar camera na PROPRIA maquina   |   nao   |       sim       |   sim    |  sim  |
+  | cadastrar camera REMOTO               |   nao   |       nao       |   nao    |  sim  |
+  | cadastrar camera na PROPRIA maquina   |   nao   |       sim       |   nao    |  sim  |
   | ler a config que terra publicou (bordo)|   nao   |  so' com token  |   nao    |  nao  |
+
+D4 do dono (25/11/2026, verbatim: "D4. so' admin"): CADASTRAR/EDITAR o cadastro de camera e' do ADMIN.
+O operador continua OPERANDO (qualidade, tempo) — o que ele perde e' o cadastro novo. Na PROPRIA maquina
+de captura o cadastro segue local (o painel do bordo nao tem login).
 
 "Remoto" aqui e' pedido vindo de outro IP (a API chama de `local` o pedido da propria maquina de captura);
 o teste sobe a API com `LECSOR_BIND=0.0.0.0` e fala com ela pelo IP da maquina para ter os dois casos.
@@ -201,10 +205,16 @@ def main() -> int:
         c, j = pedir("GET", f"{externo}/api/config?embarcacao_id={EMB}", cookie=toks["admin"])
         exigir(c == 200 and {k["chave"] for k in j.get("chaves", [])} == {"alvo_kbps", "teto_s"},
                f"admin GET /api/config ve' desejo x aplicado (veio {c}: {[k['chave'] for k in j.get('chaves', [])]})")
+        # D4 (dono, 25/11/2026: "so' admin"): o operador REMOTO configura a qualidade, mas NAO cadastra
+        # camera nova; quem cadastra e' o admin.
         c, j = pedir("POST", f"{externo}/api/cameras", {"id": "cam-remota", "rotulo": "remota",
                                                         "fluxo_id": "cam-remota", "embarcacao_id": EMB},
                      cookie=toks["operador"])
-        exigir(c == 201, f"operador POST /api/cameras remoto -> 201 (veio {c}: {j})")
+        exigir(c == 401, f"operador REMOTO POST /api/cameras -> 401 (D4: so' admin; veio {c}: {j})")
+        c, j = pedir("POST", f"{externo}/api/cameras", {"id": "cam-remota", "rotulo": "remota",
+                                                        "fluxo_id": "cam-remota", "embarcacao_id": EMB},
+                     cookie=toks["admin"])
+        exigir(c == 201, f"admin POST /api/cameras remoto -> 201 (veio {c}: {j})")
 
         # ---- 6. validacao na borda: o que o produto nao tem, terra recusa
         c, j = pedir("POST", f"{externo}/api/config", {"embarcacao_id": EMB, "camera_id": "cam-do-bordo",

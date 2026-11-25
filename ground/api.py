@@ -78,7 +78,11 @@ ROTAS_CAPTURA_LOCAIS = ("/api/entrar", "/api/eu", "/api/sair", "/api/cameras",
                         # A SERIE da saude (dono, 24/11/2026): o historico e' LOCAL desta maquina (e' o
                         # proprio bordo que mede). Sem esta entrada o pedido do grafico era encaminhado
                         # ao lado terra, que nao tem o anel deste PC de captura.
-                        "/api/bordo/serie")
+                        "/api/bordo/serie",
+                        # DETALHE da camera: e' o cadastro DESTA maquina (com o endereco, que so' existe
+                        # aqui). Sem esta entrada o painel do bordo (que mostra as cameras de rede)
+                        # encaminhava o pedido ao lado terra e a tela vinha vazia/502.
+                        "/api/cameras/detalhe")
 ORIGENS_CAPTURA_PADRAO = ("http://187.127.60.250:8085", "http://127.0.0.1:8085",
                           "http://127.0.0.1:8765", "http://localhost:8765")
 
@@ -93,6 +97,13 @@ def origens_captura() -> tuple:
 def eh_rota_de_captura(rota: str) -> bool:
     """Esta rota e' DESTA maquina (roteamento): aqui ela nao vai para o lado terra."""
     if rota in ROTAS_CAPTURA_LOCAIS:
+        return True
+    # O CRUD DA CAMERA e' DESTA maquina: `/api/cameras/<id>/<acao>` (segredo/editar/remover/nome/ativo).
+    # O cadastro da camera vive aqui (o endereco de uma camera de rede so' existe nesta maquina — dono,
+    # 25/11/2026: "senha nao pode vazar, tem que tudo ficar no bordo"). Sem estas entradas o painel do
+    # bordo encaminhava o pedido ao lado terra (que nao tem o segredo nem o cadastro local) -> 502.
+    if rota.startswith("/api/cameras/") and rota.rsplit("/", 1)[-1] in (
+            "segredo", "editar", "remover", "nome", "ativo"):
         return True
     return any(rota == r or rota.startswith(r + "/") for r in ROTAS_CAPTURA)
 
@@ -119,6 +130,7 @@ from ingestao import desligar_camera as ing_desligar_camera, ligar_camera as ing
 from ingestao import capturar as ing_capturar, listar_dispositivos as ing_dispositivos, ao_vivo as ing_ao_vivo
 from ingestao import maquina_de_captura as ing_maquina_de_captura  # noqa: E402
 from ingestao import prontidao_das_cameras as ing_prontidao  # noqa: E402
+import ingestao as ingestao_modulo  # noqa: E402  (endereco_da_camera: o apontamento da camera de rede)
 from ingestao import limpar_vivos_mortos as ing_limpar_vivos
 from ferramentas import caminho_banco, resumo as resumo_ferramentas  # noqa: E402
 from ferramentas import carregar_ambiente  # noqa: E402
@@ -127,6 +139,7 @@ import gravacao as gravacao_modulo  # noqa: E402
 import trecho as trecho_modulo  # noqa: E402
 import producao as producao_pipeline  # noqa: E402
 import licenca as licenca_modulo  # noqa: E402
+import segredo_camera  # noqa: E402  (segredo da camera de rede: vive SO' no PC de captura)
 from urllib.parse import parse_qs, unquote, urlparse
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -150,6 +163,83 @@ PAPEL_ADMIN = ("operador", "admin")
 PAPEL_OBSERVADOR = "observador"
 PAPEIS_VE_TUDO = PAPEL_ADMIN + (PAPEL_OBSERVADOR,)
 PAPEIS_DE_USUARIO = ("cliente", "operador", "admin", "tecnico", PAPEL_OBSERVADOR)
+# D4 do dono (25/11/2026, verbatim): "D4. so' admin". Vale para o CADASTRO e a EDICAO de
+# empresa/embarcacao/camera/usuario. A OPERACAO (desligar, cancelar, escolher qualidade do que esta'
+# no ar, enviar video) continua com operador+admin (`PAPEL_ADMIN`) — o dono so' tirou do operador o
+# que e' CONFIGURAR. O usuario de captura segue cadastrando a camera NA PROPRIA maquina (regra de
+# 19/11/2026), porque no PC de captura nao existe admin logado.
+PAPEL_CONFIGURA = ("admin",)
+
+
+def pode_configurar(u) -> bool:
+    """Quem configura (cadastra/edita) — "so' admin", como o dono decidiu em 25/11/2026."""
+    try:
+        return bool(u and str(u["papel"]) in PAPEL_CONFIGURA)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _filhos_de(c: sqlite3.Connection, tabela: str, coluna: str) -> list[tuple[str, str]]:
+    """(tabela, coluna) que REFERENCIAM `tabela.coluna` — lido do proprio banco (PRAGMA)."""
+    achados: list[tuple[str, str]] = []
+    for (t,) in c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"):
+        for fk in c.execute(f"PRAGMA foreign_key_list('{t}')"):
+            if fk[2] == tabela and str(fk[4] or "") == coluna:
+                achados.append((t, fk[3]))
+    return achados
+
+
+def renomear_identificador(tabela: str, id_antigo: str, id_novo: str) -> dict:
+    """Troca a CHAVE de um cadastro (cliente/embarcacao) numa transacao UNICA.
+
+    Dono (25/11/2026, D3): "renomeavel". Medido no banco: as chaves sao declaradas com `REFERENCES`
+    e o banco roda com `PRAGMA foreign_keys=ON`, mas SEM `ON UPDATE CASCADE` — renomear o pai estoura
+    se algum filho ainda apontar para o id antigo. Entao: FILHO PRIMEIRO, PAI DEPOIS, tudo numa
+    transacao; qualquer falha volta tudo (nunca fica metade com o id antigo e metade com o novo).
+    A descoberta da lista de filhos e' dinamica (PRAGMA) de proposito: tabela nova entra sozinha.
+    """
+    antigo, novo = str(id_antigo or "").strip(), str(id_novo or "").strip()
+    if not antigo or not novo:
+        return {"ok": False, "erro": "id vazio"}
+    if not re.match(r"^[0-9a-zA-Z._\-]{1,64}$", novo):
+        return {"ok": False, "erro": "identificador invalido: use letras, numeros, ponto, _ ou -"}
+    if novo == antigo:
+        return {"ok": True, "id": antigo, "mudou": False}
+    with conexao() as c:
+        if not c.execute(f"SELECT 1 FROM {tabela} WHERE id=?", (antigo,)).fetchone():
+            return {"ok": False, "erro": "cadastro inexistente", "nao_encontrado": True}
+        if c.execute(f"SELECT 1 FROM {tabela} WHERE id=?", (novo,)).fetchone():
+            return {"ok": False, "erro": "ja existe um cadastro com esse identificador"}
+        filhos = _filhos_de(c, tabela, "id")
+        campos = [r[1] for r in c.execute(f"PRAGMA table_info({tabela})")]
+        if "id" not in campos:
+            return {"ok": False, "erro": "cadastro sem chave id"}
+        c.execute("BEGIN IMMEDIATE")
+        try:
+            for t, col in filhos:
+                c.execute(f"UPDATE {t} SET {col}=? WHERE {col}=?", (novo, antigo))
+            c.execute(f"UPDATE {tabela} SET id=? WHERE id=?", (novo, antigo))
+            if not c.execute(f"SELECT 1 FROM {tabela} WHERE id=?", (novo,)).fetchone():
+                raise RuntimeError("o id novo nao ficou gravado")
+            c.execute("COMMIT")
+        except Exception as e:  # noqa: BLE001
+            c.execute("ROLLBACK")
+            return {"ok": False, "erro": f"nao renomeei (nada foi alterado): {type(e).__name__}: {e}"}
+    return {"ok": True, "id": novo, "de": antigo, "mudou": True,
+            "filhos_atualizados": [f"{t}.{col}" for t, col in filhos]}
+
+
+def estado_do_segredo(camera_id: str) -> dict:
+    """O que a tela (e a API) podem saber do segredo da camera de rede: NUNCA o valor.
+
+    Devolve o estado e o CAMINHO do arquivo — o dono precisa saber onde por a senha no PC de captura.
+    O caminho e' informacao de operacao; a senha, nao. Por isso este e' o unico recado sobre credencial
+    que sai por HTTP (e ele nao tem como vazar porque nao carrega o valor).
+    """
+    return {"configurado": segredo_camera.configurado(str(camera_id)),
+            "arquivo": str(segredo_camera.caminho(str(camera_id))),
+            "origem": segredo_camera.origem(str(camera_id)),
+            "formato": "uma linha `usuario:senha` no arquivo acima, NO PC DE CAPTURA"}
 
 
 def conexao() -> sqlite3.Connection:
@@ -3251,13 +3341,27 @@ class Handler(SimpleHTTPRequestHandler):
                     "SELECT id,rotulo,fluxo_id,embarcacao_id,local,ativo,ip,porta,protocolo,canal,alvo "
                     "FROM cameras ORDER BY id")]
             for l in linhas:
+                # ENTRADA e APONTAMENTO (dono, 25/11/2026): a tela precisa dizer para ONDE a captura
+                # aponta (dshow da maquina ou o IP do cadastro local) — sem credencial nenhuma aqui.
+                l["entrada"] = "rede" if str(l.get("ip") or "").strip() else "usb"
+                l["aponta_para"] = ingestao_modulo.endereco_da_camera(l)
                 if l.get("ip"):
                     canal = str(l.get("canal") or "")
                     l["captura"] = ("rtsp://$USUARIO:$SENHA@" + l["ip"] + ":" + str(l.get("porta") or 554)
                                     + ("/Streaming/Channels/" + canal if canal else ""))
+                    # o estado do segredo (nunca o valor): quem opera sabe se falta por a senha no bordo
+                    l["segredo_configurado"] = segredo_camera.configurado(str(l["id"]))
                 else:
                     l["captura"] = ""
             return self._json(200, {"cameras": linhas}, {"Cache-Control": "no-store"})
+        if rota.startswith("/api/cameras/") and rota.endswith("/segredo"):
+            # ESTADO DO SEGREDO da camera de rede: NUNCA o valor (dono, 25/11/2026: "senha nao pode
+            # vazar, tem que tudo ficar no bordo"). GET porque a tela do bordo so' LE o estado. So' a
+            # PROPRIA maquina de captura (o arquivo mora nela) ou o admin veem o caminho.
+            if not (pode_configurar(u) or self._local()):
+                return self._json(403, {"erro": "so' a maquina de captura ou o admin veem o estado do segredo"})
+            cid = unquote(rota[len("/api/cameras/"):-len("/segredo")]).strip("/")
+            return self._json(200, estado_do_segredo(cid), {"Cache-Control": "no-store"})
         if rota == "/api/cameras/prontidao":
             # Estado de STAND-BY por camera NESTA maquina (pronta / no ar / ausente / em uso). Nao abre
             # camera nenhuma: le' a lista de dispositivos que o ffmpeg ja' entrega. E' o que a tela mostra
@@ -4096,8 +4200,9 @@ class Handler(SimpleHTTPRequestHandler):
             auditar(u, "ativar_usuario" if novo else "desativar_usuario", uid, self.client_address[0])
             return self._json(200, {"id": uid, "ativo": bool(novo)})
         if rota == "/api/clientes":
-            if not (u and u["papel"] in PAPEL_ADMIN):
-                return self._json(401, {"erro": "entre no sistema"})
+            # D4 (dono, 25/11/2026): cadastrar/editar empresa e' do ADMIN.
+            if not pode_configurar(u):
+                return self._json(401, {"erro": "so' o admin cadastra empresa"})
             d = self._corpo()
             faltando = [k for k in ("id", "nome") if not str(d.get(k, "")).strip()]
             if faltando:
@@ -4114,8 +4219,9 @@ class Handler(SimpleHTTPRequestHandler):
             auditar(u, "criar_cliente", d["id"], self.client_address[0])
             return self._json(201, {"id": d["id"], "nome": d["nome"]})
         if rota == "/api/embarcacoes":
-            if not (u and u["papel"] in PAPEL_ADMIN):
-                return self._json(401, {"erro": "entre no sistema"})
+            # D4 (dono, 25/11/2026): cadastrar embarcacao e' do ADMIN.
+            if not pode_configurar(u):
+                return self._json(401, {"erro": "so' o admin cadastra embarcacao"})
             d = self._corpo()
             faltando = [k for k in ("id", "cliente_id", "nome") if not str(d.get(k, "")).strip()]
             if faltando:
@@ -4129,6 +4235,77 @@ class Handler(SimpleHTTPRequestHandler):
                           (d["id"], d["cliente_id"], d["nome"], d.get("imo", ""), d.get("estado", "em operacao")))
             auditar(u, "criar_embarcacao", d["id"], self.client_address[0])
             return self._json(201, {"id": d["id"]})
+        if rota.startswith("/api/clientes/") and rota.endswith("/editar"):
+            # EDITAR EMPRESA (dono, 25/11/2026, verbatim: "nao vejo onde editar as cameras,
+            # embarcacoes e clientes"). Nome e IDENTIFICADOR — D3 = "renomeavel", com a transacao nos
+            # filhos (`renomear_identificador`). A trilha de auditoria guarda de -> para.
+            if not pode_configurar(u):
+                return self._json(403, {"erro": "so' o admin edita empresa"})
+            cid = rota[len("/api/clientes/"):-len("/editar")]
+            d = self._corpo()
+            with conexao() as c:
+                linha = c.execute("SELECT * FROM clientes WHERE id=?", (cid,)).fetchone()
+            if not linha:
+                return self._json(404, {"erro": "empresa inexistente"})
+            mudou, id_original = [], cid
+            nome = str(d.get("nome") or "").strip()
+            if nome and nome != str(linha["nome"] or "").strip():
+                with conexao() as c:
+                    c.execute("UPDATE clientes SET nome=? WHERE id=?", (nome, cid))
+                mudou.append("nome")
+            id_novo = str(d.get("id_novo") or d.get("novo_id") or "").strip()
+            if id_novo and id_novo != cid:
+                r = renomear_identificador("clientes", cid, id_novo)
+                if not r.get("ok"):
+                    return self._json(404 if r.get("nao_encontrado") else 422, r)
+                cid = str(r["id"])
+                mudou.append("id")
+            if not mudou:
+                return self._json(200, {"ok": True, "id": cid, "mudou": [],
+                                        "observacao": "nada a mudar (nome igual e identificador igual)"})
+            auditar(u, "editar_cliente", f"{id_original} -> {cid} [{','.join(mudou)}]",
+                    self.client_address[0])
+            return self._json(200, {"ok": True, "id": cid, "de": id_original, "mudou": mudou})
+        if rota.startswith("/api/embarcacoes/") and rota.endswith("/editar"):
+            # EDITAR EMBARCACAO: nome, IMO, vinculo com a empresa e o proprio identificador (D3).
+            if not pode_configurar(u):
+                return self._json(403, {"erro": "so' o admin edita embarcacao"})
+            eid = rota[len("/api/embarcacoes/"):-len("/editar")]
+            d = self._corpo()
+            with conexao() as c:
+                linha = c.execute("SELECT * FROM embarcacoes WHERE id=?", (eid,)).fetchone()
+            if not linha:
+                return self._json(404, {"erro": "embarcacao inexistente"})
+            mudou, id_original = [], eid
+            campos = {}
+            for chave in ("nome", "imo", "estado"):
+                if chave in d:
+                    campos[chave] = str(d.get(chave) or "").strip()
+            if "nome" in campos and not campos["nome"]:
+                return self._json(422, {"erro": "nome da embarcacao nao pode ficar vazio"})
+            cliente_novo = str(d.get("cliente_id") or "").strip()
+            if cliente_novo:
+                with conexao() as c:
+                    if not c.execute("SELECT 1 FROM clientes WHERE id=?", (cliente_novo,)).fetchone():
+                        return self._json(422, {"erro": "cliente_id inexistente"})
+                campos["cliente_id"] = cliente_novo
+            if campos:
+                sets = ", ".join(f"{k}=?" for k in campos)
+                with conexao() as c:
+                    c.execute(f"UPDATE embarcacoes SET {sets} WHERE id=?", (*campos.values(), eid))
+                mudou.extend(sorted(campos))
+            id_novo = str(d.get("id_novo") or d.get("novo_id") or "").strip()
+            if id_novo and id_novo != eid:
+                r = renomear_identificador("embarcacoes", eid, id_novo)
+                if not r.get("ok"):
+                    return self._json(404 if r.get("nao_encontrado") else 422, r)
+                eid = str(r["id"])
+                mudou.append("id")
+            if not mudou:
+                return self._json(200, {"ok": True, "id": eid, "mudou": [], "observacao": "nada a mudar"})
+            auditar(u, "editar_embarcacao", f"{id_original} -> {eid} [{','.join(mudou)}]",
+                    self.client_address[0])
+            return self._json(200, {"ok": True, "id": eid, "de": id_original, "mudou": mudou})
         if rota == "/api/varredura":
             # VARRER AGORA (botao da tela do bordo). Mesma regra do cadastro de camera: operacao/admin,
             # ou o usuario do PC de captura NA PROPRIA maquina (a varredura so' faz sentido onde a camera
@@ -4152,21 +4329,45 @@ class Handler(SimpleHTTPRequestHandler):
             # o bordo DECLARA os numeros do envio que esta' no ar (lado "declarado" do atestado)
             return self._anuncio_envio()
         if rota == "/api/cameras":
-            # Quem cadastra: operacao/admin em qualquer lugar; o usuario de CAPTURA so' na propria
-            # maquina de captura (dono, 19/11/2026: "o tipo de app e' definido pela role do usuario";
-            # no PC de captura o unico usuario e' o de captura, e ele SO' cadastra). Sem `_local()`
-            # um tecnico remoto nao cadastra nada — a captura so' existe onde a camera esta' plugada.
-            if not ((u and u["papel"] in PAPEL_ADMIN)
+            # Quem cadastra: (a) o ADMIN em terra (`pode_configurar` — D4 do dono, 25/11/2026: "so'
+            # admin"); (b) a PROPRIA maquina de captura DECLARADA e ativada (`_maquina_de_captura` — o
+            # painel do bordo e' servido pelo bordo, SEM login: dono 23/11/2026 "no pc de captura ninguem
+            # precisa abrir nada" e 25/11/2026 "o cadastro das cameras ip terao que ser no app de
+            # captura"); (c) o usuario de CAPTURA na PROPRIA maquina (papel + loopback). Loopback SEM
+            # declaracao (o servidor de terra rodando na mesma maquina) NAO basta: um observador remoto
+            # continua recusado, mesmo que fale por 127.0.0.1.
+            if not (pode_configurar(u) or self._maquina_de_captura()
                     or (u and u["papel"] in ("tecnico", "captura") and self._local())):
                 return self._json(401, {"erro": "entre no sistema"})
             d = self._corpo()
+            # CREDENCIAL DE CAMERA NUNCA ENTRA NO CADASTRO. Dono (25/11/2026): "senha nao pode vazar,
+            # entao tem que tudo ficar no bordo". Recusar aqui e' o que garante que a senha nao tem
+            # como ser gravada no banco nem publicada no lado terra, mesmo por engano de quem chama.
+            for proibido in ("senha", "password", "passwd", "pwd", "segredo", "credencial"):
+                if proibido in d:
+                    return self._json(422, {
+                        "erro": ("a SENHA da camera nao entra no cadastro: o segredo fica no arquivo "
+                                 "local do PC de captura (segredo_camera), nunca no banco nem no lado terra"),
+                        "onde_por_o_segredo": str(segredo_camera.caminho(str(d.get("id") or "cam"))),
+                        "formato": "uma linha `usuario:senha` no arquivo acima, no PC de captura"})
             # identificador derivado do fluxo: menos campo para o dono preencher
             if not str(d.get("id", "")).strip():
                 d["id"] = re.sub(r"[^a-zA-Z0-9_\\-]", "-", str(d.get("fluxo_id", "")).strip())
             d["rotulo"] = str(d.get("rotulo") or d.get("fluxo_id", "")).strip()
             ip = str(d.get("ip") or "").strip()
             porta = str(d.get("porta") or "").strip()
-            if ip and not re.match(r"^[0-9a-zA-Z.:\\-]{3,64}$", ip):
+            entrada = str(d.get("entrada") or ("rede" if ip else "usb")).strip().lower()
+            if entrada not in ("usb", "rede"):
+                return self._json(422, {"erro": "entrada invalida: use 'usb' (dshow/HDMI) ou 'rede' (IP)"})
+            if ip and not self._local():
+                # D1 do dono (25/11/2026): "nao vamos poder inserir nem o ip no admin, o cadastro das
+                # cameras ip terao que ser no app de captura". O endereco so' entra por aqui a partir
+                # da PROPRIA maquina de captura (loopback) — nunca pelo navegador do admin.
+                return self._json(422, {"erro": ("o endereco da camera (IP) e' cadastrado NO PC DE CAPTURA, "
+                                                 "nao no admin: quem aponta para o IP e' o app de captura")})
+            if entrada == "rede" and not ip:
+                return self._json(422, {"erro": "camera de rede sem IP: informe o endereco no PC de captura"})
+            if ip and not re.match(r"^[0-9a-zA-Z.:\-]{3,64}$", ip):
                 return self._json(422, {"erro": "ip invalido"})
             if porta and not (porta.isdigit() and 1 <= int(porta) <= 65535):
                 return self._json(422, {"erro": "porta invalida"})
@@ -4189,6 +4390,13 @@ class Handler(SimpleHTTPRequestHandler):
                                  ON CONFLICT(camera_id,chave) DO UPDATE SET valor=excluded.valor,
                                    atualizado_em=excluded.atualizado_em""",
                               (d["id"], "dispositivo", dispositivo, em_iso()))
+                # ENTRADA da camera (usb|rede) FICA NESTA MAQUINA: e' o que a tela do bordo e o agente
+                # leem para saber se abrem o dshow ou apontam para o RTSP do cadastro local.
+                c.execute("""INSERT INTO config_local (camera_id,chave,valor,versao,atualizado_em)
+                             VALUES (?,?,?,0,?)
+                             ON CONFLICT(camera_id,chave) DO UPDATE SET valor=excluded.valor,
+                               atualizado_em=excluded.atualizado_em""",
+                          (d["id"], "entrada", entrada, em_iso()))
                 c.execute("""INSERT OR REPLACE INTO cameras
                              (id,embarcacao_id,rotulo,fluxo_id,local,ativo,ip,porta,protocolo,canal,alvo)
                              VALUES (?,?,?,?,?,1,?,?,?,?,?)""",
@@ -4220,8 +4428,26 @@ class Handler(SimpleHTTPRequestHandler):
                                                   "ativo": 1})
             except Exception as e:
                 lado = {"ok": False, "motivo": f"{type(e).__name__}: {e}"}
-            return self._json(201, {"id": d["id"], "ip": ip, "porta": porta,
-                                    "lado_terra": lado, "supabase": espelho})
+            resposta = {"id": d["id"], "ip": ip, "porta": porta, "entrada": entrada,
+                        "lado_terra": lado, "supabase": espelho}
+            if entrada == "rede":
+                # a tela do bordo precisa saber se JA' tem segredo configurado (nunca o valor)
+                resposta["segredo"] = estado_do_segredo(str(d["id"]))
+            return self._json(201, resposta)
+        if rota.startswith("/api/cameras/") and rota.endswith("/segredo"):
+            # ESTADO DO SEGREDO da camera de rede (nunca o valor). So' a PROPRIA maquina de captura
+            # (loopback) ou admin: o caminho do arquivo e' informacao de operacao do bordo.
+            if not (self._local() or pode_configurar(u)):
+                return self._json(403, {"erro": "so' a maquina de captura ve o estado do segredo"})
+            cid = rota[len("/api/cameras/"):-len("/segredo")]
+            with conexao() as c:
+                cam = c.execute("SELECT * FROM cameras WHERE id=?", (cid,)).fetchone()
+            if not cam:
+                return self._json(404, {"erro": "camera inexistente"})
+            e = estado_do_segredo(cid)
+            e.update({"id": cid, "entrada": ("rede" if str(cam["ip"] or "").strip() else "usb"),
+                      "aponta_para": ingestao_modulo.endereco_da_camera(cam)})
+            return self._json(200, e, {"Cache-Control": "no-store"})
         if rota == "/api/cameras/publicar":
             # Forca a publicacao do cadastro das cameras DESTA maquina no lado terra. E' o que a tela
             # usa quando a camera ja' existia aqui antes (registrada quando a publicacao automatica
@@ -4253,8 +4479,10 @@ class Handler(SimpleHTTPRequestHandler):
             # Tirar da operacao a camera que nao e' mais usada: para o envio dela, apaga o cadastro
             # AQUI e publica a remocao no lado terra — senao a camera fica para sempre no app do
             # cliente (desativar escondia, mas o cadastro continuava). Trechos e auditoria ficam.
-            if not (u and u["papel"] in PAPEL_ADMIN):
-                return self._json(403, {"erro": "so a operacao remove camera: entre como operador ou admin"})
+            # D4 (dono, 25/11/2026): remover cadastro de camera e' do ADMIN — ou da PROPRIA maquina de
+            # captura DECLARADA e ativada (o painel do bordo remove o cadastro que ele mesmo criou).
+            if not (pode_configurar(u) or self._maquina_de_captura()):
+                return self._json(403, {"erro": "so' o admin remove camera (D4 de 25/11/2026)"})
             cid = rota[len("/api/cameras/"):-len("/remover")]
             with conexao() as c:
                 cam = c.execute("SELECT * FROM cameras WHERE id=?", (cid,)).fetchone()
@@ -4287,8 +4515,9 @@ class Handler(SimpleHTTPRequestHandler):
             # terra E desce como a chave `rotulo` da config — o PC de captura aplica e confirma. Sem
             # isto o nome vivia so' aqui: o bordo continuava com o nome do dispositivo e a varredura
             # seguinte reescrevia o rotulo por cima.
-            if not (u and u["papel"] in PAPEL_ADMIN):
-                return self._json(403, {"erro": "so a operacao da' nome a camera: entre como operador ou admin"})
+            # D4 (dono, 25/11/2026): dar nome ao cadastro da camera e' do ADMIN.
+            if not pode_configurar(u):
+                return self._json(403, {"erro": "so' o admin da' nome a camera (D4 de 25/11/2026)"})
             cid = rota[len("/api/cameras/"):-len("/nome")]
             d = self._corpo()
             nome = str(d.get("rotulo") or "").strip()
@@ -4311,8 +4540,14 @@ class Handler(SimpleHTTPRequestHandler):
             # Editar a camera EM OPERACAO, campo a campo. `POST /api/cameras` e' INSERT OR REPLACE
             # (recria a linha e zera `ativo`): serve para criar, nao para editar. Aqui muda SO' o que
             # veio no corpo, sem resetar `ativo`, `alvo` nem o que o cliente ja' ve.
-            if not (u and u["papel"] in PAPEL_ADMIN):
-                return self._json(403, {"erro": "so a operacao edita camera: entre como operador ou admin"})
+            # D4 (dono, 25/11/2026): editar o CADASTRO da camera e' do ADMIN. Excecoes mantidas: a
+            # PROPRIA maquina de captura DECLARADA e ativada (`_maquina_de_captura` — o painel do bordo,
+            # servido pelo bordo, SEM login) e o usuario de CAPTURA no loopback — porque e' la' que o
+            # endereco da camera de rede e' cadastrado (dono: "o cadastro das cameras ip terao que ser no
+            # app de captura").
+            if not (pode_configurar(u) or self._maquina_de_captura()
+                    or (u and u["papel"] in ("tecnico", "captura") and self._local())):
+                return self._json(403, {"erro": "so' o admin edita camera (ou a propria maquina de captura)"})
             cid = rota[len("/api/cameras/"):-len("/editar")]
             d = self._corpo()
             campos, mudados = {}, []
@@ -4323,6 +4558,10 @@ class Handler(SimpleHTTPRequestHandler):
                 for chave in ("rotulo", "embarcacao_id", "ip", "porta", "protocolo", "canal", "fluxo_id"):
                     if chave not in d:
                         continue
+                    if chave in ("ip", "porta", "protocolo", "canal") and not self._local():
+                        # D1 do dono (25/11/2026): "nao vamos poder inserir nem o ip no admin".
+                        return self._json(422, {"erro": ("o endereco da camera (ip/porta/canal) e' cadastrado "
+                                                         "NO PC DE CAPTURA: o admin nao poe endereco de camera")})
                     valor = str(d.get(chave) or "").strip()
                     if chave == "rotulo" and not valor:
                         return self._json(422, {"erro": "rotulo nao pode ficar vazio"})
@@ -4384,8 +4623,9 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(200, {"id": cid, "alvo": alvo, "alvos": list(self.ALVOS_DE_QUALIDADE),
                                     **aplicado})
         if rota.startswith("/api/cameras/") and rota.endswith("/ativo"):
-            if not (u and u["papel"] in PAPEL_ADMIN):
-                return self._json(401, {"erro": "entre no sistema"})
+            # D4 (dono, 25/11/2026): o ATIVO da camera e' cadastro — quem mexe e' o ADMIN.
+            if not pode_configurar(u):
+                return self._json(401, {"erro": "so' o admin ativa/desativa camera (D4 de 25/11/2026)"})
             cid = rota[len("/api/cameras/"):-len("/ativo")]
             novo = 1 if self._corpo().get("ativo", True) else 0
             with conexao() as c:

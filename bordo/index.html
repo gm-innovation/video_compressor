@@ -48,6 +48,22 @@
   button { padding: 8px 12px; font: 600 13px/1 inherit; color: #04122b; background: #6ba6ff; border: 0;
            border-radius: 8px; cursor: pointer; }
 
+  /* CÂMERAS DE REDE (dono, 25/11/2026): "o cadastro das câmeras ip terão que ser no app de captura".
+     Esta é a ÚNICA tela que digita um IP de câmera — ele nunca sobe ao lado terra nem ao admin. A senha
+     nem por aqui passa: vive no arquivo de segredo desta máquina (`segredo_camera`). */
+  .cam-rede-bloco { grid-column: 1 / -1; }
+  .linha-form { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+  .linha-form input { flex: 1 1 150px; min-width: 130px; padding: 8px 10px; font: inherit; color: #e8eefc;
+    background: #0a1424; border: 1px solid #2b3c5e; border-radius: 8px; }
+  .linha-form input::placeholder { color: #6a7a9c; }
+  .cam-item { border: 1px solid #22304d; border-radius: 10px; padding: 10px 12px; margin: 8px 0; }
+  .cam-item .topo { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .cam-item .topo b { font-size: 15px; }
+  .cam-item .acoes { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .cam-item .acoes button { padding: 5px 9px; font-size: 12px; background: #2b3c5e; color: #e8eefc; }
+  .cam-item .acoes button.principal { background: #6ba6ff; color: #04122b; }
+  .assistente { color: #7d8cab; font-size: 12.5px; margin-top: 4px; }
+
   /* ------------------------------------------------ DASHBOARD (dono, 24/11/2026)
      "os cards estão horríveis". A primeira dobra passa a ser o que se lê DE LONGE: quatro números
      grandes (CPU, memória, disco, rede) com o estado ao lado, usando os MESMOS limiares do lado terra
@@ -175,6 +191,29 @@
       <h2>Varredura das câmeras <span id="selo-varredura" class="selo neutro">—</span></h2>
       <dl id="ficha-varredura"></dl>
       <div id="achados" class="fraco"></div>
+    </div>
+
+    <!-- CÂMERAS DE REDE (IP) — cadastro NO PC DE CAPTURA (dono, 25/11/2026). O endereço e a senha de
+         uma câmera IP não saem daqui: o admin (lado terra) nunca vê o IP nem a senha. Detalhes no topo
+         do arquivo e em `ground/segredo_camera.py`. -->
+    <div class="bloco cam-rede-bloco">
+      <h2>Câmeras de rede (IP) <span id="selo-rede" class="selo neutro">—</span></h2>
+      <p class="sub" style="margin:0 0 10px">O endereço e a senha de uma câmera IP <b>não saem deste
+      PC</b>: o cadastro do IP é feito aqui, e o admin não vê nem o IP nem a senha. A senha fica num
+      arquivo desta máquina — <b>este produto nunca pede senha</b>.</p>
+      <div id="cams-rede"><span class="fraco">carregando…</span></div>
+      <div class="linha-form" style="margin-top:10px">
+        <input id="rede-rotulo" placeholder="Nome na tela (ex.: Proa)" maxlength="120">
+        <input id="rede-fluxo" placeholder="Fluxo (ex.: proa)" maxlength="60">
+      </div>
+      <div class="linha-form">
+        <input id="rede-ip" placeholder="IP ou host (ex.: 192.168.1.64)" maxlength="64">
+        <input id="rede-porta" placeholder="Porta (ex.: 554)" maxlength="5">
+        <input id="rede-canal" placeholder="Canal do gravador (ex.: 101)" maxlength="10">
+      </div>
+      <button id="btn-rede">Cadastrar câmera de rede</button>
+      <div class="assistente" id="rede-dica">O nome do fluxo vira o identificador; a porta padrão é a
+      554 (RTSP). A senha você põe no arquivo de segredo desta máquina — a tela mostra se já está lá.</div>
     </div>
 
     <div class="bloco">
@@ -478,6 +517,141 @@ async function carregar() {
        faltando === 0 ? 'ok' : (faltando === 1 ? 'neutro' : 'ruim'));
   $('atualizado').textContent = 'Conferido às ' + new Date().toLocaleTimeString('pt-BR') +
                                 '  ·  esta tela se atualiza sozinha a cada 10 s';
+
+  carregarCamerasDeRede();
+}
+
+/* ------------------------------------------------- CÂMERAS DE REDE (IP) — cadastro NO BORDO (dono,
+   25/11/2026): "o cadastro das câmeras ip terão que ser no app de captura". O IP e a senha NUNCA saem
+   desta máquina: aqui ela cadastra o endereço e a captura aponta para ele. A senha é lida do arquivo
+   de segredo desta máquina (`ground/segredo_camera.py`) — a tela só mostra SE está configurada. */
+function seloNovo(texto, classe) {
+  const s = document.createElement('span');
+  s.className = 'selo ' + (classe || 'neutro');
+  s.textContent = texto;
+  return s;
+}
+
+async function carregarCamerasDeRede() {
+  const alvo = $('cams-rede');
+  if (!alvo) return;
+  let d = {};
+  try {
+    const r = await fetch('/api/cameras/detalhe', { cache: 'no-store' });
+    if (r.status === 401 || r.status === 403) {
+      selo($('selo-rede'), 'sem permissão', 'ruim');
+      alvo.textContent = 'o servidor local desta máquina não liberou a leitura das câmeras.';
+      return;
+    }
+    d = await r.json();
+  } catch (e) {
+    selo($('selo-rede'), 'sem servidor local', 'ruim');
+    alvo.textContent = 'não consegui ler as câmeras desta máquina (' + e.message + ').';
+    return;
+  }
+  const cams = d.cameras || [];
+  const rede = cams.filter((c) => c.entrada === 'rede');
+  alvo.innerHTML = '';
+  if (!cams.length) {
+    selo($('selo-rede'), 'nenhuma câmera', 'neutro');
+    alvo.textContent = 'Nenhuma câmera cadastrada ainda. As câmeras de HDMI/USB aparecem pela varredura; ' +
+      'a câmera de rede (IP) você cadastra abaixo.';
+    return;
+  }
+  const semSegredo = rede.filter((c) => !c.segredo_configurado).length;
+  selo($('selo-rede'), cams.length + ' câmera(s) · ' + rede.length + ' de rede',
+       semSegredo ? 'neutro' : 'ok');
+  for (const c of cams) {
+    const item = document.createElement('div');
+    item.className = 'cam-item';
+    const topo = document.createElement('div');
+    topo.className = 'topo';
+    const b = document.createElement('b');
+    b.textContent = c.rotulo || c.id;
+    topo.appendChild(b);
+    topo.appendChild(c.entrada === 'rede'
+      ? seloNovo(c.segredo_configurado ? 'rede · segredo ok' : 'rede · falta segredo',
+                 c.segredo_configurado ? 'ok' : 'neutro')
+      : seloNovo('HDMI / USB', 'neutro'));
+    item.appendChild(topo);
+    const linha = document.createElement('div');
+    linha.className = 'assistente';
+    linha.textContent = c.entrada === 'rede'
+      ? ('fluxo ' + c.fluxo_id + ' · aponta para ' + (c.aponta_para || '—') +
+         ' · segredo configurado: ' + (c.segredo_configurado ? 'sim' : 'NÃO'))
+      : ('fluxo ' + c.fluxo_id + ' · entrada por HDMI/USB (dispositivo local desta máquina)');
+    item.appendChild(linha);
+    const acoes = document.createElement('div');
+    acoes.className = 'acoes';
+    if (c.entrada === 'rede') {
+      const bt = document.createElement('button');
+      bt.className = 'principal';
+      bt.textContent = 'conferir segredo';
+      bt.addEventListener('click', async () => {
+        try {
+          const r = await fetch('/api/cameras/' + encodeURIComponent(c.id) + '/segredo',
+                                { cache: 'no-store' });
+          const j = await r.json().catch(() => ({}));
+          linha.textContent = r.ok
+            ? ('fluxo ' + c.fluxo_id + ' · aponta para ' + (j.aponta_para || c.aponta_para || '—') +
+               ' · segredo: ' + (j.configurado ? 'configurado' : 'ainda não configurado') +
+               (j.arquivo ? '  ·  arquivo: ' + j.arquivo : ''))
+            : ('não consegui conferir o segredo: ' + (j.erro || r.status));
+        } catch (e) { linha.textContent = 'falha ao conferir o segredo: ' + e.message; }
+      });
+      acoes.appendChild(bt);
+    }
+    const bd = document.createElement('button');
+    bd.textContent = 'remover';
+    bd.addEventListener('click', async () => {
+      if (!confirm('Remover o cadastro da câmera "' + (c.rotulo || c.id) + '"? A gravação e a trilha ' +
+                   'de auditoria ficam.')) return;
+      try {
+        const r = await fetch('/api/cameras/' + encodeURIComponent(c.id) + '/remover',
+                              { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) alert('não removi: ' + (j.erro || r.status));
+      } catch (e) { alert('não removi: ' + e.message); }
+      carregarCamerasDeRede();
+    });
+    acoes.appendChild(bd);
+    item.appendChild(acoes);
+    alvo.appendChild(item);
+  }
+}
+
+const botaoRede = $('btn-rede');
+if (botaoRede) {
+  botaoRede.addEventListener('click', async () => {
+    const dica = $('rede-dica');
+    const rotulo = $('rede-rotulo').value.trim();
+    const fluxo = ($('rede-fluxo').value.trim() || rotulo);
+    const ip = $('rede-ip').value.trim();
+    const porta = $('rede-porta').value.trim() || '554';
+    const canal = $('rede-canal').value.trim();
+    if (!ip) { dica.textContent = 'informe o IP (ou host) da câmera.'; return; }
+    if (!fluxo) { dica.textContent = 'informe um nome para o fluxo (ex.: proa).'; return; }
+    dica.textContent = 'cadastrando…';
+    let r, j;
+    try {
+      r = await fetch('/api/cameras', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rotulo: rotulo || fluxo, fluxo_id: fluxo, entrada: 'rede', ip: ip,
+                               porta: porta, protocolo: 'rtsp', canal: canal }) });
+      j = await r.json().catch(() => ({}));
+    } catch (e) { dica.textContent = 'não consegui falar com o servidor local: ' + e.message; return; }
+    if (r.ok) {
+      const s = j.segredo || {};
+      dica.textContent = 'câmera cadastrada: ' + j.id + '. ' + (s.configurado
+        ? 'o segredo já está configurado nesta máquina.'
+        : ('falta o segredo: ponha a senha no arquivo ' + (s.arquivo || '(desta máquina)') +
+           ' — uma linha "usuario:senha".'));
+      for (const id of ['rede-rotulo', 'rede-fluxo', 'rede-ip', 'rede-porta', 'rede-canal']) $(id).value = '';
+      carregarCamerasDeRede();
+    } else {
+      dica.textContent = 'recusado: ' + (j.erro || JSON.stringify(j));
+    }
+  });
 }
 
 /* ------------------------------------------------------------ DASHBOARD (dono, 24/11/2026)

@@ -576,22 +576,14 @@ function telaCameras(t) {
     const caixa = document.createElement('div'); caixa.className = 'caixa-form';
     caixa.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Câmera: onde ela está e por onde entra' }));
     const aviso = document.createElement('div'); aviso.className = 'nota';
-    aviso.textContent = 'IP e porta ficam só aqui (operação/LECSOR) e no servidor de captura; o app do cliente nunca recebe ' +
-      'endereço de câmera nem senha. A senha entra por variável de ambiente no servidor de captura, não neste formulário.';
+    /* D1 do dono (25/11/2026): "não vamos poder inserir nem o ip no admin, o cadastro das câmeras ip
+       terão que ser no app de captura". Aqui NÃO há mais campo de IP: o endereço da câmera de rede é
+       cadastrado no painel do bordo, e a senha vive no arquivo de segredo daquela máquina. O lado
+       terra nunca recebe nem o IP nem a senha. */
+    aviso.textContent = 'O endereço (IP) de uma câmera de rede é cadastrado NO PC DE CAPTURA, no painel ' +
+      'do bordo — nunca aqui: nem o IP nem a senha sobem para o lado terra. As câmeras de HDMI/USB ' +
+      'aparecem sozinhas pela varredura.';
     caixa.appendChild(aviso);
-    const linha = document.createElement('div'); linha.className = 'linha-form'; caixa.appendChild(linha);
-    const rot = campo(linha, 'k-rot', 'Rótulo na tela', '');
-    const flu = campo(linha, 'k-fluxo', 'Fluxo publicado (ex.: cam-01)', '');
-    const ip = campo(linha, 'k-ip', 'IP da câmera ou gravador', '');
-    const porta = campo(linha, 'k-porta', 'Porta', '554');
-    const canal = campo(linha, 'k-canal', 'Canal do gravador (opcional)', '');
-    caixa.appendChild(botao('Cadastrar câmera', 'marca', async () => {
-      const r = await api('/api/cameras', { method: 'POST', body: JSON.stringify({
-        rotulo: rot.value.trim() || flu.value.trim(), fluxo_id: flu.value.trim(),
-        ip: ip.value.trim(), porta: (porta.value || '').trim(), canal: (canal.value || '').trim() }) });
-      await atualizar();
-      mostrarRecado(r.ok ? 'câmera cadastrada: ' + r.corpo.id : 'recusado: ' + JSON.stringify(r.corpo), !r.ok);
-    }));
     /* O cadastro desta máquina sobe sozinho no lado terra (ao cadastrar e ao subir o servidor local).
        Este botão existe para o caso da câmera que já estava cadastrada antes disso: sem ele a linha
        fica só no banco local e o app do cliente não mostra nada ("cadastrei cam-01 e não aparece"). */
@@ -744,22 +736,14 @@ function telaCameras(t) {
           mostrarRecado(r.ok ? (l.ativo ? 'câmera desativada — o cliente não vê mais' : 'câmera ativada de novo') : 'recusado: ' + JSON.stringify(r.corpo), !r.ok);
           if (r.ok) { A.camerasInterno = null; await atualizar(); }
         }));
-        /* Editar EM OPERAÇÃO: muda só o que você digitar. Não recria a linha (isso zerava `ativo` e o
-           alvo escolhido) e não toca no vídeo quando é só o rótulo. */
+        /* Editar EM OPERAÇÃO: muda só o RÓTULO. O endereço (IP/porta/canal) NÃO é editável aqui — o
+           dono (25/11/2026): "não vamos poder inserir nem o ip no admin"; o endereço da câmera de rede
+           é cadastrado no painel do bordo. */
         cx.appendChild(botao('editar', 'mini', async () => {
           const rot = prompt('Rótulo desta câmera (Enter mantém "' + l.rotulo + '"):', l.rotulo);
           if (rot === null) return;
-          const end = prompt('Endereço de operação (IP:porta ou só IP). Enter mantém "' + (c.ip || '—') + '".',
-            (c.ip || '') + (c.porta ? ':' + c.porta : ''));
-          if (end === null) return;
           const corpo = {};
           if (rot.trim() && rot.trim() !== l.rotulo) corpo.rotulo = rot.trim();
-          if (end.trim()) {
-            const m = end.trim().match(/^([^:]+)(?::(\d+))?$/);
-            if (!m) { mostrarRecado('endereço inválido: use IP ou IP:porta', true); return; }
-            if (m[1] !== (c.ip || '')) corpo.ip = m[1];
-            if (m[2] && m[2] !== String(c.porta || '')) corpo.porta = m[2];
-          }
           if (!Object.keys(corpo).length) { mostrarRecado('nada a mudar em ' + l.rotulo, true); return; }
           const r = await api('/api/cameras/' + encodeURIComponent(l.id) + '/editar',
             { method: 'POST', body: JSON.stringify(corpo) });
@@ -2353,6 +2337,32 @@ function seloDe(tom, texto) {
 
 function notaDe(texto) { const p = document.createElement('p'); p.className = 'nota'; p.textContent = texto; return p; }
 
+/* EDITAR O CADASTRO no lugar (dono, 25/11/2026: "não vejo onde editar as câmeras, embarcações e
+   clientes"). O formulário abre DENTRO do próprio cartão, com os valores atuais. D3: o IDENTIFICADOR é
+   renomeável (não só o nome); D4: só o admin — o backend recusa o resto. */
+function formularioDeEdicao(caixa, campos, aoSalvar) {
+  const antigo = caixa.querySelector('.form-edicao'); if (antigo) { antigo.remove(); return null; }
+  const f = document.createElement('div'); f.className = 'form-edicao';
+  const linha = document.createElement('div'); linha.className = 'linha-form'; f.appendChild(linha);
+  const entradas = {};
+  for (const c of campos) {
+    const inp = campo(linha, 'ed-' + c.chave + '-' + Math.random().toString(36).slice(2, 7), c.rotulo, c.valor || '');
+    if (c.max) inp.maxLength = c.max;
+    if (c.dica) inp.title = c.dica;
+    entradas[c.chave] = inp;
+  }
+  const acoes = document.createElement('div'); acoes.className = 'linha-form';
+  acoes.appendChild(botao('salvar', 'marca', async () => {
+    const corpo = {};
+    for (const c of campos) corpo[c.chave] = entradas[c.chave].value.trim();
+    await aoSalvar(corpo, f);
+  }));
+  acoes.appendChild(botao('cancelar', 'mini', () => f.remove()));
+  f.appendChild(acoes);
+  caixa.appendChild(f);
+  return f;
+}
+
 async function telaEmpresas(t) {
   const r = await api('/api/empresas');
   if (!r.ok) { t.appendChild(recado('não consegui ler a área do cliente: ' + JSON.stringify(r.corpo), true)); return; }
@@ -2390,6 +2400,21 @@ function areaDasEmpresas(t, empresas, semEmpresa) {
       + (e.resumo.achadas_pela_varredura ? ' · ' + e.resumo.achadas_pela_varredura + ' achada(s) pela varredura' : '')));
     const acoes = document.createElement('div'); acoes.className = 'linha-form';
     acoes.appendChild(botao('Abrir', 'marca', () => { A.empresaId = e.id; desenhar(true); }));
+    if (A.usuario.papel === 'admin') {
+      acoes.appendChild(botao('editar', 'mini', () => formularioDeEdicao(caixa, [
+        { chave: 'nome', rotulo: 'Nome da empresa', valor: e.nome, max: 120 },
+        { chave: 'id_novo', rotulo: 'Identificador (renomeável)', valor: e.id, max: 64,
+          dica: 'D3: o identificador é renomeável — a troca é transacional nos vínculos' },
+      ], async (corpo) => {
+        const r = await api('/api/clientes/' + encodeURIComponent(e.id) + '/editar',
+                            { method: 'POST', body: JSON.stringify(corpo) });
+        if (r.ok && r.corpo && r.corpo.id) A.empresaId = r.corpo.id;
+        await atualizar();
+        mostrarRecado(r.ok ? ('empresa atualizada: ' + ((r.corpo && r.corpo.id) || e.id) +
+          (((r.corpo || {}).mudou || []).length ? ' (' + r.corpo.mudou.join(', ') + ')' : ' (nada a mudar)'))
+          : 'recusado: ' + ((r.corpo && r.corpo.erro) || JSON.stringify(r.corpo)), !r.ok);
+      })));
+    }
     caixa.appendChild(acoes);
     t.appendChild(caixa);
   }
@@ -2407,6 +2432,19 @@ function areaDasEmpresas(t, empresas, semEmpresa) {
 function areaDaEmpresa(t, empresa) {
   const barra = document.createElement('div'); barra.className = 'linha-form';
   barra.appendChild(botao('← todas as empresas', 'mini', () => { A.empresaId = null; desenhar(true); }));
+  if (A.usuario.papel === 'admin') {
+    barra.appendChild(botao('editar empresa', 'mini', () => formularioDeEdicao(t, [
+      { chave: 'nome', rotulo: 'Nome da empresa', valor: empresa.nome, max: 120 },
+      { chave: 'id_novo', rotulo: 'Identificador (renomeável)', valor: empresa.id, max: 64 },
+    ], async (corpo) => {
+      const r = await api('/api/clientes/' + encodeURIComponent(empresa.id) + '/editar',
+                          { method: 'POST', body: JSON.stringify(corpo) });
+      if (r.ok && r.corpo && r.corpo.id) A.empresaId = r.corpo.id;
+      await atualizar();
+      mostrarRecado(r.ok ? ('empresa atualizada: ' + ((r.corpo && r.corpo.id) || empresa.id))
+        : 'recusado: ' + ((r.corpo && r.corpo.erro) || JSON.stringify(r.corpo)), !r.ok);
+    })));
+  }
   t.appendChild(barra);
   t.appendChild(Object.assign(document.createElement('h2'), { textContent: empresa.nome + ' — ' + empresa.id }));
   t.appendChild(notaDe(empresa.resumo.embarcacoes + ' embarcação(ões) · ' + empresa.resumo.cameras
@@ -2492,6 +2530,21 @@ function cartaoDaEmbarcacao(emb) {
   h.appendChild(seloDe(tomDaSaude(se), se === 'ok' ? 'saúde ok' : (se === 'atencao' ? 'atenção'
     : (se ? 'problema' : 'sem retorno do bordo'))));
   caixa.appendChild(h);
+  /* EDITAR a embarcação (dono, 25/11/2026): nome e IDENTIFICADOR (D3, renomeável). D4: só admin. */
+  if (A.usuario.papel === 'admin') {
+    const ae = document.createElement('div'); ae.className = 'linha-form';
+    ae.appendChild(botao('editar embarcação', 'mini', () => formularioDeEdicao(caixa, [
+      { chave: 'nome', rotulo: 'Nome da embarcação', valor: emb.nome, max: 120 },
+      { chave: 'id_novo', rotulo: 'Identificador (renomeável)', valor: emb.id, max: 64 },
+    ], async (corpo) => {
+      const r = await api('/api/embarcacoes/' + encodeURIComponent(emb.id) + '/editar',
+                          { method: 'POST', body: JSON.stringify(corpo) });
+      await atualizar();
+      mostrarRecado(r.ok ? ('embarcação atualizada: ' + ((r.corpo && r.corpo.id) || emb.id))
+        : 'recusado: ' + ((r.corpo && r.corpo.erro) || JSON.stringify(r.corpo)), !r.ok);
+    })));
+    caixa.appendChild(ae);
+  }
   caixa.appendChild(notaDe('Câmeras: ' + emb.resumo.cameras + ' · no ar: ' + emb.resumo.no_ar
     + ' · ativas: ' + emb.resumo.ativas
     + (emb.resumo.achadas_pela_varredura ? ' · achadas pela varredura: ' + emb.resumo.achadas_pela_varredura : '')));
@@ -2643,6 +2696,20 @@ function cartaoDaCamera(c, emb) {
       await atualizar();
       if (r.ok) mostrarRecado('ordem de parar enviada ao PC de captura', false);
       else mostrarRecado('recusado: ' + ((r.corpo && r.corpo.erro) || JSON.stringify(r.corpo)), true);
+    }));
+  }
+  /* REMOVER o cadastro (dono, 25/11/2026: "não vejo onde editar as câmeras"). Some daqui E da tela do
+     cliente; os trechos gravados e a auditoria continuam. O ENDEREÇO (IP) não se edita aqui — o
+     apontamento é do app de captura (D1). D4: só o admin. */
+  if (A.usuario.papel === 'admin') {
+    acoes.appendChild(botao('remover', 'mini', async () => {
+      if (!confirm('Remover "' + (c.rotulo || c.id) + '" de vez? Ela sai desta lista e da tela do ' +
+                   'cliente. Os trechos gravados e a auditoria continuam.')) return;
+      const r = await api('/api/cameras/' + encodeURIComponent(c.id) + '/remover',
+                          { method: 'POST', body: JSON.stringify({}) });
+      await atualizar();
+      mostrarRecado(r.ok ? ('câmera ' + (c.rotulo || c.id) + ' removida do cadastro')
+        : 'recusado: ' + ((r.corpo && r.corpo.erro) || JSON.stringify(r.corpo)), !r.ok);
     }));
   }
   caixa.appendChild(acoes);
