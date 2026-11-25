@@ -178,6 +178,15 @@ def main() -> int:
             pag2.click('button.item[data-tela="config_bordo"]')
             pag2.wait_for_selector("#tela", timeout=ESPERA)
             pag2.wait_for_function("() => /Banda por câmera/.test(document.getElementById('tela').textContent)", timeout=ESPERA)
+            # A lista POR CAMERA (os selects `cfg-alvo-*`) chega depois do titulo (vem do detalhe das
+            # cameras). Conferir no mesmo instante do titulo falhava sob carga na suite (provado
+            # 25/11/2026: rc=1 na bateria, rc=0 isolado). Espera-se o proprio select.
+            try:
+                pag2.wait_for_function(
+                    "() => document.querySelectorAll('#tela select[id^=cfg-alvo-]').length >= 1",
+                    timeout=ESPERA)
+            except Exception:  # noqa: BLE001 — se nao aparecer, a prova FALHA na checagem abaixo
+                pass
             checar("admin tem a tela 'Configuração do bordo'", visivel(pag2, "#cfg-emb"))
             checar("...com o alvo por câmera e o teto da embarcação",
                    pag2.locator("#tela select[id^=cfg-alvo-]").count() >= 1 and visivel(pag2, "#cfg-teto"))
