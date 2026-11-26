@@ -248,9 +248,10 @@ function subir(config) {
       hd = 'gravacao continua do radar: nao vem neste pacote';
     } else if (!String(env.LECSOR_GRAVACAO_CONTINUA || '').trim()) {
       hd = 'gravacao continua do radar: DESLIGADA (o admin liga com LECSOR_GRAVACAO_CONTINUA=1)';
-    } else if (!String(env.LECSOR_HD_DISPOSITIVO || '').trim()) {
-      hd = 'gravacao continua do radar: DESLIGADO — falta LECSOR_HD_DISPOSITIVO (o HDMI do radar)';
     } else {
+      // O DISPOSITIVO quem acha e' o proprio gravador: a camera que o admin marcou como radar de oleo no
+      // cadastro (dono, 26/11/2026 — "detectar pelo nome que eu crio em terra ou pelo tipo do admin").
+      // Nao ha' mais variavel de ambiente a exigir aqui: sem dispositivo, o proprio gravador DIZ o motivo.
       item('gravacao-continua', python, ['-u', gravador], repo, env);
       hd = `gravacao continua do radar: no ar (blocos de ${String(env.LECSOR_BLOCO_SEGUNDOS || '60')}s em ${String(env.LECSOR_HD_DIR || 'ground/hd')})`;
     }

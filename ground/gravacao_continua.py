@@ -164,9 +164,9 @@ def ligar() -> str:
     diretorio().mkdir(parents=True, exist_ok=True)
     _arquivo_do_desejo().write_text("1", encoding="utf-8")
     if not dispositivo():
-        _log("gravacao continua LIGADA mas SEM dispositivo de video (LECSOR_HD_DISPOSITIVO)")
-        return ("ligada, mas esta maquina nao tem dispositivo de video configurado "
-                "(LECSOR_HD_DISPOSITIVO): nada sera' gravado")
+        r = resolucao(recarregar=True)
+        _log(f"gravacao continua LIGADA mas SEM dispositivo de video: {r.get('motivo')}")
+        return f"ligada, mas nada sera' gravado: {r.get('motivo') or 'sem dispositivo de video'}"
     pid = _subir_gravador()
     return (f"gravacao continua ligada (gravador no ar, pid {pid})" if pid
             else "gravacao continua ligada (o gravador ja' estava de pe')")
@@ -219,12 +219,88 @@ def reserva_bytes() -> int:
     return int(max(16.0, mb) * 1024 * 1024)
 
 
+RESOLUCAO_SEGUNDOS = 60.0
+_RESOLUCAO: dict = {"em": 0.0, "valor": None}
+
+
+def _modulo_da_api():
+    """O módulo da API: o `__main__` do servidor (`python ground/api.py`) ou o `api` importado.
+
+    Evita importar uma SEGUNDA cópia do módulo dentro do processo do servidor (o `import api` criaria
+    outro módulo, com outra conexão, além da que já está rodando).
+    """
+    m = sys.modules.get("__main__")
+    if m is not None and hasattr(m, "dispositivo_do_radar"):
+        return m
+    import api  # noqa: PLC0415  (o gravador rodando sozinho, fora do servidor)
+    return api
+
+
+def _do_cadastro() -> dict:
+    """O que o CADASTRO desta máquina diz sobre o radar (a câmera do tipo que o admin escolheu).
+
+    Quem responde é o `api.dispositivo_do_radar()` (leitura pura do banco local + a lista de
+    dispositivos). Sem `api` (módulo isolado, teste), devolve vazio COM o motivo.
+    """
+    try:
+        return dict(_modulo_da_api().dispositivo_do_radar() or {})
+    except Exception as e:  # noqa: BLE001
+        return {"dispositivo": "", "origem": "",
+                "motivo": f"nao consegui ler o cadastro desta maquina ({type(e).__name__}: {e})"}
+
+
+def resolucao(recarregar: bool = False) -> dict:
+    """Qual dispositivo de vídeo serve o HD, de onde ele veio e — quando não há — o MOTIVO.
+
+    Regra do dono (26/11/2026): **o TIPO que o admin escolheu manda** ("ele precisa detectar pelo nome
+    que eu crio em terra ou pelo tipo que e' selecionado do app do admin"). Ordem:
+      1. `LECSOR_HD_DISPOSITIVO` — override de técnico/bancada (não é exigido);
+      2. o cadastro do admin: a câmera de tipo `radar` e o dispositivo dela;
+      3. nada casa → VAZIO com o motivo (nunca "ligada" que não grava).
+    Fica em cache por 60 s: o laço do gravador pergunta a cada 2 s e a lista de dispositivos custa ~1 s.
+    """
+    agora = time.time()
+    guardada = _RESOLUCAO.get("valor")
+    if not recarregar and guardada is not None and agora - float(_RESOLUCAO.get("em") or 0) < RESOLUCAO_SEGUNDOS:
+        return dict(guardada)
+    ambiente = (os.environ.get("LECSOR_HD_DISPOSITIVO") or "").strip()
+    if ambiente:
+        r = {"dispositivo": ambiente, "origem": "env", "motivo": "", "camera": "", "rotulo": "", "nome": ""}
+    else:
+        cadastro = _do_cadastro()
+        if cadastro.get("dispositivo"):
+            r = {"dispositivo": cadastro["dispositivo"], "origem": cadastro.get("origem") or "cadastro",
+                 "motivo": "", "camera": cadastro.get("camera") or "",
+                 "rotulo": cadastro.get("rotulo") or "", "nome": cadastro.get("nome") or ""}
+        else:
+            r = {"dispositivo": "", "origem": "", "camera": cadastro.get("camera") or "",
+                 "rotulo": cadastro.get("rotulo") or "", "nome": "",
+                 "motivo": cadastro.get("motivo") or "nao ha dispositivo: nenhuma camera de radar no cadastro"}
+    _RESOLUCAO.update(em=agora, valor=dict(r))
+    return r
+
+
 def dispositivo() -> str:
-    return (os.environ.get("LECSOR_HD_DISPOSITIVO") or "").strip()
+    return resolucao()["dispositivo"]
+
+
+def origem() -> str:
+    """De onde veio o dispositivo: `env`, `tipo` (o que o admin escolheu), `nome` ou `cadastro`."""
+    return resolucao().get("origem") or ""
 
 
 def camera() -> str:
     return (os.environ.get("LECSOR_HD_CAMERA") or "radar").strip() or "radar"
+
+
+def camera_id() -> str:
+    """O ID da câmera que os blocos servem: a do radar do cadastro (a que o admin nomeou) ou "radar"."""
+    return (resolucao().get("camera") or "").strip() or camera()
+
+
+def rotulo() -> str:
+    """O NOME que o admin deu ao radar em terra (é ele que o bloco carrega). Sem nome, o alvo ("radar")."""
+    return (resolucao().get("rotulo") or "").strip() or camera()
 
 
 def perfil() -> dict:
@@ -288,12 +364,15 @@ def blocos_no_intervalo(de: str, ate: str) -> list[dict]:
 def resumo() -> dict:
     """Estado do HD do radar: quantos blocos, o primeiro, o ultimo, quanto ocupa, quanto ha' livre."""
     bs = blocos()
+    r = resolucao()
     try:
         uso = shutil.disk_usage(diretorio())
         livre, total = uso.free, uso.total
     except OSError:
         livre = total = 0
-    return {"ligada": ligada(), "dispositivo": dispositivo(), "camera": camera(),
+    return {"ligada": ligada(), "dispositivo": r["dispositivo"], "dispositivo_origem": r.get("origem") or "",
+            "motivo": r.get("motivo") or "", "camera": camera(), "camera_id": camera_id(),
+            "camera_rotulo": rotulo(), "nome_dispositivo": r.get("nome") or "",
             "bloco_segundos": bloco_segundos(), "diretorio": str(diretorio()),
             "blocos": len(bs), "bytes": sum(b["bytes"] for b in bs),
             "primeiro": bs[0]["inicio"] if bs else "", "ultimo": bs[-1]["inicio"] if bs else "",
@@ -365,9 +444,12 @@ def rodar(uma_vez: bool = False) -> int:
         _log("gravacao continua DESLIGADA (LECSOR_GRAVACAO_CONTINUA): nao ha' o que gravar")
         return 0
     if not dispositivo():
-        _log("gravacao continua ligada mas SEM dispositivo (LECSOR_HD_DISPOSITIVO): nada a fazer")
+        r = resolucao(recarregar=True)
+        _log(f"gravacao continua ligada mas SEM dispositivo de video: {r.get('motivo')} — nada a fazer")
         return 2
-    _log(f"gravacao continua no ar: camera {camera()} · dispositivo {dispositivo()} · "
+    r0 = resolucao()
+    _log(f"gravacao continua no ar: camera {rotulo()} ({camera_id()}) · dispositivo {dispositivo()} "
+         f"(origem {origem()}{', nome ' + r0['nome'] if r0.get('nome') else ''}) · "
          f"blocos de {bloco_segundos()}s em {diretorio()}")
     try:
         _arquivo_do_pid().write_text(str(os.getpid()), encoding="utf-8")

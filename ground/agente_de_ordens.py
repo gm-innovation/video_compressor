@@ -416,8 +416,10 @@ def publicar_catalogo(base: str, token: str, emb: str) -> None:
     try:
         resumo = g.resumo()
         blocos = g.blocos()[-500:]
+        # A CAMERA do catalogo e' a do radar do cadastro (a que o admin nomeou em terra). Sem cadastro
+        # que case, fica o alvo ("radar") — o resumo ja' leva o MOTIVO medido (dono, 26/11/2026).
         _http("POST", f"{base}/api/hd/catalogo",
-              {"embarcacao_id": emb, "camera_id": g.camera(), "resumo": resumo, "blocos": blocos},
+              {"embarcacao_id": emb, "camera_id": g.camera_id(), "resumo": resumo, "blocos": blocos},
               token=token)
     except Exception as e:
         _log(f"aviso: nao consegui publicar o catalogo do HD ({type(e).__name__}: {e})")

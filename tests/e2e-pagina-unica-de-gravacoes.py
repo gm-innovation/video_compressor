@@ -276,6 +276,55 @@ def main() -> int:
             checar("voltar para 'Gravações' volta com os dois blocos",
                    pag.locator("section.bloco-gravacao").count() == 2)
             checar("a página única não tem erro de javascript", not erros, "; ".join(erros)[:200])
+
+            print()
+            print("== 8. catalogo vazio DIZ o motivo que o bordo mediu (dono, 26/11/2026)")
+            # O bordo publica o catalogo com o MOTIVO quando NAO achou o dispositivo do radar (o tipo que
+            # o admin escolheu nao casou com nada nesta maquina). O cliente tem de ler esse motivo aqui —
+            # nao um "nenhum trecho" que nao explica nada.
+            MOTIVO = ("a camera 'Radar de oleo' (tipo radar) nao casou com nenhum dispositivo desta "
+                      "maquina; vi: ACER HD User Facing")
+
+            def reabrir_gravacoes(espera: str) -> str:
+                """Recarrega a tela e ESPERA o texto chegar — a tela escreve o motivo so' quando o catalogo
+                volta do bordo (e ela nunca inventa: enquanto nao chega, fica o texto de 'sem catalogo')."""
+                pag.reload(wait_until="networkidle")
+                pag.click('.lateral .item[data-tela="gravacoes"]')
+                pag.wait_for_selector("section.bloco-gravacao", timeout=25000)
+                try:
+                    pag.wait_for_function(
+                        "() => { const e = document.querySelector('#hd-resumo');"
+                        f" return e && e.textContent.includes({json.dumps(espera)}); }}", timeout=25000)
+                except Exception:  # noqa: BLE001  (a checagem abaixo mostra o texto que veio)
+                    pass
+                return pag.locator("#hd-resumo").first.inner_text()
+
+            c8 = sqlite3.connect(str(banco))
+            c8.execute("UPDATE hd_catalogo SET resumo=?, blocos='[]', atualizado_em=? WHERE camera_id='radar-01'",
+                       (json.dumps({"ligada": True, "dispositivo": "", "motivo": MOTIVO,
+                                    "camera_rotulo": "Radar de oleo", "blocos": 0}),
+                        time.strftime("%Y-%m-%dT%H:%M:%S")))
+            c8.commit()
+            c8.close()
+            texto = reabrir_gravacoes("não achou o dispositivo")
+            checar("sem trecho nenhum, a tela de terra diz o MOTIVO medido a bordo (nao so 'nenhum trecho')",
+                   "não achou o dispositivo do radar" in texto and "nao casou" in texto, texto[:170])
+            # e com o dispositivo achado (sem motivo) volta ao texto antigo — o motivo so' aparece medido
+            c8 = sqlite3.connect(str(banco))
+            c8.execute("UPDATE hd_catalogo SET resumo=? WHERE camera_id='radar-01'",
+                       (json.dumps({"ligada": True, "dispositivo": "@device_pnp_usb\\vid_345f&pid_2131",
+                                    "dispositivo_origem": "tipo", "camera_rotulo": "Radar de oleo",
+                                    "blocos": 0}),))
+            c8.commit()
+            c8.close()
+            texto = reabrir_gravacoes("publicou o catálogo")
+            checar("com o dispositivo achado a tela NAO inventa problema (volta ao texto do catalogo vazio)",
+                   "não achou o dispositivo" not in texto and "publicou o catálogo" in texto, texto[:170])
+            c8 = sqlite3.connect(str(banco))            # devolve o banco como estava (3 trechos)
+            c8.execute("UPDATE hd_catalogo SET resumo=?, blocos=? WHERE camera_id='radar-01'",
+                       (json.dumps({"blocos": len(blocos)}), json.dumps(blocos)))
+            c8.commit()
+            c8.close()
             nav.close()
     finally:
         api.terminate()

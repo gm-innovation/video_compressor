@@ -24,6 +24,7 @@ import subprocess
 import time
 import sys
 import threading
+import unicodedata
 import urllib.error
 import urllib.parse
 from urllib.parse import parse_qs, urlparse
@@ -1095,6 +1096,80 @@ def _modulo_da_gravacao_continua():
             return g
         except Exception:
             return None
+
+
+def _sem_acento_curto(texto: str) -> str:
+    return unicodedata.normalize("NFKD", texto or "").encode("ascii", "ignore").decode().strip().lower()
+
+
+def _dispositivo_da_camera_do_radar(cam: dict) -> dict:
+    """O dispositivo de VÍDEO desta máquina que serve a câmera do radar do cadastro.
+
+    O casamento é pelo ID (o mesmo que a varredura dá a cada dispositivo) e, se não casar, pelo NOME que
+    o admin deu. Sem casar, devolve VAZIO com o motivo — nunca um dispositivo "mais ou menos".
+    """
+    try:
+        import ingestao
+        import varredura_do_bordo as v
+    except Exception as e:  # noqa: BLE001
+        return {"dispositivo": "", "origem": "",
+                "motivo": f"nao consegui ler os dispositivos desta maquina ({type(e).__name__}: {e})"}
+    try:
+        d = ingestao.listar_dispositivos()
+    except Exception as e:  # noqa: BLE001
+        return {"dispositivo": "", "origem": "",
+                "motivo": f"nao consegui listar os dispositivos desta maquina ({type(e).__name__}: {e})"}
+    dispositivos = list(d.get("dispositivos") or [])
+    if not dispositivos:
+        return {"dispositivo": "", "origem": "",
+                "motivo": d.get("motivo") or d.get("erro")
+                or "o ffmpeg nao encontrou dispositivo de video nesta maquina"}
+    for x in dispositivos:
+        try:
+            if v._id_da_camera(x, set()) == cam["id"]:      # o MESMO dispositivo (id estavel)
+                return {"dispositivo": (x.get("seletor") or x.get("video") or "").strip(), "origem": "tipo",
+                        "nome": (x.get("video") or "").strip()}
+        except Exception:  # noqa: BLE001
+            continue
+    nome = _sem_acento_curto(cam.get("rotulo") or "")
+    if nome:
+        for x in dispositivos:                              # o NOME que o admin criou em terra
+            alvo = _sem_acento_curto(x.get("video") or "")
+            if alvo and (nome == alvo or nome in alvo):
+                return {"dispositivo": (x.get("seletor") or x.get("video") or "").strip(), "origem": "nome",
+                        "nome": (x.get("video") or "").strip()}
+    vistos = ", ".join((x.get("video") or "?") for x in dispositivos[:5])
+    return {"dispositivo": "", "origem": "",
+            "motivo": f"a camera '{(cam.get('rotulo') or cam.get('id'))}' (tipo radar) nao casou com nenhum "
+                      f"dispositivo desta maquina; vi: {vistos}"}
+
+
+def dispositivo_do_radar() -> dict:
+    """O dispositivo de vídeo do radar resolvido pelo CADASTRO desta máquina (dono, 26/11/2026).
+
+    "ele precisa detectar pelo nome que eu crio em terra ou pelo tipo que e' selecionado do app do
+    admin": **o TIPO manda** — a câmera marcada como `radar` no app do admin decide o dispositivo do HD.
+    Se nada casar, NÃO há dispositivo e a resposta traz o MOTIVO (nunca um "ligada" que não grava).
+    """
+    try:
+        with conexao() as c:
+            radares = [dict(x) for x in c.execute(
+                "SELECT id,embarcacao_id,rotulo,tipo,tipo_definido_pelo_admin,ativo FROM cameras "
+                "WHERE tipo='radar' ORDER BY tipo_definido_pelo_admin DESC, ativo DESC, id").fetchall()]
+            if not radares:
+                return {"dispositivo": "", "origem": "", "camera": "", "rotulo": "",
+                        "motivo": "nenhuma camera esta marcada como 'radar de óleo' no app do admin"}
+            cam = radares[0]
+            guardado = c.execute("SELECT valor FROM config_local WHERE camera_id=? AND chave='dispositivo'",
+                                 (cam["id"],)).fetchone()
+    except Exception as e:  # noqa: BLE001
+        return {"dispositivo": "", "origem": "", "camera": "", "rotulo": "",
+                "motivo": f"nao consegui ler o cadastro desta maquina ({type(e).__name__}: {e})"}
+    base = {"camera": cam["id"], "rotulo": cam.get("rotulo") or ""}
+    if guardado and str(guardado["valor"] or "").strip():
+        return {**base, "dispositivo": str(guardado["valor"]).strip(), "origem": "cadastro", "motivo": ""}
+    achado = _dispositivo_da_camera_do_radar(cam)
+    return {**base, **achado, "motivo": achado.get("motivo") or ""}
 
 
 def aplicar_gravacao_continua(valor) -> dict:
@@ -6199,6 +6274,9 @@ class Handler(SimpleHTTPRequestHandler):
             import gravacao_continua
             g = dict(gravacao_continua.resumo() or {})
             return {"ligada": bool(g.get("ligada")), "camera": g.get("camera") or "radar",
+                    "camera_id": g.get("camera_id") or "", "camera_rotulo": g.get("camera_rotulo") or "",
+                    "dispositivo": g.get("dispositivo") or "", "dispositivo_origem": g.get("dispositivo_origem") or "",
+                    "nome_dispositivo": g.get("nome_dispositivo") or "", "motivo": g.get("motivo") or "",
                     "diretorio": g.get("diretorio") or "", "blocos": g.get("blocos"),
                     "bytes": g.get("bytes"), "livre_bytes": g.get("livre_bytes"),
                     "total_bytes": g.get("total_bytes"), "bloco_segundos": g.get("bloco_segundos"),

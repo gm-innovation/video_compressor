@@ -838,13 +838,20 @@ function blocoDoHd() {
   /* O CATALOGO VAZIO TEM MOTIVO (dono, 26/11/2026): "não entendi esse bloco" — a tela tem de dizer se o
      bordo nunca publicou catalogo nenhum ou se publicou e ainda nao gravou trecho nenhum. */
   const temCatalogo = (cat.catalogos || []).length > 0;
+  /* O QUE O BORDO MEDIU (dono, 26/11/2026): o bordo manda no catálogo qual dispositivo ele achou para o HD
+     e, quando não achou, o MOTIVO. A tela do cliente diz o motivo em vez de só "nenhum trecho". */
+  const doBordo = (cat.catalogos || []).find((c) => (c.resumo || {}).ligada) || (cat.catalogos || [])[0] || {};
+  const grBordo = doBordo.resumo || {};
   if (resumo) {
     const total = trechos.reduce((s, b) => s + (b.bytes || 0), 0);
     resumo.textContent = trechos.length
       ? `${trechos.length} trecho(s) · ${emMB(total)} · de ${trechos[trechos.length - 1].inicio.replace('T', ' ').slice(0, 16)} até ${trechos[0].inicio.replace('T', ' ').slice(0, 16)}`
       : (temCatalogo
-        ? 'o computador de captura publicou o catálogo, mas ainda não há nenhum trecho gravado — os '
-          + 'trechos aparecem aqui conforme o HD do bordo grava'
+        ? (grBordo.motivo && !grBordo.dispositivo
+          ? 'gravação full-time ligada a bordo, mas o computador de captura não achou o dispositivo do '
+            + 'radar: ' + grBordo.motivo
+          : 'o computador de captura publicou o catálogo, mas ainda não há nenhum trecho gravado — os '
+            + 'trechos aparecem aqui conforme o HD do bordo grava')
         : 'o computador de captura ainda não publicou nenhum catálogo: a gravação contínua nasce desligada '
           + 'a bordo e quem liga é o próprio PC de captura (o lado terra nunca abre conexão para o bordo)');
   }

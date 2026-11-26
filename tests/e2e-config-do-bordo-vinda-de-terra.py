@@ -240,15 +240,18 @@ def main() -> int:
         # 4) chave que o bordo nao CONSEGUE EXECUTAR volta com MOTIVO — e o que esta' no ar nao muda.
         # (Na 0.23.0 a gravacao continua passou a ser APLICADA pelo bordo — ela virou chave de verdade,
         # por decisao do dono. O caminho da recusa COM MOTIVO segue provado: nesta bancada nao ha'
-        # dispositivo de video, e o bordo conta isso em vez de fingir que gravou.)
+        # dispositivo de video para o radar, e o bordo conta POR QUE em vez de fingir que gravou. A partir
+        # da 0.26.0 o motivo e' o que o bordo MEDIU — "nada sera' gravado: <motivo>" —, nunca o texto de
+        # uma variavel de ambiente que nao existe mais.)
         st, _ = pedir("POST", base_terra + "/api/config",
                       {"embarcacao_id": EMB, "camera_id": "", "chave": "gravacao_continua", "valor": "1"},
                       cookie=admin)
         exigir(st == 201, "terra aceita publicar gravacao_continua (o bordo e' quem decide se aplica)")
         rodar_agente(bordo_db, base_terra, p_bordo, tmp)
         com_motivo = {x["chave"]: x for x in todos(terra_db, "SELECT * FROM config_aplicada_bordo WHERE motivo != ''")}
-        exigir("gravacao_continua" in com_motivo and "dispositivo" in com_motivo["gravacao_continua"]["motivo"],
-               f"o motivo chegou a terra: {com_motivo.get('gravacao_continua', {}).get('motivo')!r}")
+        motivo = com_motivo.get("gravacao_continua", {}).get("motivo", "")
+        exigir("nada sera' gravado" in motivo and len(motivo) > 40,
+               f"o motivo chegou a terra dizendo POR QUE nao grava: {motivo!r}")
         exigir(um(bordo_db, "SELECT alvo FROM cameras WHERE id='cam-01'").get("alvo") == "300k",
                "a chave da gravacao NAO derrubou o que ja' estava aplicado (alvo segue 300k)")
 

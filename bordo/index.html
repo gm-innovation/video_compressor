@@ -506,8 +506,19 @@ async function carregar() {
   ficha($('ficha-agora'), [
     ['Processos ativos', proc.filter(p => p.estado !== 'parado').length + ' de ' + proc.length],
     ['Gravação full-time', grav.erro ? ('não consegui ler: ' + grav.erro)
-        : (grav.ligada ? ('ligada — ' + (grav.camera || 'radar') + ', ' + (grav.blocos ?? 0) + ' bloco(s)')
+        : (grav.ligada ? ('ligada — ' + (grav.camera_rotulo || grav.camera || 'radar') + ', ' + (grav.blocos ?? 0) + ' bloco(s)'
+                         + (grav.ultimo ? ' · o último começou ' + String(grav.ultimo).replace('T', ' ').slice(0, 16)
+                                        : ' · nenhum bloco ainda'))
                        : 'desligada (quem liga é o admin)')],
+    /* QUAL dispositivo e POR QUÊ (dono, 26/11/2026): o tipo que o admin escolheu em terra manda; sem
+       casar, a tela diz o motivo em vez de mostrar "ligada" como se estivesse gravando. */
+    ['Dispositivo do HD', grav.dispositivo
+        ? ((grav.nome_dispositivo ? grav.nome_dispositivo + '  ·  ' : '') + grav.dispositivo
+           + '  ·  achado pelo ' + (grav.dispositivo_origem === 'env' ? 'ajuste da bancada'
+                                  : grav.dispositivo_origem === 'nome' ? 'nome que o admin deu'
+                                  : grav.dispositivo_origem === 'cadastro' ? 'cadastro do HD'
+                                  : 'tipo que o admin escolheu'))
+        : (grav.erro ? 'não consegui ler' : (grav.motivo || 'não achei o dispositivo do radar — marque a câmera como radar de óleo no admin'))],
     ['HD da gravação', grav.diretorio
         ? (grav.diretorio + '  ·  ' + (mb(grav.bytes) || '0 KB') + ' gravados  ·  ' +
            (mb(grav.livre_bytes) || '?') + ' livre(s) de ' + (mb(grav.total_bytes) || '?')) : '—'],
