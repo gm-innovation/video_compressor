@@ -163,3 +163,27 @@ Plano fechado com as quatro decisões acima. **Aguardando o "aprovado" para impl
   (`dados_de_teste_apagados`). **Executado na VPS**: pedido preso `8b8e2c59ea7a70b5` e os dados de teste
   **apagados**; 4 usuários e 5 embarcações mantidos (conferido por leitura depois).
 - Bump **0.25.0** (`tools/_tmp_0250_bump.py`), release, deploy e nota no vault.
+
+## Publicado em 26/11/2026 (números medidos)
+
+- **Código:** commit **`f1e5add`** na `main` (`3d2fbfc..f1e5add`) — repo `gm-innovation/video_compressor`.
+- **Provas antes do envio:** `tools/regressao-0130.py` = **TUDO VERDE (47 provas)**; `python -m unittest
+  discover -s tests -p "test_*.py"` = **22 OK**; `test-pedido-do-hd-sem-resposta.py`,
+  `e2e-pagina-unica-de-gravacoes.py`, `e2e-dashboard-de-verdade-e-card-compacto.py` e
+  `e2e-tamanho-fixo-dashboards-e-telemetria.py` = exit 0.
+- **Build:** `desktop/dist/unico/LECSOR-0.25.0-x64.exe`, **171 693 334 B**, sha256
+  `8479e68cfff4f72ffde25abd10a676516a4e436ff0b40f5c523e2e49c68cad46`.
+- **Release:** `v0.25.0` id **459838330** (2026-11-26T19:45:13Z), latest, asset com o mesmo sha256 (conferido
+  pela API depois do upload).
+- **Deploy (VPS):** `py_compile` OK, `pipeline-api.service` **active**, `/api/saude` **200**, `/api/bordo` **200**,
+  `/bordo` **200**; presença do código novo conferida na fonte (`sem_resposta`, `limite_sem_resposta_s`,
+  `_app_do_bordo`, `.carta { width: 100%`, `Abre junto com o Windows`, `textoDeEspera`,
+  `limpar-dados-de-teste`); `/api/bordo/serie` na VPS devolve o **motivo medido** ("esta maquina nao
+  conseguiu medir: rede: sem psutil").
+- **Vault:** nota publicada — `origin/master` do `vault-lecsor` em **`9740a9b`** (nota + bullet no `index.md`).
+- **Gate (jev-codegate):** o push da nota era barrado por defeito — a regra de escopo bloqueava sem ter o que
+  comparar (nota empurrada de outra máquina: sem diff, sem commits, sem plano do lado de cá; medianas medidas
+  0,44–0,49). Corrigido na causa: `_tem_base_para_escopo()` em `policy.py` escala para o humano em vez de vetar
+  quando não há base; 2 testes atualizados + 1 novo. **107 testes do plugin verdes.** Vale depois de o app
+  recarregar os plugins.
+
