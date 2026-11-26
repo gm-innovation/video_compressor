@@ -319,15 +319,21 @@ def aplicar_flag(cameras: list, local: str, base: str, token: str, emb: str) -> 
         # o que eu conto e' o que esta' NO AR aqui, medido por mim (nao o que o lado terra esperava)
         fluxo_agora = _ligado(cam_id)
         ultima = [a for a in acoes if a["camera_id"] == cam_id and not a.get("ok")]
-        reais.append({"camera_id": cam_id,
-                      "estado": "no_ar" if fluxo_agora else ("erro" if ultima else "parado"),
-                      "motivo": (ultima[-1].get("erro") if ultima else
-                                 ("no ar por ordem do cliente" if fluxo_agora else "parada (ninguem assistindo)")),
-                      "fluxo_id": fluxo_agora,
-                      "desde": (time.strftime("%Y-%m-%dT%H:%M:%S",
-                                              time.localtime(LIGADOS.get(fluxo_agora, {}).get("desde", time.time())))
-                                if fluxo_agora else ""),
-                      "versao_desejo": int((cam or {}).get("versao") or 0)})
+        contado = {"camera_id": cam_id,
+                   "estado": "no_ar" if fluxo_agora else ("erro" if ultima else "parado"),
+                   "motivo": (ultima[-1].get("erro") if ultima else
+                              ("no ar por ordem de quem assiste" if fluxo_agora else "parada (ninguem assistindo)")),
+                   "fluxo_id": fluxo_agora,
+                   "desde": (time.strftime("%Y-%m-%dT%H:%M:%S",
+                                           time.localtime(LIGADOS.get(fluxo_agora, {}).get("desde", time.time())))
+                             if fluxo_agora else ""),
+                   "versao_desejo": int((cam or {}).get("versao") or 0)}
+        # GRAVANDO A BORDO (dono, 26/11/2026): a medida e' DESTA maquina. Nao consegui medir (None) =
+        # a chave NAO vai — em terra isso fica "nao medido", nunca "desligado".
+        _grav = _gravando_a_bordo(cam)
+        if _grav is not None:
+            contado["gravando"] = bool(_grav)
+        reais.append(contado)
     if reais:
         try:
             _http("POST", f"{base}/api/estado-real", {"embarcacao_id": emb, "cameras": reais}, token=token)
@@ -374,6 +380,32 @@ def _gravacao_continua():
             return g
         except Exception:
             return None
+
+
+def _gravando_a_bordo(cam: dict):
+    """Esta' GRAVANDO A BORDO nesta camera? True/False — ou None quando NAO consegui medir.
+
+    Dono (26/11/2026): "so' preciso no monitoramento saber se esta' sendo gravado a bordo". A medida e' do
+    BORDO (o HD e' dele) e a AUSENCIA da chave vira "nao medido" em terra — nunca um zero parecido com
+    saude. Quem grava o tempo todo e' o radar (`gravacao_continua`), a mesma camera do radar cadastrado.
+    """
+    g = _gravacao_continua()
+    if not g:
+        return None
+    try:
+        if not g.ligada():
+            return False
+        alvo = str(g.camera() or "radar").strip()
+        cid = str((cam or {}).get("camera_id") or "")
+        rotulo = str((cam or {}).get("rotulo") or "")
+        tipo = str((cam or {}).get("tipo") or "")
+        serve = (alvo in (cid, rotulo)) or (alvo == "radar" and (tipo == "radar" or "radar" in (cid + " " + rotulo).lower()))
+        if not serve:
+            return False
+        return bool(g.gravando_agora())
+    except Exception as e:  # noqa: BLE001
+        _log(f"aviso: nao consegui medir a gravacao a bordo ({type(e).__name__}: {e})")
+        return None
 
 
 def publicar_catalogo(base: str, token: str, emb: str) -> None:

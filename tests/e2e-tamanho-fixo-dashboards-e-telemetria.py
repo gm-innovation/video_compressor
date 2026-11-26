@@ -447,8 +447,10 @@ def main() -> int:
                    f" {ao_vivo['sem_imagem']} com o recado honesto")
             checar("o rotulo diz qual camera esta' sendo vista",
                    any("Proa" in r for r in ao_vivo["rotulos"]), str(ao_vivo["rotulos"]))
-            checar("a tela do admin e' SOMENTE LEITURA (sem ligar/parar/gravar)",
-                   ao_vivo["controlesDeAcao"] == 0 and "somente leitura" in ao_vivo["texto"].lower())
+            checar("a tela do admin tem LIGAR/PARAR por camera (2.A, 0.23.0) e nenhum controle de gravar",
+                   ao_vivo["controlesDeAcao"] == ao_vivo["celulas"]
+                   and "você é a plateia" in ao_vivo["texto"].lower(),
+                   f"{ao_vivo['controlesDeAcao']} controle(s) em {ao_vivo['celulas']} celula(s)")
 
             print("\n== 6. sem erro de JavaScript nas telas ==")
             checar("nenhum erro de JS nas tres telas", not erros, "; ".join(erros[:3]))

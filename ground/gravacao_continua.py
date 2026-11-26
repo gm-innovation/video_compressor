@@ -28,7 +28,9 @@ Como funciona:
   * RETENCAO = ANEL: quando o espaco do volume acaba, o bloco MAIS ANTIGO e' apagado e a gravacao NAO para
     (o dono: "quando acabar o espaco comeca a gravar por cima do mais antigo");
   * nao depende de internet, de sessao nem da flag: e' a memoria local do radar;
-  * nasce DESLIGADA — quem liga e' o admin (`LECSOR_GRAVACAO_CONTINUA=1` + dispositivo).
+  * nasce DESLIGADA — quem liga e' o ADMIN, pelo botao da tela: terra publica a configuracao
+    `gravacao_continua` (0/1), o bordo OLHA e aplica, escrevendo o DESEJO no `ligada.txt` do HD
+    (`LECSOR_HD_DIR`) — o `LECSOR_GRAVACAO_CONTINUA=1` fica so' como padrao da INSTALACAO.
 
 Uso:
     python ground/gravacao_continua.py                 # fica vivo, garantindo os blocos
@@ -63,10 +65,137 @@ NOME_BLOCO = re.compile(r"^bloco-(\d{8})-(\d{6})\.mp4$")
 LOG_DIR = RAIZ / "ground" / "hd"
 
 
+def _arquivo_do_desejo() -> pathlib.Path:
+    """O DESEJO do admin (ligar/desligar) mora em ARQUIVO, dentro do HD da gravacao (dono, 26/11/2026).
+
+    E' o que o botao do admin escreve (config publicada -> o bordo OLHA -> API local -> aqui) e o que o
+    laco vivo obedece. Fica junto dos blocos (`LECSOR_HD_DIR`) para nao sujar o pacote e para o teste
+    poder apontar para uma pasta temporaria. Sem isso, ligar exigiria mexer em variavel de ambiente e
+    reiniciar o servico — e o admin so' tem a tela."""
+    return diretorio() / "ligada.txt"
+
+
+def desejo() -> str:
+    """O que o admin pediu: "" (nunca decidido), "0" (desligar) ou "1" (ligar)."""
+    try:
+        v = _arquivo_do_desejo().read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
+    return v if v in ("0", "1") else ""
+
+
 def ligada() -> bool:
-    """A gravacao continua esta' ligada? (o admin liga; ausente = desligada)."""
+    """A gravacao continua esta' ligada?
+
+    Quem manda e' o DESEJO escrito pela tela (arquivo); sem ele, vale a variavel de ambiente da
+    instalacao (LECSOR_GRAVACAO_CONTINUA); ausente = DESLIGADA (nasce desligada)."""
+    d = desejo()
+    if d == "1":
+        return True
+    if d == "0":
+        return False
     v = (os.environ.get("LECSOR_GRAVACAO_CONTINUA") or "").strip().lower()
     return v in ("1", "sim", "true", "on", "ligada")
+
+
+def _arquivo_do_pid() -> pathlib.Path:
+    return diretorio() / "gravador.pid"
+
+
+def _pid_vivo(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def gravador_pid() -> int:
+    try:
+        return int((_arquivo_do_pid().read_text(encoding="utf-8").strip() or 0))
+    except Exception:
+        return 0
+
+
+def _subir_gravador():
+    """Sobe o laco do gravador DESACOPLADO do servidor de captura. 0 = ja' estava de pe'."""
+    if _pid_vivo(gravador_pid()):
+        return 0
+    diretorio().mkdir(parents=True, exist_ok=True)
+    try:
+        p = subprocess.Popen([sys.executable, str(pathlib.Path(__file__).resolve())],
+                             cwd=str(RAIZ), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             creationflags=(0x00000008 | 0x00000200) if os.name == "nt" else 0)
+    except Exception as e:  # noqa: BLE001
+        _log(f"aviso: nao consegui subir o gravador ({e})")
+        return 0
+    try:
+        _arquivo_do_pid().write_text(str(p.pid), encoding="utf-8")
+    except Exception:
+        pass
+    _log(f"gravador subido pelo desejo do admin (pid {p.pid})")
+    return p.pid
+
+
+def _parar_gravador() -> bool:
+    pid = gravador_pid()
+    if not _pid_vivo(pid):
+        return False
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, check=False)
+        else:
+            os.kill(pid, 15)
+    except Exception as e:  # noqa: BLE001
+        _log(f"aviso: nao consegui parar o gravador (pid {pid}): {e}")
+        return False
+    try:
+        _arquivo_do_pid().unlink()
+    except Exception:
+        pass
+    _log(f"gravador parado a pedido (pid {pid})")
+    return True
+
+
+def ligar() -> str:
+    """LIGA a gravacao continua: escreve o desejo e garante o gravador de pe'. Devolve o motivo REAL."""
+    diretorio().mkdir(parents=True, exist_ok=True)
+    _arquivo_do_desejo().write_text("1", encoding="utf-8")
+    if not dispositivo():
+        _log("gravacao continua LIGADA mas SEM dispositivo de video (LECSOR_HD_DISPOSITIVO)")
+        return ("ligada, mas esta maquina nao tem dispositivo de video configurado "
+                "(LECSOR_HD_DISPOSITIVO): nada sera' gravado")
+    pid = _subir_gravador()
+    return (f"gravacao continua ligada (gravador no ar, pid {pid})" if pid
+            else "gravacao continua ligada (o gravador ja' estava de pe')")
+
+
+def desligar() -> str:
+    """DESLIGA: o desejo vira 0 (o laco vivo sai sozinho) e o gravador e' parado agora."""
+    _arquivo_do_desejo().write_text("0", encoding="utf-8")
+    parado = _parar_gravador()
+    return "gravacao continua desligada" + (" e gravador parado" if parado else "")
+
+
+def gravando_agora() -> bool:
+    """ESTA' GRAVANDO DE VERDADE? Ligada E gravador de pe' E bloco recente.
+
+    Nao basta o desejo: sem quadro chegando nao ha' bloco novo, e a tela nao pode dizer "gravando"."""
+    if not ligada():
+        return False
+    pid = gravador_pid()
+    if pid and not _pid_vivo(pid):
+        return False
+    bs = blocos()
+    if not bs:
+        return False
+    try:
+        ultimo = dt.datetime.fromisoformat(bs[-1]["inicio"])
+    except Exception:
+        return False
+    return (dt.datetime.now() - ultimo).total_seconds() <= 2 * bloco_segundos() + 30
 
 
 def diretorio() -> pathlib.Path:
@@ -240,8 +369,26 @@ def rodar(uma_vez: bool = False) -> int:
         return 2
     _log(f"gravacao continua no ar: camera {camera()} · dispositivo {dispositivo()} · "
          f"blocos de {bloco_segundos()}s em {diretorio()}")
+    try:
+        _arquivo_do_pid().write_text(str(os.getpid()), encoding="utf-8")
+    except Exception:
+        pass
     proc = None
     while True:
+        # O DESEJO manda (dono, 26/11/2026): desligou na tela, o laco sai e o gravador para — sem
+        # reiniciar servico e sem ninguem entrar na maquina.
+        if not ligada():
+            _log("gravacao continua DESLIGADA pelo desejo da tela: saindo")
+            if proc is not None and proc.poll() is None:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+            try:
+                _arquivo_do_pid().unlink()
+            except Exception:
+                pass
+            return 0
         if proc is None or proc.poll() is not None:
             saida = manter_anel()
             if saida:

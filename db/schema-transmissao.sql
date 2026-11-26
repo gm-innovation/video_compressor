@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS estado_bordo (
   fluxo_id       TEXT DEFAULT '',
   desde          TEXT DEFAULT '',
   gravando       INTEGER NOT NULL DEFAULT 0,
+  gravando_medido INTEGER NOT NULL DEFAULT 0,     -- 1 = o bordo CONTOU esta informacao (0 = nao medido)
   versao_desejo  INTEGER NOT NULL DEFAULT 0,      -- a versao do desejo que ele estava lendo
   atualizado_em  TEXT NOT NULL
 );

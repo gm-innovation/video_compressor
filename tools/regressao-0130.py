@@ -20,6 +20,15 @@ RAIZ = pathlib.Path(__file__).resolve().parent.parent
 # `ambiente.json` que esta' no repositorio, e passaria a falar com a producao em vez de responder em casa.
 os.environ["LECSOR_SEM_AMBIENTE"] = "1"
 PROVAS = (
+    # RODADA 0.23.0 — O AO VIVO DO ADMIN LIGA E PARA, E O MONITORAMENTO DIZ SE ESTA' GRAVANDO A BORDO
+    # (dono, 26/11/2026: "eu devo poder ligar e parar a camera tambem, 'imagens gravadas a bordo' nao faz
+    # sentido, so' preciso no monitoramento saber se esta' sendo gravado a bordo, nao preciso ver as
+    # imagens" — decisoes "2.A" e "sim, botao ligar/desligar + indicador"). A tela "Imagens gravadas a
+    # bordo" SAIU do admin (as rotas `/api/hd/*` ficam: sao as do cliente e do observador), o admin abre a
+    # MESMA sessao do cliente no ao vivo (ele e' a plateia: fechando, a camera para) e a gravacao continua
+    # do radar ganhou botao no cartao da embarcacao (o admin publica, o BORDO aplica no HD dele).
+    "tests/test-ao-vivo-do-admin-ligar-parar-e-gravando-a-bordo.py",
+    "tests/e2e-ao-vivo-do-admin-liga-e-para.py",
     # RODADA 0.22.0 — O TIPO LIDO A TELA, A TELA SEM PISCAR E A VARREDURA A PEDIDO (dono, 26/11/2026:
     # "eu aplico novo tipo a camera, mas nao esta persistindo" · "quando a pagina atualiza, parece que
     # remonta toda a pagina ... a pagina 'pisca' e eu perco o que estou fazendo" · "nesta tela preciso
@@ -45,10 +54,9 @@ PROVAS = (
     # disponibilidade MEDIDA de 7 dias (retrato a retrato), o diagnostico de conexoes e os alertas com
     # "o que fazer" — e o painel do bordo vestindo a MESMA linguagem (`fronts/dashboard.css`).
     "tests/test-dashboard-frota.py",
-    # ...e o ADMIN acessa o GRAVADO A BORDO pela tela (dono, 25/11/2026: "ainda nao consigo acessar as
-    # imagens na area do admin, precisa resolver isso"): escolhe a embarcacao, ve o catalogo que o PC de
-    # captura publicou, pede o trecho e baixa o que chegou em terra.
-    "tests/e2e-hd-do-admin.py",
+    # (A TELA "Imagens gravadas a bordo" do admin, da 0.20.0, SAIU na 0.23.0 — por decisao do dono. As
+    # ROTAS `/api/hd/*` seguem no ar: sao as do cliente "Radar de oleo (HD)" e do observador
+    # Petrobras/IBAMA. A prova da rodada cobra isso.)
     # RODADA 0.18.0 — CAMERA IP: o ENDERECO (IP) e o SEGREDO da camera de rede vivem NO PC DE CAPTURA
     # (dono, 25/11/2026: "senha nao pode vazar, tem que tudo ficar no bordo, entao nao vamos poder
     # inserir nem o ip no admin"). A maquina de captura cadastra/edita/remove a camera de rede; o admin

@@ -112,7 +112,7 @@ function digitandoNaTela() {
    digitou/escolheu se perde. O auto-refresh de 15 s NAO repinta estas telas — ele so' AVISA
    (dono, 26/11/2026: "eu estou fazendo algo e do nada a pagina 'pisca' e eu perco o que estou fazendo").
    Quem repinta e' o usuario, pelo botao "Atualizar" (ou trocando de tela). */
-const TELAS_DE_FORMULARIO = { empresas: 1, envios: 1, hd_bordo: 1, usuarios: 1, licencas: 1,
+const TELAS_DE_FORMULARIO = { empresas: 1, envios: 1, usuarios: 1, licencas: 1,
   medicoes: 1, decisoes: 1, evidencias: 1, documentos: 1 };
 
 /* Le tudo que as telas mostram, SEM desenhar. Separado de `atualizar()` porque o cartao da camera
@@ -279,7 +279,7 @@ function recado(texto, erro) {
 }
 
 const SUBS = {
-  frota: ['Monitoramento da frota', 'Cada embarcação numa linha, com o pior estado primeiro: CPU, memória, disco e rede do computador de captura (o retrato que ele manda sozinho), quando ele falou por último — e o VÍDEO ao vivo, para acompanhar e monitorar (somente leitura).'],
+  frota: ['Monitoramento da frota', 'Cada embarcação numa linha, com o pior estado primeiro: CPU, memória, disco e rede do computador de captura (o retrato que ele manda sozinho), quando ele falou por último — se está sendo gravado a bordo e o VÍDEO ao vivo, para acompanhar, ligar e parar a câmera (fechando a janela, o que você ligou para).'],
   empresas: ['Empresas e configuração', 'Uma área só: o cliente na raiz, as embarcações vinculadas a ele e, em cada embarcação, as câmeras que a varredura achou — com nome, ligar/desligar, ativar e a qualidade de envio. A chave da licença nasce na embarcação.'],
   painel: ['Painel do projeto', 'Fases, medições, decisões e estado do link, tudo lido do banco.'],
   fases: ['Fases do projeto', 'Cada fase só fecha com evidência anexada.'],
@@ -299,7 +299,6 @@ const SUBS = {
   envios: ['Enviar vídeo', 'Escolhe a fonte (arquivo, link ou câmera desta máquina) e a qualidade por câmera: o sistema codifica, publica em SRT e mede o corte de banda.'],
   saude: ['Saúde do sistema', 'Estado da API, do lado terra e das contagens do banco.'],
   saude_bordo: ['Saúde do bordo', 'O computador de captura reporta sozinho: CPU, memória, disco (e o anel do HD do radar), ffmpeg, captura viva, mediamtx, erros. Semáforo com o limiar e o que fazer.'],
-  hd_bordo: ['Imagens gravadas a bordo', 'O HD do computador de captura, embarcação por embarcação: o que ele gravou (o radar de óleo grava o tempo todo), pesquisável por data e hora. O pedido vai ao bordo e o download abre quando o trecho chega em terra.'],
   licencas: ['Licenças do PC de captura', 'A chave que se digita no app de captura: ela liga aquela máquina à empresa e à embarcação. Vale por tempo ou sem prazo, e quantos PCs usam a mesma licença é ajustável.']
 };
 
@@ -386,8 +385,7 @@ function desenhar(forcado) {
     painel: telaPainel, fases: telaFases, medicoes: telaMedicoes, decisoes: telaDecisoes,
     evidencias: telaEvidencias, documentos: telaDocumentos,
     licencas: telaLicencas, usuarios: telaUsuarios, auditoria: telaAuditoria, envios: telaEnvios,
-    saude_bordo: telaSaudeDoBordo, saude: telaSaude,
-    hd_bordo: telaHdDoBordo };
+    saude_bordo: telaSaudeDoBordo, saude: telaSaude };
   const construida = (despacho[A.tela] || telaPainel)(tela);
   // Telas que buscam dados são assíncronas: a olhada só volta depois que os cartões existem na tela.
   if (construida && typeof construida.then === 'function') construida.then(() => devolverOLhar(tela, olhar));
@@ -2144,8 +2142,52 @@ function tileDaFrota(rot, valor, pe, tom) {
   return d;
 }
 
+/* --------------------------------------------------- AO VIVO do admin: ligar, parar e "gravando a bordo"
+   Dono (26/11/2026): "eu devo poder ligar e parar a câmera também" e "só preciso no monitoramento saber
+   se está sendo gravado a bordo, não preciso ver as imagens".
+
+   COMO LIGA (2.A, escolhido por ele): o admin abre a MESMA sessão que o cliente abre. Ele é a plateia —
+   enquanto esta janela estiver aberta a sessão vive (`batimento`); fechando a janela (ou a aba), a câmera
+   PARA. A regra de ouro continua: sem plateia o bordo não transmite. Nada de "ligar" que fica no ar sem
+   ninguém olhando — e a Auditoria registra QUAL admin ligou.
+
+   PARAR: se a sessão é deste admin, encerra ela (a câmera para porque ninguém está assistindo). Se a
+   câmera está no ar por causa de OUTRO (cliente assistindo), o "parar" usa o desligamento na mão da
+   operação (`/api/cameras/desligar`) — o mesmo stand-by que já existe no cartão da câmera.
+
+   O SELO "gravando a bordo" vem do que o BORDO conta (`estado.gravando` + `gravando_medido`). Sem
+   medida a tela escreve "não medido" — nunca um zero com cara de saúde. */
+
+const SESSAO_AO_VIVO = {};        // camera_id -> id da transmissão que ESTE admin abriu
+let tiqueAoVivo = null;           // o "estou aqui" (é o que mantém a sessão viva)
+let tiqueDaGrade = null;          // releitura do estado (repinta SÓ quando muda de verdade)
+
+function seloDaGravacao(c) {
+  const e = c.estado || {};
+  if (!Number(e.gravando_medido || 0)) return 'gravando a bordo: não medido';
+  return Number(e.gravando || 0) ? 'gravando a bordo' : 'sem gravação a bordo';
+}
+
+function encerrarSessoesDoAdmin() {
+  const ids = Object.values(SESSAO_AO_VIVO);
+  for (const cam of Object.keys(SESSAO_AO_VIVO)) delete SESSAO_AO_VIVO[cam];
+  for (const tid of ids) {
+    try {
+      const bolo = new Blob([JSON.stringify({ pendente: true })], { type: 'application/json' });
+      const url = '/api/transmissao/' + tid + '/encerrar';
+      if (!(navigator.sendBeacon && navigator.sendBeacon(url, bolo))) {
+        fetch(url, { method: 'POST', body: '{"pendente":true}', keepalive: true,
+                     headers: { 'Content-Type': 'application/json' } });
+      }
+    } catch (e) { /* sem beacon: a varredura do lado terra encerra depois do prazo */ }
+  }
+}
+
 function fecharAoVivo() {
   const caixa = document.getElementById('ao-vivo');
+  encerrarSessoesDoAdmin();                      /* fechou a janela: a câmera que EU liguei para */
+  if (tiqueAoVivo) { clearInterval(tiqueAoVivo); tiqueAoVivo = null; }
+  if (tiqueDaGrade) { clearInterval(tiqueDaGrade); tiqueDaGrade = null; }
   if (!caixa) return;
   for (const v of Array.from(caixa.querySelectorAll('video'))) {
     if (v.dataset.admId) { try { window.Video.parar(v.dataset.admId); } catch (e) { /* sem player */ } }
@@ -2153,12 +2195,46 @@ function fecharAoVivo() {
   caixa.remove();
 }
 
-/* O VÍDEO AO VIVO no admin: o MESMO player do cliente. É só assistir — sem ligar, sem parar e sem
-   gravar (o admin ACOMPANHA; quem sustenta a transmissão é quem está vendo).
+async function ligarCameraNoAdmin(camId, botao, pintar) {
+  if (botao) { botao.disabled = true; botao.textContent = 'ligando…'; }
+  const r = await api('/api/transmissao/iniciar', { method: 'POST',
+    body: JSON.stringify({ camera_id: camId }) });
+  if (!r.ok) {
+    if (botao) { botao.disabled = false; botao.textContent = '▶ ligar'; }
+    mostrarRecado('não deu para ligar esta câmera: ' + ((r.corpo && r.corpo.erro) || 'sem resposta do servidor'), true);
+    return;
+  }
+  const t = (r.corpo || {}).transmissao || {};
+  if (t.id) SESSAO_AO_VIVO[camId] = t.id;
+  mostrarRecado('câmera pedida à máquina de captura: a imagem sobe em alguns segundos ' +
+                '(a câmera para quando você fechar esta janela)', false);
+  if (botao) botao.textContent = 'aguardando o bordo…';
+  if (pintar) pintar();
+}
+
+async function pararCameraNoAdmin(camId, botao, pintar) {
+  if (botao) { botao.disabled = true; botao.textContent = 'parando…'; }
+  const tid = SESSAO_AO_VIVO[camId];
+  if (tid) {
+    delete SESSAO_AO_VIVO[camId];
+    await api('/api/transmissao/' + tid + '/encerrar', { method: 'POST', body: '{}' });
+    mostrarRecado('câmera parada: a sua sessão foi encerrada', false);
+    if (pintar) pintar();
+    return;
+  }
+  /* No ar por causa de outro: o desligamento na mão da operação (o cliente que está assistindo é
+     interrompido — é a decisão de quem opera). */
+  const r = await api('/api/cameras/desligar', { method: 'POST', body: JSON.stringify({ camera_id: camId }) });
+  mostrarRecado(r.ok ? 'câmera desligada na mão: o bordo vai parar a transmissão'
+                     : 'não deu para desligar: ' + ((r.corpo && r.corpo.erro) || 'sem resposta do servidor'),
+                !r.ok);
+  if (pintar) pintar();
+}
+
+/* O VÍDEO AO VIVO no admin: o MESMO player do cliente, com empresa → embarcação → câmeras e, agora, o
+   ligar/parar e o selo de gravação em cada janela.
    O SELETOR DENTRO DA JANELA (plano único, 25/11/2026 — dono: "como escolho quais câmeras e de quais
-   empresas ou embarcações quero acompanhar?" e "de qual embarcação... não aparece nenhum botão de
-   escolha"): a janela ganha empresa → embarcação → câmeras (uma caixa por câmera; por padrão, todas as
-   da embarcação). Antes ela abria as câmeras de UMA embarcação e trocar exigia achar o outro botão. */
+   empresas ou embarcações quero acompanhar?"): empresa → embarcação → câmeras (uma caixa por câmera). */
 function abrirAoVivo(frota, embInicial) {
   if (document.getElementById('ao-vivo')) { fecharAoVivo(); return; }
   const empresas = [];
@@ -2170,7 +2246,8 @@ function abrirAoVivo(frota, embInicial) {
   const topo = document.createElement('div'); topo.className = 'ao-vivo-topo';
   const titulo = document.createElement('strong'); titulo.id = 'av-titulo'; titulo.textContent = 'Ao vivo';
   const dica = document.createElement('span'); dica.className = 'nota';
-  dica.textContent = 'somente leitura: aqui não se liga, não se para e não se grava';
+  dica.textContent = 'aqui você liga e para a câmera — você é a plateia: fechando esta janela, '
+    + 'as câmeras que você ligou param';
   const bFechar = document.createElement('button'); bFechar.className = 'pil';
   bFechar.textContent = 'Fechar'; bFechar.onclick = fecharAoVivo;
   topo.append(titulo, dica, bFechar);
@@ -2195,6 +2272,7 @@ function abrirAoVivo(frota, embInicial) {
 
   const embsDaEmpresa = () => frota.filter((l) => l.empresa === selE.value);
   const embEscolhida = () => (embsDaEmpresa().find((l) => l.emb.id === selB.value) || embsDaEmpresa()[0] || {}).emb;
+  let marcadas = null;                      /* quais câmeras estão marcadas (sobrevive ao repintar) */
 
   function pintaGrade(cams) {
     for (const v of Array.from(grade.querySelectorAll('video'))) {
@@ -2202,36 +2280,60 @@ function abrirAoVivo(frota, embInicial) {
     }
     limpar(grade);
     const emb = embEscolhida() || {};
+    const gravando = cams.filter((c) => Number((c.estado || {}).gravando || 0)
+      && Number((c.estado || {}).gravando_medido || 0)).length;
     titulo.textContent = 'Ao vivo — ' + (emb.nome || emb.id || '') + '  (' + cams.filter((c) => c.no_ar).length
-      + ' de ' + cams.length + ' no ar)';
+      + ' de ' + cams.length + ' no ar · gravando a bordo: ' + gravando + ')';
     if (!cams.length) {
       const p = document.createElement('p'); p.className = 'nota';
       p.textContent = 'nenhuma câmera marcada — marque acima as que quer acompanhar';
       grade.appendChild(p); return;
     }
     for (const c of cams) {
-      const jan = document.createElement('div'); jan.className = 'janela-adm';
+      const jan = document.createElement('div'); jan.className = 'janela-adm'; jan.dataset.cam = c.id;
       // o TIPO vai no rótulo: radar de óleo e FLIR são o que o observador (Petrobras/IBAMA) vê
       const tipo = (c.tipo && c.tipo !== 'camera') ? '  · ' + String(c.tipo).toUpperCase() : '';
       const v = document.createElement('video');
       v.muted = true; v.autoplay = true; v.playsInline = true;
       const rot = document.createElement('div'); rot.className = 'rotulo-adm';
       rot.textContent = (c.rotulo || c.id) + tipo + (c.no_ar ? '' : '  · fora do ar');
-      if (c.no_ar) {
-        jan.append(v, rot);
+      const selo = document.createElement('div');
+      selo.className = 'nota selo-gravacao' + (Number((c.estado || {}).gravando || 0) ? ' no-ar' : '');
+      selo.textContent = seloDaGravacao(c);
+      const acoes = document.createElement('div'); acoes.className = 'acoes-da-janela';
+      const repintar = () => pintaGrade(camerasMarcadas((embEscolhida() || {}).cameras || []));
+      // A SESSÃO DESTE ADMIN CONTA: se ele já pediu e o bordo ainda não abriu o fluxo, o botão tem de
+      // continuar sendo "parar" — senão um repintar da releitura oferece "ligar" de novo e abre uma
+      // SEGUNDA sessão para a mesma câmera (achado na prova de tela de 26/11/2026).
+      const nossa = !!SESSAO_AO_VIVO[c.id];
+      if (c.no_ar || nossa) {
+        acoes.appendChild(botao('■ parar', 'mini', () => pararCameraNoAdmin(c.id, acoes.firstChild, repintar)));
+        jan.append(v, rot, acoes, selo);
         grade.appendChild(jan);
-        const id = 'admin-' + c.id;
-        v.dataset.admId = id;
-        try { window.Video.ligar(id, c.id, v); } catch (e) { /* sem player: fica o rótulo */ }
+        if (c.no_ar) {
+          const id = 'admin-' + c.id;
+          v.dataset.admId = id;
+          try { window.Video.ligar(id, c.id, v); } catch (e) { /* sem player: fica o rótulo */ }
+        } else {
+          const espera = document.createElement('div'); espera.className = 'rotulo-adm';
+          espera.textContent = 'aguardando o bordo ligar a câmera — você já pediu '
+            + '(a câmera para quando você fechar esta janela)';
+          jan.insertBefore(espera, acoes);
+        }
       } else {
-        // sem plateia o bordo não transmite e o admin não liga (D3: quem liga é o cliente).
-        // Melhor dizer isso do que entregar uma caixa preta muda.
+        // sem plateia o bordo não transmite — e agora QUEM liga é você, aqui (2.A).
         const nota = document.createElement('div'); nota.className = 'rotulo-adm';
-        nota.textContent = 'sem imagem: o bordo só transmite com alguém assistindo — nenhum cliente na sala';
-        jan.append(rot, nota);
+        nota.textContent = 'sem imagem: o bordo só transmite com alguém assistindo';
+        acoes.appendChild(botao('▶ ligar', 'mini', () => ligarCameraNoAdmin(c.id, acoes.firstChild, repintar)));
+        jan.append(rot, nota, acoes, selo);
         grade.appendChild(jan);
       }
     }
+  }
+
+  function camerasMarcadas(cams) {
+    if (!marcadas) return cams;
+    return cams.filter((c) => marcadas.has(c.id));
   }
 
   function pintaCameras() {
@@ -2243,22 +2345,52 @@ function abrirAoVivo(frota, embInicial) {
       pintaGrade([]);
       return;
     }
+    if (!marcadas) marcadas = new Set(cams.map((c) => c.id));
     const caixas = [];
     for (const c of cams) {
       const l = document.createElement('label'); l.className = 'av-cam';
-      const k = document.createElement('input'); k.type = 'checkbox'; k.checked = true; k.dataset.cam = c.id;
+      const k = document.createElement('input'); k.type = 'checkbox'; k.checked = marcadas.has(c.id);
+      k.dataset.cam = c.id;
       l.appendChild(k);
-      l.appendChild(document.createTextNode(' ' + c.rotulo + (c.no_ar ? ' (no ar)' : ' (fora do ar)')));
+      l.appendChild(document.createTextNode(' ' + c.rotulo
+        + (c.no_ar ? ' (no ar)' : ' (fora do ar)')
+        + (Number((c.estado || {}).gravando_medido || 0)
+            ? (Number((c.estado || {}).gravando || 0) ? ' · gravando a bordo' : '')
+            : ' · gravação não medida')));
       camsBox.appendChild(l);
       caixas.push(k);
     }
-    const pintar = () => pintaGrade(cams.filter((c) => {
-      const k = caixas.find((x) => x.dataset.cam === c.id);
-      return !!(k && k.checked);
-    }));
+    const pintar = () => {
+      for (const k of caixas) { if (k.checked) marcadas.add(k.dataset.cam); else marcadas.delete(k.dataset.cam); }
+      pintaGrade(camerasMarcadas(cams));
+    };
     for (const k of caixas) k.onchange = pintar;
-    pintar();
+    pintaGrade(camerasMarcadas(cams));
   }
+
+  /* A releitura: o bordo leva alguns segundos para ligar a câmera. Em vez de remontar a janela inteira
+     (o que derrubaria o vídeo e as suas marcações), só repinta quando a ASSINATURA das câmeras muda. */
+  function assinatura(cams) {
+    return cams.map((c) => [c.id, c.no_ar ? 1 : 0, (c.estado || {}).gravando || 0,
+                            (c.estado || {}).gravando_medido || 0].join(':')).join('|');
+  }
+  async function relerGrade() {
+    if (!document.getElementById('ao-vivo')) return;
+    const r = await api('/api/empresas');
+    if (!r.ok) return;
+    const novo = [];
+    const corpo = r.corpo || {};
+    for (const e of (corpo.empresas || [])) for (const b of (e.embarcacoes || [])) novo.push({ empresa: e.nome, emb: b });
+    for (const b of (corpo.embarcacoes_sem_empresa || [])) novo.push({ empresa: 'sem empresa', emb: b });
+    const cams = (embEscolhida() || {}).cameras || [];
+    const antes = assinatura(cams);
+    frota.length = 0;
+    for (const l of novo) frota.push(l);
+    const agora = assinatura((embEscolhida() || {}).cameras || []);
+    if (agora !== antes) pintaGrade(camerasMarcadas((embEscolhida() || {}).cameras || []));
+  }
+  /* marca a saída sem clique (fechou a aba/desligou o computador): o `/encerrar` por sessão, na saída */
+  window.addEventListener('pagehide', encerrarSessoesDoAdmin);
 
   function pintaEmbarques() {
     const lista = embsDaEmpresa();
@@ -2267,6 +2399,7 @@ function abrirAoVivo(frota, embInicial) {
     for (const l of lista) selB.appendChild(Object.assign(document.createElement('option'),
       { value: l.emb.id, textContent: (l.emb.nome || l.emb.id) }));
     selB.value = lista.some((l) => l.emb.id === anterior) ? anterior : ((lista[0] || {}).emb || {}).id || '';
+    marcadas = null;                        /* trocou de embarcação: as marcações são dela */
     pintaCameras();
   }
 
@@ -2274,8 +2407,14 @@ function abrirAoVivo(frota, embInicial) {
   selB.onchange = pintaCameras;
   if (idInicial) { const l = frota.find((x) => x.emb.id === idInicial); if (l) selE.value = l.empresa; }
   pintaEmbarques();
+  tiqueAoVivo = setInterval(() => {
+    for (const cam of Object.keys(SESSAO_AO_VIVO)) {
+      api('/api/transmissao/' + SESSAO_AO_VIVO[cam] + '/batimento', { method: 'POST', body: '{}' })
+        .catch(() => { /* volta no próximo */ });
+    }
+  }, 10000);
+  tiqueDaGrade = setInterval(relerGrade, 5000);
 }
-
 /* ============================================================================ DASHBOARD DO ADMIN
    Padrão Dock Check (plano único 0.20.0, 25/11/2026). Dono: "tanto o dashboard do admin quanto o do
    app de captura continuam horríveis, precisa ser algo mais próximo desse do Dock Check".
@@ -2438,6 +2577,14 @@ function dashItemDaEmbarcacao(e, linhas) {
   nums.textContent = 'CPU ' + numeroDaFrota(e.cpu_pct, '%') + ' · memória ' +
     numeroDaFrota(e.memoria_pct, '%') + ' · HD do radar ' + numeroDaFrota(e.hd_radar_usado_pct, '%') +
     ' · câmeras no ar ' + e.no_ar + ' de ' + e.cameras;
+  /* GRAVANDO A BORDO (dono, 26/11/2026): "só preciso no monitoramento saber se está sendo gravado a
+     bordo, não preciso ver as imagens". A medida é do BORDO; sem retrato dele a tela diz "não medido" —
+     nunca um zero com cara de saúde. */
+  const grav = document.createElement('div'); grav.className = 'emb';
+  grav.textContent = e.gravacao_medida
+    ? (e.gravando_a_bordo ? 'gravando a bordo: ' + e.gravando_a_bordo + ' câmera(s)' : 'gravando a bordo: não')
+    : 'gravando a bordo: não medido';
+  if (!e.gravacao_medida) grav.classList.add('nota');
   const disp = document.createElement('div'); disp.className = 'emb';
   disp.textContent = 'disponibilidade (7 dias): cobertura ' +
     ((e.disponibilidade || {}).cobertura_pct === undefined ? '—' : (e.disponibilidade.cobertura_pct + '%')) +
@@ -2467,7 +2614,7 @@ function dashItemDaEmbarcacao(e, linhas) {
       { rotulo: 'Memória', valor: (l) => (l.memoria_mb === null || l.memoria_mb === undefined ? '—' : Number(l.memoria_mb).toFixed(0) + ' MB') },
     ], individuais, 'nenhum fluxo no ar agora'));
   }
-  const partes = [nome, selo, emb, nums, disp];
+  const partes = [nome, selo, emb, nums, grav, disp];
   if (gaveta) partes.push(gaveta);
   partes.push(acoes);
   item.append(...partes);
@@ -2981,6 +3128,37 @@ function cartaoDaEmbarcacao(emb) {
       : 'nunca pedido';
     cv.appendChild(notaVarrer);
     caixa.appendChild(cv);
+
+    /* GRAVAÇÃO CONTÍNUA DO RADAR (dono, 26/11/2026: "sim, botão ligar/desligar + indicador"). A chave é da
+       EMBARCAÇÃO (quem grava é o PC de captura dela) e o valor é 0/1; o bordo OLHA, aplica e confirma. O
+       radar grava o tempo todo no HD do bordo (anel: o bloco mais antigo sai quando o disco enche) — e é
+       isso que alimenta o HD pesquisável. Aqui não se vê imagem nenhuma: o indicador está no monitoramento. */
+    const cg = document.createElement('div'); cg.className = 'linha-form';
+    const cfgGrav = (A.teto || {})[emb.id] || { chaves: [], aplicadas: [] };
+    const desejaGrav = (cfgGrav.chaves || []).filter((x) => x.camera_id === '' && x.chave === 'gravacao_continua').pop();
+    const aplicGrav = (cfgGrav.aplicadas || []).filter((x) => x.camera_id === '' && x.chave === 'gravacao_continua').pop();
+    const gravLigada = !!desejaGrav && String(desejaGrav.valor) === '1';
+    const btGrav = botao(gravLigada ? 'desligar a gravação contínua do radar' : 'ligar a gravação contínua do radar',
+      'mini', async () => {
+        const r = await api('/api/config', { method: 'POST', body: JSON.stringify({
+          embarcacao_id: emb.id, camera_id: '', chave: 'gravacao_continua', valor: gravLigada ? '0' : '1' }) });
+        await refazerCartaoDaEmbarcacao(emb.id);
+        mostrarRecado(r.ok ? ((gravLigada ? 'desligamento' : 'ligação') + ' da gravação contínua publicado (v'
+          + (((r.corpo || {}).versao) || '?') + '): o bordo aplica no HD dele')
+          : 'recusado: ' + ((r.corpo && r.corpo.erro) || JSON.stringify(r.corpo)), !r.ok);
+      });
+    btGrav.title = 'o radar grava o tempo todo no HD do PC de captura; quando o disco enche, o bloco mais antigo sai';
+    cg.appendChild(btGrav);
+    const notaGrav = document.createElement('span'); notaGrav.className = 'nota';
+    notaGrav.textContent = desejaGrav
+      ? ((gravLigada ? 'gravação contínua: publicada LIGADA' : 'gravação contínua: publicada DESLIGADA') + ' — '
+        + (aplicGrav && aplicGrav.versao >= desejaGrav.versao
+            ? 'o bordo: ' + (String(aplicGrav.valor) === '1' ? 'ligada' : 'desligada')
+              + (aplicGrav.motivo ? ' (' + aplicGrav.motivo + ')' : '')
+            : 'aguardando o bordo'))
+      : 'gravação contínua do radar: nada publicado (nasce DESLIGADA)';
+    cg.appendChild(notaGrav);
+    caixa.appendChild(cg);
   }
   caixa.appendChild(notaDe('Câmeras: ' + emb.resumo.cameras + ' · no ar: ' + emb.resumo.no_ar
     + ' · ativas: ' + emb.resumo.ativas
@@ -3104,7 +3282,7 @@ function cartaoDaCamera(c, emb) {
   caixa.appendChild(notaDe('fluxo ' + c.fluxo_id + ' · qualidade de envio ' + (alvo || '—') + ' kbps'
     + (enc.codec ? ' · ' + enc.codec + (enc.resolucao ? ' ' + enc.resolucao : '') + (enc.fps ? ' ' + enc.fps + ' fps' : '') : '')
     + ' · ' + (c.estado && c.estado.estado ? c.estado.estado
-        + (c.estado.gravando === '1' ? ' (gravando)' : '') : 'sem retorno do bordo')
+        + (Number(c.estado.gravando_medido || 0) ? (Number(c.estado.gravando || 0) ? ' (gravando a bordo)' : '') : '') : 'sem retorno do bordo')
     + (c.estado && c.estado.motivo ? ' — ' + c.estado.motivo : '')
     // DESEMPENHO (24/11/2026): o que a captura mediu (espectadores) e desde quando esta' no ar.
     + (c.no_ar && c.estado && c.estado.desde ? ' · no ar desde ' + c.estado.desde : '')
@@ -3275,77 +3453,4 @@ function relogio() { const d = new Date(); const p = (n) => String(n).padStart(2
 setInterval(relogio, 1000); relogio();
 abrir();
 
-/* ==================================== IMAGENS GRAVADAS A BORDO (plano único, 25/11/2026)
-   Dono: "ainda não consigo acessar as imagens na área do admin, precisa resolver isso". O backend já
-   servia (`/api/hd/catalogo`, `/api/hd/pedir`, `/api/hd/baixar`) — faltava a TELA. O computador de
-   captura grava o tempo todo no HD dele (anel, o radar de óleo inclusive); aqui o admin escolhe a
-   embarcação, vê os blocos por data e hora, pede o trecho e baixa o que já chegou em terra. O lado
-   terra NUNCA abre conexão para o bordo: o pedido fica esperando o bordo buscar (a única certeza da
-   arquitetura é de que ele pode enviar). */
-async function telaHdDoBordo(t) {
-  const embs = A.embarcacoes || [];
-  if (!embs.length) { t.appendChild(recado('nenhuma embarcação cadastrada ainda', true)); return; }
-  const escolhida = (A.hd && A.hd.embarcacao_id) || embs[0].id;
-  const barra = document.createElement('div'); barra.className = 'linha-form';
-  const rot = document.createElement('label'); rot.textContent = 'Embarcação';
-  const sel = document.createElement('select'); sel.id = 'hd-emb';
-  embs.forEach((e) => sel.appendChild(Object.assign(document.createElement('option'),
-    { value: e.id, textContent: (e.nome || e.id) + (e.cliente_nome ? ' · ' + e.cliente_nome : ''),
-      selected: e.id === escolhida })));
-  barra.appendChild(rot); barra.appendChild(sel); t.appendChild(barra);
-  sel.onchange = () => { A.hd = { embarcacao_id: sel.value }; desenhar(true); };
 
-  const r = await api('/api/hd/catalogo?embarcacao_id=' + encodeURIComponent(escolhida));
-  if (!r.ok) {
-    t.appendChild(recado('não consegui ler o catálogo do bordo: ' + JSON.stringify(r.corpo), true));
-    return;
-  }
-  const dados = r.corpo || { catalogos: [], pedidos: [] };
-  const blocos = [];
-  for (const c of (dados.catalogos || [])) {
-    for (const b of (c.blocos || [])) {
-      blocos.push({ camera_id: c.camera_id, rotulo: c.rotulo || c.camera_id, arquivo: b.arquivo,
-                    inicio: String(b.inicio || ''), bytes: b.bytes || 0 });
-    }
-  }
-  blocos.sort((a, b) => String(b.inicio).localeCompare(String(a.inicio)));
-  const pedidos = {};
-  for (const p of (dados.pedidos || [])) pedidos[p.camera_id + '|' + p.arquivo] = p;
-
-  const caixa = document.createElement('div'); caixa.className = 'caixa-form';
-  caixa.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Trechos no HD do computador de captura' }));
-  caixa.appendChild(notaDe(blocos.length
-    ? blocos.length + ' trecho(s) publicado(s) por esta embarcação. O pedido vai ao bordo e o download abre quando o trecho chega em terra.'
-    : 'o computador de captura desta embarcação ainda não publicou blocos. A gravação contínua a bordo nasce '
-      + 'desligada e quem liga é o próprio PC de captura (o lado terra nunca abre conexão para o bordo) — sem '
-      + 'ela não há catálogo para pedir.'));
-  const linhas = blocos.map((b) => {
-    const p = pedidos[b.camera_id + '|' + b.arquivo];
-    const linha = { camera: b.rotulo, quando: b.inicio.replace('T', ' ').slice(0, 19),
-      tamanho: (b.bytes / (1024 * 1024)).toFixed(1).replace('.', ',') + ' MB' };
-    linha.situacao = !p ? 'no HD do barco'
-      : (p.estado === 'enviado' ? 'pronto em terra'
-        : (p.estado === 'recusado' ? 'o bordo recusou: ' + (p.motivo || 'sem motivo informado')
-          : 'pedido: ' + (p.estado || 'aguardando o bordo')));
-    if (p && p.estado === 'enviado' && p.trecho) {
-      const a = document.createElement('a'); a.className = 'acao mini';
-      a.href = '/api/hd/baixar?id=' + encodeURIComponent(p.id); a.textContent = 'baixar';
-      linha.trecho = a;
-    } else if (p) {
-      linha.trecho = document.createTextNode('—');
-    } else {
-      linha.trecho = botao('pedir', 'mini', async () => {
-        const rr = await api('/api/hd/pedir', { method: 'POST',
-          body: JSON.stringify({ camera_id: b.camera_id, arquivo: b.arquivo }) });
-        if (!rr.ok) { mostrarRecado('recusado: ' + ((rr.corpo && rr.corpo.erro) || JSON.stringify(rr.corpo)), true); return; }
-        desenhar(true);
-        mostrarRecado('pedido enviado: o trecho aparece quando o bordo enviar', false);
-      });
-    }
-    return linha;
-  });
-  caixa.appendChild(tabela([{ rotulo: 'Câmera', campo: 'camera' }, { rotulo: 'Quando (início do trecho)', campo: 'quando' },
-    { rotulo: 'Tamanho', campo: 'tamanho' }, { rotulo: 'Situação', campo: 'situacao' },
-    { rotulo: 'Trecho', campo: 'trecho' }], linhas, 'nenhum trecho publicado por esta embarcação'));
-  t.appendChild(caixa);
-}

@@ -57,6 +57,9 @@ ground/gravacoes/
 ground/ordens/
 # estado do agente de ordens (0.10.0: passou a viver na RAIZ, ao lado do `ground/` — ver saude_do_bordo.py)
 ordens/
+# HD da gravação contínua (o anel do radar): dado de execução da máquina de captura — o DESEJO do admin
+# (`ligada.txt`) e o log do gravador. Nunca versionar (muda a cada instalação; o conteúdo é do bordo).
+ground/hd/
 
 # ambiente do pacote (Supabase/token de ingestao/embarcacao do PC de captura): segredo, nunca no git
 ground/ambiente.json

@@ -10,7 +10,7 @@ API de verdade nos dois lados + o AGENTE de verdade (`--uma-vez`). O que se prov
   2) o bordo OLHA (`GET /api/config-desejada`) e aplica SO' a diferenca pela API LOCAL;
   3) o efeito acontece no banco DO BORDO (alvo da camera, teto local) e o bordo CONFIRMA;
   4) rodar de novo NAO repete o que ja' estava aplicado (nao martela o lado terra);
-  5) chave que esta versao nao aplica volta como RECUSA com motivo — e o que estava no ar nao muda;
+  5) chave que o bordo nao consegue EXECUTAR volta com motivo — e o que estava no ar nao muda;
   6) publicacao nova (versao nova) e' aplicada na proxima rodada.
 
     python tests/e2e-config-do-bordo-vinda-de-terra.py
@@ -237,17 +237,20 @@ def main() -> int:
         exigir(depois.get("alvo_kbps", {}).get("atualizado_em") == quando_1,
                "a 2a rodada nao reaplica o que ja' estava aplicado (so' a diferenca)")
 
-        # 4) chave que esta versao NAO aplica volta como RECUSA com motivo — e o que esta' no ar nao muda
+        # 4) chave que o bordo nao CONSEGUE EXECUTAR volta com MOTIVO — e o que esta' no ar nao muda.
+        # (Na 0.23.0 a gravacao continua passou a ser APLICADA pelo bordo — ela virou chave de verdade,
+        # por decisao do dono. O caminho da recusa COM MOTIVO segue provado: nesta bancada nao ha'
+        # dispositivo de video, e o bordo conta isso em vez de fingir que gravou.)
         st, _ = pedir("POST", base_terra + "/api/config",
                       {"embarcacao_id": EMB, "camera_id": "", "chave": "gravacao_continua", "valor": "1"},
                       cookie=admin)
         exigir(st == 201, "terra aceita publicar gravacao_continua (o bordo e' quem decide se aplica)")
         rodar_agente(bordo_db, base_terra, p_bordo, tmp)
-        recusas = {x["chave"]: x for x in todos(terra_db, "SELECT * FROM config_aplicada_bordo WHERE motivo != ''")}
-        exigir("gravacao_continua" in recusas and "nao aplica" in recusas["gravacao_continua"]["motivo"],
-               f"a recusa chegou a terra com motivo: {recusas.get('gravacao_continua', {}).get('motivo')!r}")
+        com_motivo = {x["chave"]: x for x in todos(terra_db, "SELECT * FROM config_aplicada_bordo WHERE motivo != ''")}
+        exigir("gravacao_continua" in com_motivo and "dispositivo" in com_motivo["gravacao_continua"]["motivo"],
+               f"o motivo chegou a terra: {com_motivo.get('gravacao_continua', {}).get('motivo')!r}")
         exigir(um(bordo_db, "SELECT alvo FROM cameras WHERE id='cam-01'").get("alvo") == "300k",
-               "a recusa NAO derrubou o que ja' estava aplicado (alvo segue 300k)")
+               "a chave da gravacao NAO derrubou o que ja' estava aplicado (alvo segue 300k)")
 
         # 5) publicacao NOVA (versao nova) e' aplicada na proxima rodada
         st, r = pedir("POST", base_terra + "/api/config",

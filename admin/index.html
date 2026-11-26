@@ -38,6 +38,10 @@
   #ao-vivo .ao-vivo-escolha label { font-size: 13px; }
   #ao-vivo .ao-vivo-escolha select { background: #0b1220; color: inherit; border: 1px solid var(--border, #2a3550); border-radius: 6px; padding: 4px 6px; }
   #ao-vivo .av-cam { display: inline-flex; align-items: center; gap: 4px; margin-right: 12px; font-size: 13px; white-space: nowrap; }
+  /* LIGAR/PARAR e o selo "gravando a bordo" (dono, 26/11/2026): o admin abre a sessão como plateia. */
+  #ao-vivo .acoes-da-janela { display: flex; gap: 8px; align-items: center; padding: 0 10px 6px; }
+  #ao-vivo .selo-gravacao { display: block; padding: 0 10px 8px; font-size: 12px; }
+  #ao-vivo .selo-gravacao.no-ar { color: #7ee2a8; font-weight: 600; }
 </style>
 </head><body>
 
@@ -94,9 +98,6 @@
     <button class="item" data-tela="saude_bordo"><span class="ic">🩺</span>Saúde do bordo</button>
     <button class="item" data-tela="saude"><span class="ic">⚙</span>Saúde do sistema</button>
     <button class="item" data-tela="envios"><span class="ic">📥</span>Enviar vídeo</button>
-    <!-- IMAGENS GRAVADAS A BORDO (plano único, 25/11/2026 — dono: "ainda não consigo acessar as imagens
-         na área do admin, precisa resolver isso"): o HD do computador de captura, no admin. -->
-    <button class="item" data-tela="hd_bordo"><span class="ic">🛰</span>Imagens gravadas a bordo</button>
 
     <!-- PROJETO LECSOR: a gestão do projeto (fases/evidências/ADR) — não é operação do produto. -->
     <div class="grupo">Projeto LECSOR</div>

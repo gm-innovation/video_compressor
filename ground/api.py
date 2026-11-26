@@ -695,7 +695,7 @@ def _desejo_das_cameras(embarcacao_id: str) -> list[dict]:
     saida: list[dict] = []
     with conexao() as c:
         cams = [dict(x) for x in c.execute(
-            "SELECT id, embarcacao_id, fluxo_id, ativo FROM cameras WHERE embarcacao_id=? ORDER BY id",
+            "SELECT id, embarcacao_id, fluxo_id, rotulo, tipo, ativo FROM cameras WHERE embarcacao_id=? ORDER BY id",
             (embarcacao_id,)).fetchall()]
     for cam in cams:
         cid = cam["id"]
@@ -744,7 +744,8 @@ def _desejo_das_cameras(embarcacao_id: str) -> list[dict]:
         if mudou:
             auditar(None, "desejo_camera_mudou", f"{cid} -> {desejo} (v{versao}): {motivo}")
         saida.append({"camera_id": cid, "fluxo_id": cam["fluxo_id"] or "", "desejo": desejo,
-                      "versao": versao, "motivo": motivo, "transmissao_id": tid or ""})
+                      "versao": versao, "motivo": motivo, "transmissao_id": tid or "",
+                      "rotulo": cam["rotulo"] or "", "tipo": tipo_da_camera(cam)})
     return saida
 
 
@@ -772,6 +773,7 @@ def guardar_estado_real(embarcacao_id: str, cameras: list, de=None) -> dict:
         motivo = str(item.get("motivo") or "")[:300]
         fluxo = str(item.get("fluxo_id") or "")[:80]
         desde = str(item.get("desde") or "")[:40]
+        gravando_medido = 1 if ("gravando" in item) else 0
         gravando = 1 if item.get("gravando") else 0
         try:
             versao = int(item.get("versao_desejo") or 0)
@@ -780,13 +782,14 @@ def guardar_estado_real(embarcacao_id: str, cameras: list, de=None) -> dict:
         with conexao() as c:
             antigo = c.execute("SELECT * FROM estado_bordo WHERE camera_id=?", (cid,)).fetchone()
             c.execute("""INSERT INTO estado_bordo
-                         (camera_id,embarcacao_id,estado,motivo,fluxo_id,desde,gravando,versao_desejo,atualizado_em)
-                         VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(camera_id) DO UPDATE SET
+                         (camera_id,embarcacao_id,estado,motivo,fluxo_id,desde,gravando,gravando_medido,versao_desejo,atualizado_em)
+                         VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(camera_id) DO UPDATE SET
                            embarcacao_id=excluded.embarcacao_id, estado=excluded.estado,
                            motivo=excluded.motivo, fluxo_id=excluded.fluxo_id, desde=excluded.desde,
-                           gravando=excluded.gravando, versao_desejo=excluded.versao_desejo,
+                           gravando=excluded.gravando, gravando_medido=excluded.gravando_medido,
+                           versao_desejo=excluded.versao_desejo,
                            atualizado_em=excluded.atualizado_em""",
-                      (cid, embarcacao_id, est, motivo, fluxo, desde, gravando, versao, carimbo))
+                      (cid, embarcacao_id, est, motivo, fluxo, desde, gravando, gravando_medido, versao, carimbo))
             mudou = (not antigo) or antigo["estado"] != est or (antigo["motivo"] or "") != motivo
             if est == "no_ar":
                 c.execute("""UPDATE transmissoes SET estado='no_ar',
@@ -947,6 +950,14 @@ def publicar_config(embarcacao_id: str, camera_id: str, chave: str, valor: str, 
             return {"erro": "alvo_kbps e' por camera: informe camera_id"}
         if valor not in VALORES_DE_ALVO:
             return {"erro": f"alvo fora da lista do produto: {valor!r} (use {', '.join(VALORES_DE_ALVO)})"}
+    if chave == "gravacao_continua":
+        # GRAVACAO CONTINUA DO RADAR (dono, 26/11/2026: "sim, botao ligar/desligar + indicador"). E' da
+        # EMBARCACAO (quem grava e' o PC de captura dela) e o valor e' 0/1. O bordo OLHA, aplica e confirma
+        # — o terra nunca abre conexao para o bordo.
+        if cam:
+            return {"erro": "gravacao_continua e' da embarcacao: a gravacao e' do HD da maquina (sem camera_id)"}
+        if valor not in ("0", "1"):
+            return {"erro": f"gravacao_continua aceita 0 (desligar) ou 1 (ligar) — veio {valor!r}"}
     if chave == "transmitir":
         # Ligar/desligar a transmissao de UMA camera: e' o que o dono chama de "quais cameras transmitem".
         if not cam:
@@ -997,6 +1008,48 @@ def publicar_config(embarcacao_id: str, camera_id: str, chave: str, valor: str, 
                   (emb, cam, chave, valor, versao, origem or "", em_iso()))
     return {"ok": True, "embarcacao_id": emb, "camera_id": cam, "chave": chave, "valor": valor,
             "versao": versao}
+
+
+def _modulo_da_gravacao_continua():
+    """O modulo do HD do radar (`ground/gravacao_continua.py`), se este pacote tiver. Guardado."""
+    try:
+        import gravacao_continua as g   # noqa: PLC0415
+        return g
+    except Exception:
+        try:
+            sys.path.insert(0, str(RAIZ / "ground"))
+            import gravacao_continua as g   # noqa: PLC0415
+            return g
+        except Exception:
+            return None
+
+
+def aplicar_gravacao_continua(valor) -> dict:
+    """Ligar/desligar a GRAVACAO CONTINUA do radar NO BORDO (o botao do admin, 26/11/2026).
+
+    Quem liga de verdade e' o BORDO: aqui se escreve o DESEJO (arquivo local) e se garante que o gravador
+    esteja de pe' (ou parado). Sem dispositivo de video configurado a resposta DIZ que nao ha' o que gravar
+    — nunca um "ligado" que nao grava nada.
+    """
+    g = _modulo_da_gravacao_continua()
+    if not g:
+        return {"ok": False, "motivo": "este pacote nao tem o modulo de gravacao continua (ground/gravacao_continua.py)"}
+    v = str(valor if valor is not None else "").strip()
+    if v not in ("0", "1"):
+        return {"ok": False, "motivo": f"gravacao_continua aceita 0 (desligar) ou 1 (ligar) — veio {v!r}"}
+    motivo = g.ligar() if v == "1" else g.desligar()
+    ligada = bool(g.ligada())
+    if v == "1" and not ligada:
+        return {"ok": False, "motivo": "nao consegui ligar a gravacao continua nesta maquina"}
+    if v == "0" and ligada:
+        return {"ok": False, "motivo": "nao consegui desligar a gravacao continua nesta maquina"}
+    gravando = False
+    try:
+        gravando = bool(g.gravando_agora())
+    except Exception:
+        gravando = False
+    return {"ok": True, "chave": "gravacao_continua", "valor": v, "motivo": motivo,
+            "ligada": ligada, "gravando": gravando}
 
 
 def aplicar_config_local(camera_id: str, chave: str, valor: str) -> dict:
@@ -1079,9 +1132,14 @@ def aplicar_config_local(camera_id: str, chave: str, valor: str) -> dict:
                            atualizado_em=excluded.atualizado_em""", (cam, chave, valor, em_iso()))
         return {"ok": True, "motivo": "nome aplicado no cadastro desta maquina",
                 "camera_id": cam, "chave": chave, "valor": valor}
-    if chave in ("gravacao_continua", "transmitir"):
-        return {"ok": False, "motivo": f"{chave}: esta versao do app de captura ainda nao aplica "
-                                        f"(a gravacao continua e' ligada pelo servico do bordo)"}
+    if chave == "gravacao_continua":
+        # O BOTAO DO ADMIN chega por aqui (o agente chama esta rota local): a gravacao continua do radar
+        # liga/desliga NA MAQUINA DE CAPTURA — o HD, o dispositivo e o anel sao locais (dono, 26/11/2026).
+        return aplicar_gravacao_continua(valor)
+    if chave == "transmitir":
+        # `transmitir` NAO passa por aqui de proposito: ligar/desligar a transmissao de UMA camera e' do
+        # AGENTE, pelo mesmo caminho local que a flag usa (ver `_aplicar_transmitir` em agente_de_ordens).
+        return {"ok": False, "motivo": "transmitir e' aplicado pelo agente (flag de estado)"}
     return {"ok": False, "motivo": f"chave desconhecida: {chave}"}
 
 
@@ -1174,7 +1232,7 @@ def arvore_do_painel(usuario) -> dict:
         linhas_cam = c.execute("""SELECT id,embarcacao_id,rotulo,fluxo_id,local,ativo,alvo,tipo
                                   FROM cameras ORDER BY rotulo""").fetchall()
         estados = {x["camera_id"]: dict(x) for x in c.execute(
-            """SELECT camera_id,estado,motivo,fluxo_id,desde,gravando,atualizado_em
+            """SELECT camera_id,estado,motivo,fluxo_id,desde,gravando,gravando_medido,atualizado_em
                FROM estado_bordo""")}
         desejos = {x["camera_id"]: dict(x) for x in c.execute(
             """SELECT camera_id,desejo,versao,motivo,manual,atualizado_em FROM desejo_camera""")}
@@ -1207,6 +1265,7 @@ def arvore_do_painel(usuario) -> dict:
             "estado": {"estado": est.get("estado") or "sem retorno",
                        "motivo": est.get("motivo") or "", "desde": est.get("desde") or "",
                        "gravando": est.get("gravando") or "0",
+                       "gravando_medido": est.get("gravando_medido") or 0,
                        "atualizado_em": est.get("atualizado_em") or ""},
             "desejo": desejos.get(cam["id"], {}),
             "config": {"desejada": desejada.get((cam["embarcacao_id"], cam["id"]), []),
@@ -1393,6 +1452,24 @@ def resumo_da_frota(usuario) -> dict:
                     # embarcação, ao lado do KPI, em vez de uma tabela solta.
                     "individual": s.get("individual") or [],
                     "disponibilidade": disp}
+            # GRAVANDO A BORDO (dono, 26/11/2026): "so' preciso no monitoramento saber se esta' sendo
+            # gravado a bordo, nao preciso ver as imagens". A fonte e' o que o BORDO conta (estado_bordo)
+            # — e `gravacao_medida` separa "nao esta' gravando" de "nao foi medido", para a tela nunca
+            # mostrar um zero com cara de saude.
+            gravando, medido = 0, False
+            for c in (emb.get("cameras") or []):
+                e = c.get("estado") or {}
+                try:
+                    contou = int(e.get("gravando_medido") or 0)
+                    esta = int(e.get("gravando") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if contou:
+                    medido = True
+                    if esta:
+                        gravando += 1
+            item["gravando_a_bordo"] = gravando
+            item["gravacao_medida"] = bool(medido)
             embarcacoes.append(item)
             for sinal in (s.get("sinais") or []):
                 if (sinal.get("estado") or "ok") == "ok":
@@ -2020,6 +2097,14 @@ def inicializar(semear_demo: bool = False) -> None:
         # era isso que mantinha a transmissao no ar sem ninguem vendo): limpa aqui, sozinho, no boot.
         if colunas_desejo:
             c.execute("UPDATE desejo_camera SET manual='' WHERE manual='ligar'")
+        # GRAVANDO A BORDO (dono, 26/11/2026): "so' preciso no monitoramento saber se esta' sendo gravado
+        # a bordo". A coluna `gravando` ja' existia — falta o par dela: `gravando_medido` diz se o bordo
+        # CONTOU a informacao. Sem isso nao da' para distinguir "nao esta' gravando" de "nao foi medido",
+        # e a tela mentiria um zero parecido com saude. Instalacao que ATUALIZA ganha a coluna aqui.
+        colunas_estado = {r["name"] for r in c.execute("PRAGMA table_info(estado_bordo)")}
+        if colunas_estado and "gravando_medido" not in colunas_estado:
+            c.execute("ALTER TABLE estado_bordo ADD COLUMN gravando_medido INTEGER NOT NULL DEFAULT 0")
+            print("[api] migracao aplicada: gravando_medido em estado_bordo", flush=True)
         # Papel `tecnico` (bordo) precisa do CHECK novo. SQLite nao altera CHECK no lugar: o
         # `db/migracao-tecnico.sql` recria a tabela preservando as linhas, e roda aqui para a
         # instalacao que ATUALIZA se consertar sozinha (o dono nao faz passo manual no cliente).
@@ -4921,8 +5006,15 @@ class Handler(SimpleHTTPRequestHandler):
             # O CLIENTE abre a transmissao pela web. A ordem nasce AQUI e vai ao bordo.
             if not u:
                 return self._json(401, {"erro": "entre no sistema"})
-            if not self._papel_cliente(u):
-                return self._json(403, {"erro": "quem inicia a transmissao e' o cliente"})
+            # 2.A (dono, 26/11/2026): "eu devo poder ligar e parar a camera tambem". O ADMIN/OPERACAO passa
+            # a abrir a MESMA sessao que o cliente abre — ele e' a plateia: enquanto a janela do ao vivo
+            # estiver aberta a sessao vive (`batimento`), e fechando a janela a camera PARA (a regra de ouro
+            # continua: sem plateia o bordo nao transmite). Nada de "ligar" que fica no ar sem ninguem.
+            eh_operacao = bool(u) and u["papel"] in ("admin", "operador", "tecnico")
+            if not (self._papel_cliente(u) or eh_operacao):
+                return self._json(403, {"erro": "quem inicia a transmissao e' o cliente — ou a operacao "
+                                                "(admin/operador/tecnico) acompanhando"})
+            quem = "operacao" if eh_operacao else "cliente"
             d = self._corpo()
             cam_id = str(d.get("camera_id") or "").strip()
             if not cam_id:
@@ -4954,12 +5046,13 @@ class Handler(SimpleHTTPRequestHandler):
             with conexao() as c:
                 _man = c.execute("SELECT manual FROM desejo_camera WHERE camera_id=?",
                                  (cam_id,)).fetchone()
-            if _man and (_man["manual"] or "") == "parar":
+            if _man and (_man["manual"] or "") == "parar" and not (u["papel"] == "admin"):
                 # A OPERACAO desligou esta camera na mao (stand-by): a sessao do cliente NAO fura isso
                 # (dono, 24/11/2026). Antes o `/iniciar` apagava o override e a transmissao subia por
                 # cima da decisao do operador — agora o desligar manual vale.
+                # O ADMIN (dono da instalacao) passa por cima: ele e' quem desfaz o stand-by na tela.
                 return self._json(409, {"erro": "a operacao desligou esta camera na mao — fale com a "
-                                                "operacao LECSOR para liberar"})
+                                                "operacao LECSOR para liberar (o admin libera na tela)"})
             aberta = self._transmissao_aberta(u["email"], cam_id)
             if aberta:
                 # pedir de novo o que ja' esta' aberto nao abre uma segunda sessao (a tela pode
@@ -4983,10 +5076,17 @@ class Handler(SimpleHTTPRequestHandler):
                 # D3 (dono, 24/11/2026): o override manual de LIGAR deixou de existir; se sobrou um
                 # 'ligar' de versao antiga, ele sai de cena (a sessao passa a sustentar o "ligar"). O
                 # 'parar' da operacao NAO se apaga aqui (o cliente nem chega: o 409 acima barra antes).
-                c.execute("UPDATE desejo_camera SET manual='' WHERE camera_id=? AND manual='ligar'", (cam_id,))
+                # O ADMIN desfaz o stand-by da operacao ao ligar por aqui (dono, 26/11/2026: "eu devo poder
+                # ligar e parar a camera tambem"): sem isso o `manual='parar'` deixado antes manteria a
+                # camera parada mesmo com a sessao dele aberta. Para os outros, so' o 'ligar' velho sai.
+                if u["papel"] == "admin":
+                    c.execute("UPDATE desejo_camera SET manual='' WHERE camera_id=?", (cam_id,))
+                else:
+                    c.execute("UPDATE desejo_camera SET manual='' WHERE camera_id=? AND manual='ligar'", (cam_id,))
             ordem = enfileirar_ordem(cam["embarcacao_id"], cam_id, cam["fluxo_id"], "iniciar",
-                                     f"pedido do cliente {u['email']}", tid)
-            auditar(u, "transmissao_pedida", f"{cam_id} ({texto_do_tempo(seg)})", self.client_address[0])
+                                     f"pedido da {quem} {u['email']}", tid)
+            auditar(u, "transmissao_pedida", f"{cam_id} ({texto_do_tempo(seg)}) — {quem}",
+                    self.client_address[0])
             return self._json(201, {"ok": True, "transmissao": self._json_transmissao(linha),
                                     "cortado_pelo_teto_do_produto": bool(cortado_pelo_teto),
                                     "ordem": ordem}, {"Cache-Control": "no-store"})
@@ -5045,7 +5145,9 @@ class Handler(SimpleHTTPRequestHandler):
                 pendurar_saida(u["email"], "encerrar", [tid], emb, self.client_address[0])
                 return self._json(200, {"ok": True, "pendente": True, "carencia_s": SEGUNDOS_DE_CARENCIA},
                                   {"Cache-Control": "no-store"})
-            fechada = fechar_transmissao(tid, "encerrada", "a transmissao foi encerrada na tela do cliente")
+            fechada = fechar_transmissao(tid, "encerrada",
+                                        "a transmissao foi encerrada na tela do cliente" if u["papel"] == "cliente"
+                                        else f"a transmissao foi encerrada pela operacao ({u['papel']})")
             if fechada:
                 parar_se_ninguem_vendo(t["embarcacao_id"], t["camera_id"], t["fluxo_id"],
                                        "nao havia mais ninguem vendo")
