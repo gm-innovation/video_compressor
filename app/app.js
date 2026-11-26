@@ -809,6 +809,16 @@ function blocosEmPalco(blocos) {
   palco.dataset.blocos = impressao;
 }
 
+/* "há 3 min" — o pedido de um trecho mostra a IDADE dele: era isso que faltava para o "chegando…" não
+   parecer travado (dono, 26/11/2026). O servidor fecha o pedido vencido como `sem_resposta` (10 min). */
+function textoDeEspera(seg) {
+  if (seg === null || seg === undefined) return '';
+  const s = Math.max(0, Number(seg) || 0);
+  if (s < 60) return ' há ' + Math.round(s) + ' s';
+  if (s < 3600) return ' há ' + Math.floor(s / 60) + ' min';
+  return ' há ' + Math.floor(s / 3600) + ' h ' + (Math.floor(s / 60) % 60) + ' min';
+}
+
 /* BLOCO 1 — o HD do computador de captura a bordo: o radar de óleo, gravando o tempo todo. O cliente
    procura por data e hora, PEDE o trecho e baixa quando chegar (dono, 19/11/2026). */
 function blocoDoHd() {
@@ -825,12 +835,18 @@ function blocoDoHd() {
   const ate = ($('hd-ate') || {}).value || '';
   const mostrados = trechos.filter((b) => (!de || b.inicio >= de) && (!ate || b.inicio <= ate + ':59'));
   const resumo = $('hd-resumo');
+  /* O CATALOGO VAZIO TEM MOTIVO (dono, 26/11/2026): "não entendi esse bloco" — a tela tem de dizer se o
+     bordo nunca publicou catalogo nenhum ou se publicou e ainda nao gravou trecho nenhum. */
+  const temCatalogo = (cat.catalogos || []).length > 0;
   if (resumo) {
     const total = trechos.reduce((s, b) => s + (b.bytes || 0), 0);
     resumo.textContent = trechos.length
       ? `${trechos.length} trecho(s) · ${emMB(total)} · de ${trechos[trechos.length - 1].inicio.replace('T', ' ').slice(0, 16)} até ${trechos[0].inicio.replace('T', ' ').slice(0, 16)}`
-      : 'o computador de captura ainda não publicou blocos: a gravação contínua a bordo nasce desligada '
-        + 'e quem liga é o próprio PC de captura (o lado terra nunca abre conexão para o bordo)';
+      : (temCatalogo
+        ? 'o computador de captura publicou o catálogo, mas ainda não há nenhum trecho gravado — os '
+          + 'trechos aparecem aqui conforme o HD do bordo grava'
+        : 'o computador de captura ainda não publicou nenhum catálogo: a gravação contínua nasce desligada '
+          + 'a bordo e quem liga é o próprio PC de captura (o lado terra nunca abre conexão para o bordo)');
   }
   const jaPedido = {};
   for (const p of (cat.pedidos || [])) jaPedido[p.camera_id + '|' + p.arquivo] = p;
@@ -858,7 +874,15 @@ function blocoDoHd() {
         situacao = 'pronto em terra';
       } else if (p && p.estado === 'pedido') {
         acao = document.createElement('button'); acao.className = 'pil'; acao.disabled = true;
-        acao.textContent = 'chegando…'; situacao = 'pedido enviado ao barco';
+        acao.textContent = 'chegando…';
+        situacao = 'pedido enviado ao barco' + textoDeEspera(p.ha_segundos);
+      } else if (p && p.estado === 'sem_resposta') {
+        /* O BORDO NAO RESPONDEU (dono, 26/11/2026: o "chegando…" travado): o pedido venceu, mas o trecho
+           continua no HD do barco — a tela volta a oferecer "pedir" em vez de mentir que esta' chegando. */
+        acao = document.createElement('button'); acao.className = 'pil'; acao.textContent = 'pedir';
+        acao.title = p.motivo || '';
+        acao.addEventListener('click', () => pedirTrechoDoHd(b.camera_id, b.arquivo, acao));
+        situacao = 'o bordo não respondeu' + textoDeEspera(p.ha_segundos) + ' (as imagens continuam no HD do barco)';
       } else if (p && p.estado === 'erro') {
         acao = document.createElement('button'); acao.className = 'pil'; acao.disabled = true;
         acao.textContent = 'indisponível'; situacao = 'saiu do HD (' + (p.motivo || 'erro') + ')';
@@ -1544,6 +1568,16 @@ async function pedirTrechoDoHd(cameraId, arquivo, botao) {
 setInterval(relogios, 1000); setInterval(() => { if (S.tela === 'visualizar') pintarEstados(); }, 2000);
 /* "estou aqui" da transmissao (10 s): e' o que mantem viva a sessao aberta nesta tela */
 setInterval(baterPonto, 10000);
+/* O PEDIDO DE TRECHO NAO PODE PARECER TRAVADO (dono, 26/11/2026): com pedido vivo nesta tela o catalogo
+   se atualiza sozinho a cada 15 s — o servidor fecha o pedido vencido (10 min) como `sem_resposta` e a
+   linha passa a dizer "o bordo não respondeu…", com o botão de pedir de novo. */
+setInterval(async () => {
+  if (S.tela !== 'gravacoes') return;
+  const vivos = (((S.hd || {}).pedidos) || []).some((p) => p.estado === 'pedido');
+  if (!vivos) return;
+  await carregarHd();
+  if (S.tela === 'gravacoes') desenharTela();
+}, 15000);
 /* fechou a aba/navegador: avisa na hora; desligar o computador fica por conta do batimento */
 window.addEventListener('pagehide', () => {
   for (const id of (S.minhas || [])) {

@@ -303,7 +303,7 @@ def _banco_resumo() -> dict:
                 "ok": True,
                 "cameras": contar("SELECT count(*) FROM cameras WHERE ativo=1"),
                 "ingestoes_no_ar": contar("SELECT count(*) FROM ingestoes WHERE estado NOT IN ('parado','fim')"),
-                "pedidos_pendentes": contar("SELECT count(*) FROM hd_pedidos WHERE estado NOT IN ('enviado','entregue','erro')"),
+                "pedidos_pendentes": contar("SELECT count(*) FROM hd_pedidos WHERE estado NOT IN ('enviado','entregue','erro','sem_resposta')"),
                 "erros_24h": contar("SELECT count(*) FROM ingestoes WHERE erro != '' AND atualizado_em >= ?", (corte,)),
                 "ultima_saida": (lambda r: str(r["atualizado_em"]) if r else "")(
                     con.execute("SELECT atualizado_em FROM ingestoes WHERE estado NOT IN ('erro') "

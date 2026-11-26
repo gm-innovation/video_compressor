@@ -216,6 +216,9 @@ def main() -> int:
         env.pop(k, None)
     env.update({"LECSOR_BANCO": str(banco), "LECSOR_PORTA_API": str(porta), "LECSOR_SEM_AMBIENTE": "1",
                 "LECSOR_SAUDE_HISTORICO": str(historico), "LECSOR_HD_DIR": str(tmp / "hd"),
+                # o app de captura relata o boot por ambiente (dono, 26/11/2026): e' o que a tela do bordo
+                # mostra em "abre com o Windows: sim/nao". Aqui ele diz que SIM.
+                "LECSOR_ABRE_COM_WINDOWS": "1", "LECSOR_ABRE_COM_WINDOWS_ORIGEM": "registro do Windows",
                 "PYTHONIOENCODING": "utf-8"})
     log = (tmp / "api.log").open("wb")
     api = subprocess.Popen([sys.executable, str(RAIZ / "ground" / "api.py"), str(porta)],
@@ -321,6 +324,10 @@ def main() -> int:
             bordo.on("pageerror", lambda e: erros.append("bordo: " + str(e)))
             bordo.goto(base + "/bordo")
             bordo.wait_for_selector("#curvas", timeout=ESPERA)
+            # A primeira carga de `/api/bordo` desta maquina e' lenta (medido: ~6 s, e' a varredura local
+            # que ela faz antes de responder) — a tela so' pinta o dashboard quando o JSON chega. Sem esta
+            # espera a prova mediria a tela VAZIA e chamaria de defeito o que ainda nao terminou.
+            bordo.wait_for_selector("#dash-diag .dash-card", timeout=ESPERA)
             bordo.wait_for_timeout(1500)
             painel = bordo.evaluate("""() => {
               const svgs = Array.from(document.querySelectorAll('#curvas svg'));
@@ -356,6 +363,70 @@ def main() -> int:
             bordo.wait_for_timeout(800)
             nota = bordo.inner_text("#curva-nota")
             checar("e a serie VOLTA ao vivo quando ela existe", "ponto" in nota.lower(), nota[:90])
+
+            print("\n== 6c. a LARGURA TODA e o boot no Windows (dono, 26/11/2026) ==")
+            largura = bordo.evaluate("""() => {
+              const c = document.querySelector('.carta').getBoundingClientRect();
+              return { carta: Math.round(c.width), janela: window.innerWidth,
+                       estilo: getComputedStyle(document.querySelector('.carta')).width };
+            }""")
+            print("       ", json.dumps(largura))
+            checar("o painel do bordo ocupa a LARGURA TODA da janela (nao a faixa central de 880 px)",
+                   largura["carta"] >= largura["janela"] - 40, json.dumps(largura))
+            diag = bordo.inner_text("#dash-diag")
+            topo_txt = bordo.inner_text("#dash-topo")
+            # ATENCAO: o texto do painel tem maiusculas no meio ("Abre junto com o Windows"), entao a
+            # agulha tem de ser toda minuscula para casar com o `.lower()` do texto — senao a prova acusa
+            # defeito onde nao ha' (foi o que aconteceu na primeira rodada desta secao).
+            checar("o diagnostico mostra 'Abre junto com o Windows' com o que o app mediu",
+                   "abre junto com o windows" in (diag or "").lower()
+                   and "abre o app junto com o windows" in (diag or "").lower(),
+                   (diag or "")[-240:].replace("\n", " | "))
+            checar("o cabecalho do painel tambem diz o boot desta maquina",
+                   "abre com o windows" in (topo_txt or "").lower(), (topo_txt or "")[:200].replace("\n", " | "))
+            bordo.evaluate("""() => { pintarDashboardDoBordo({ app: { abre_com_windows: null,
+                                          texto: 'sem medida: esta tela nao esta dentro do app' } }); }""")
+            checar("sem o sinal do app a linha diz 'sem medida' (nunca um 'sim' de enfeite)",
+                   "sem medida" in bordo.inner_text("#dash-diag").lower())
+
+            print("\n== 6d. SEM MEDIDA nao e' traco mudo: CPU/memoria/rede dizem POR QUE (dono, 26/11/2026) ==")
+            # A maquina que nao conseguiu medir e' um estado REAL do produto (a serie pode vir vazia). Aqui a
+            # rede e' interceptada para devolver exatamente esse payload: a prova mede o DESENHO da tela, nao
+            # o acaso de a bancada ter medido.
+            bordo.evaluate("""() => {
+              const real = window.fetch;
+              window.fetch = async (u, o) => {
+                const r = await real(u, o);
+                let j = null;
+                try { j = await r.clone().json(); } catch (e) { return r; }
+                if (j && j.pontos !== undefined) {
+                  j.pontos = []; j.motivo = 'sem amostra de saude ainda nesta maquina (teste)';
+                }
+                if (j && j.saude !== undefined) {
+                  j.saude = Object.assign({}, j.saude || {},
+                    { nao_medido: { cpu: 'a maquina nao conseguiu medir agora (teste)' } });
+                }
+                return new Response(JSON.stringify(j), { status: 200,
+                  headers: { 'Content-Type': 'application/json' } });
+              };
+              return true;
+            }""")
+            bordo.evaluate("() => { carregar(); carregarCurvas(); }")
+            # A carga de `/api/bordo` e' lenta (~6 s nesta bancada): esperar o DESENHO mudar, nao o relogio.
+            try:
+                bordo.wait_for_function(
+                    "() => /n\\u00e3o medido/i.test(document.querySelector('#ficha-saude').innerText)",
+                    timeout=ESPERA * 2)
+            except Exception as e:  # noqa: BLE001
+                print("       aviso: a ficha nao chegou a dizer 'nao medido':", type(e).__name__)
+            ficha = bordo.inner_text("#ficha-saude")
+            nota = bordo.inner_text("#curva-nota")
+            checar("sem medida, a ficha de CPU/memoria/disco/rede diz 'nao medido' COM o motivo",
+                   "não medido" in ficha.lower() and "nao conseguiu medir" in ficha.lower(),
+                   ficha[:200].replace("\n", " | "))
+            checar("a curva sem serie diz 'Nao medido' com o motivo que o servidor mandou",
+                   "não medido" in nota.lower() and "sem amostra" in nota.lower(),
+                   nota[:200].replace("\n", " | "))
             bordo.close()
 
             # ---------------- 7: o aviso do ULTIMO MINUTO e' CLICAVEL na tela do dono ----------------

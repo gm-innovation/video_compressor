@@ -68,13 +68,12 @@ function resolver(PADRAO, PAPEIS, PAPEL, doUsuario) {
   if (papel.capturaLocal === true) {
     if (config.capturaLocal !== true) { config.capturaLocal = true; corrigido = true; }
     if (!config.servidorLocal.ligado) { config.servidorLocal.ligado = true; corrigido = true; }
-    // A MAQUINA DE CAPTURA E' AUTONOMA (dono, 23/11/2026): "o app de captura deve ser autônomo, faz as
-    // varreduras locais e fica verificando as flags de terra". Ela sobe sozinha no boot do Windows —
-    // quem decidiu isso um dia foi o operador (o menu "Abrir junto com o Windows" continua mandando);
-    // o que nao pode e' o pacote de captura nascer FORA do boot e o barco so' publicar quando alguem
-    // abrir o aplicativo na mao. Sem `corrigido`: e' o papel, nao um conserto de arquivo torto.
-    const escolheu = !!doUsuario && Object.prototype.hasOwnProperty.call(doUsuario, 'abrirComWindows');
-    if (!escolheu && config.abrirComWindows !== true) config.abrirComWindows = true;
+    // A MAQUINA DE CAPTURA SOBE COM O WINDOWS, SEM OPCAO DE DESLIGAR (P3 = sim, dono, 26/11/2026: "o app
+    // precisa sempre ligar automaticamente junto com o computador"). Antes, quem tivesse desmarcado no
+    // menu ficava fora do boot — e o barco só publicava quando alguém abria o aplicativo na mão. Agora o
+    // pacote de captura reafirma o registro a cada abertura (`main.js`) e a tela do bordo MOSTRA se o
+    // Windows está mesmo abrindo ele. `corrigido`: um arquivo torto de instalação antiga também é conserto.
+    if (config.abrirComWindows !== true) { config.abrirComWindows = true; corrigido = true; }
   }
   if (config.servidorLocal.ligado) {
     // Servidor local LIGADO nesta maquina: o aplicativo fala com ELE. É o servidor que conhece as

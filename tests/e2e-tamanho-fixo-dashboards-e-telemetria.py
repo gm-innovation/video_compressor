@@ -363,8 +363,10 @@ def main() -> int:
                    str(painel["barra"]))
             checar("a primeira dobra tem o cabecalho com a bolinha de saude",
                    painel["topo"] and painel["ponto"], painel["topoTexto"])
-            checar("a primeira dobra tem o diagnostico de conexoes (4 rotas)",
-                   len(painel["conexoes"]) == 4, str(painel["conexoes"]))
+            # 5 rotas desde a 0.25.0: as 4 antigas + "Abre junto com o Windows" (dono, 26/11/2026: "o app
+            # precisa sempre ligar automaticamente junto com o computador") — a linha do boot É medida.
+            checar("a primeira dobra tem o diagnostico de conexoes (5 rotas, com o boot no Windows)",
+                   len(painel["conexoes"]) == 5, str(painel["conexoes"]))
             checar("a CPU tem VALOR (nao e' um '—' sem motivo)",
                    painel["numeros"][0] not in ("", "—") or "não medido" in bordo.inner_text("body")[:4000],
                    painel["numeros"][0])

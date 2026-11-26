@@ -121,6 +121,11 @@ PROVAS = (
     # e a prova mede, contra o servidor, o que cada um dos 4 usuarios enxerga (1 embarcacao / algumas /
     # todas da empresa / todas as empresas) — inclusive o HD do bordo e o historico de terra.
     "tests/test-os-4-tipos-de-cliente.py",
+    # RODADA 0.25.0 — O PEDIDO DE TRECHO QUE O BORDO NAO RESPONDE (dono, 26/11/2026: "esse 'chegando...'
+    # parece que está travado"). O pedido vencido vira `sem_resposta` com motivo (nao fica pendurado nem
+    # e' apagado: historico + auditoria), a tela mostra a idade e oferece pedir de novo, e o painel do
+    # bordo ocupa a largura toda, diz "nao medido" com o motivo e mostra o boot no Windows.
+    "tests/test-pedido-do-hd-sem-resposta.py",
     # RODADA 0.19.0 — O OBSERVADOR FILTRA POR TIPO, NAO POR NOME (dono, 25/11/2026: "petrobras ou ibama
     # pode acessar ... mas apenas do radar de oleo e camera flir se tiver"). A camera ganha a coluna
     # `tipo` (camera|radar|flir); o radar pelo TIPO aparece mesmo sem "radar" no nome; a FLIR aparece; a

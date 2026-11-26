@@ -837,7 +837,15 @@ def guardar_catalogo_do_hd(embarcacao_id: str, camera_id: str, resumo: dict, blo
 
 
 def catalogo_do_hd(embarcacao_id: str, camera_id: str = "") -> dict:
-    """O catalogo publicado pelo bordo (para a tela pesquisar por data e hora)."""
+    """O catalogo publicado pelo bordo (para a tela pesquisar por data e hora).
+
+    Antes de ler, fecha os pedidos que o bordo NAO respondeu no prazo (dono, 26/11/2026: o "chegando…"
+    travado) — assim a tela nunca mostra pedido velho como se estivesse chegando.
+    """
+    try:
+        fechar_pedidos_do_hd_sem_resposta()
+    except Exception as e:  # noqa: BLE001  (a limpeza nunca derruba a leitura do catalogo)
+        print("[api] aviso: fechar pedidos do HD sem resposta:", type(e).__name__, e, flush=True)
     with conexao() as c:
         if camera_id:
             linhas = [dict(x) for x in c.execute(
@@ -865,7 +873,12 @@ def catalogo_do_hd(embarcacao_id: str, camera_id: str = "") -> dict:
         except Exception:
             l["blocos"] = []
         saida.append(l)
-    return {"embarcacao_id": embarcacao_id, "catalogos": saida, "pedidos": pedidos}
+    # Cada pedido ganha a IDADE (segundos): a tela escreve "pedido enviado ao barco há X min" em vez de um
+    # "chegando…" mudo (dono, 26/11/2026) e sabe quando o pedido caiu por `sem_resposta`.
+    for p in pedidos:
+        p["ha_segundos"] = _idade_em_segundos(p.get("criado_em"))
+    return {"embarcacao_id": embarcacao_id, "catalogos": saida, "pedidos": pedidos,
+            "limite_sem_resposta_s": int(segundos_sem_resposta_do_hd())}
 
 
 def pedidos_de_hd(embarcacao_id: str) -> list:
@@ -892,12 +905,72 @@ def pedir_trecho_do_hd(usuario, camera_id: str, arquivo: str) -> dict:
         if ja and ja["estado"] == "enviado":
             return {"ok": True, "ja_tinha": True, "id": ja["id"],
                     "recado": "este trecho ja' esta' em terra: baixe pelo historico"}
+        if ja and ja["estado"] == "pedido":
+            # Ja' existe um pedido VIVO deste bloco: repetir criava um pedido duplicado para o bordo
+            # (achado de 26/11/2026). O velho e' fechado por `fechar_pedidos_do_hd_sem_resposta`.
+            return {"ok": True, "ja_tinha": True, "id": ja["id"],
+                    "recado": "este trecho ja' foi pedido: o PC de captura esta' enviando"}
         pid = secrets.token_hex(8)
         c.execute("""INSERT INTO hd_pedidos (id,embarcacao_id,camera_id,arquivo,usuario_email,estado,criado_em)
                      VALUES (?,?,?,?,?,'pedido',?)""",
                   (pid, cam["embarcacao_id"], camera_id, nome, usuario["email"], em_iso()))
     auditar(usuario, "trecho_do_hd_pedido", f"{camera_id} {nome}", "")
     return {"ok": True, "id": pid, "recado": "pedido enviado ao PC de captura: o trecho chega em instantes"}
+
+
+# --------------------------------------------------- O PEDIDO QUE O BORDO NAO RESPONDE (dono, 26/11/2026)
+# Dono, com o print da tela: "esse 'chegando...' parece que está travado". Era: o pedido ficava `pedido`
+# para sempre e a tela so' sabia escrever "chegando…". Agora o pedido VELHO vira `sem_resposta`, com o
+# motivo escrito, e a tela volta a oferecer "pedir" — nada e' apagado (o historico e a auditoria ficam).
+SEGUNDOS_SEM_RESPOSTA_DO_HD_PADRAO = 600.0   # 10 min (decisao do dono, 26/11/2026: P1 = sim)
+
+
+def segundos_sem_resposta_do_hd() -> float:
+    """Quanto o pedido de um trecho espera o bordo responder (env `LECSOR_MINUTOS_SEM_RESPOSTA_HD`)."""
+    bruto = (os.environ.get("LECSOR_MINUTOS_SEM_RESPOSTA_HD") or "").strip()
+    if not bruto:
+        return SEGUNDOS_SEM_RESPOSTA_DO_HD_PADRAO
+    try:
+        minutos = float(bruto)
+    except Exception:  # noqa: BLE001
+        return SEGUNDOS_SEM_RESPOSTA_DO_HD_PADRAO
+    return max(60.0, minutos * 60.0) if minutos > 0 else SEGUNDOS_SEM_RESPOSTA_DO_HD_PADRAO
+
+
+def _idade_em_segundos(carimbo) -> int | None:
+    """Ha' quantos segundos o carimbo ISO (UTC) foi escrito. A tela mostra o pedido ENVELHECENDO."""
+    try:
+        quando = dt.datetime.fromisoformat(str(carimbo))
+        if quando.tzinfo is None:
+            quando = quando.replace(tzinfo=dt.timezone.utc)
+        return max(0, int((dt.datetime.now(dt.timezone.utc) - quando).total_seconds()))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def fechar_pedidos_do_hd_sem_resposta(agora: dt.datetime | None = None) -> list[dict]:
+    """Fecha os pedidos de trecho que o bordo nao respondeu no prazo (padrao 10 min).
+
+    O pedido NAO e' apagado: ele passa a `sem_resposta` com o motivo (e vai para a auditoria). A tela
+    volta a oferecer "pedir" e o cliente nunca fica olhando um "chegando…" eterno.
+    """
+    limite_s = segundos_sem_resposta_do_hd()
+    agora = agora or dt.datetime.now(dt.timezone.utc)
+    corte = (agora - dt.timedelta(seconds=limite_s)).isoformat(timespec="seconds")
+    minutos = int(round(limite_s / 60.0))
+    motivo = (f"o computador de captura nao respondeu em {minutos} min — a embarcacao pode estar sem "
+              "bordo no ar ou o trecho ja' saiu do HD dela")
+    with conexao() as c:
+        velhos = [dict(x) for x in c.execute(
+            """SELECT id,embarcacao_id,camera_id,arquivo,criado_em FROM hd_pedidos
+               WHERE estado='pedido' AND criado_em <> '' AND criado_em < ?""", (corte,)).fetchall()]
+        for p in velhos:
+            c.execute("UPDATE hd_pedidos SET estado='sem_resposta', motivo=?, pronto_em=? WHERE id=?",
+                      (motivo, em_iso(agora), p["id"]))
+    for p in velhos:
+        auditar(None, "trecho_do_hd_sem_resposta",
+                f"{p['camera_id']} {p['arquivo']} (pedido de {p['criado_em']})", "")
+    return velhos
 
 
 # --------------------------------------------------------------------------------------------
@@ -1744,7 +1817,14 @@ def _vigiar_uma_vez(agora: dt.datetime | None = None) -> dict:
     limite_resp = (agora - dt.timedelta(seconds=SEGUNDOS_SEM_RESPOSTA)).isoformat(timespec="seconds")
     limite_entrega = (agora - dt.timedelta(seconds=SEGUNDOS_ENTREGA_LENTA)).isoformat(timespec="seconds")
     limite_bordo = (agora - dt.timedelta(seconds=SEGUNDOS_SEM_BORDO)).isoformat(timespec="seconds")
-    feitas = {"sem_batimento": [], "por_tempo": [], "sem_resposta": [], "bordo_mudo": []}
+    feitas = {"sem_batimento": [], "por_tempo": [], "sem_resposta": [], "bordo_mudo": [],
+              "pedidos_do_hd_sem_resposta": []}
+    # Os pedidos de TRECHO do HD que o bordo nao respondeu caem por aqui tambem — sem depender de alguem
+    # abrir a tela: o "chegando…" travado vira `sem_resposta` dentro do prazo (dono, 26/11/2026).
+    try:
+        feitas["pedidos_do_hd_sem_resposta"] = [p["id"] for p in fechar_pedidos_do_hd_sem_resposta(agora)]
+    except Exception as e:  # noqa: BLE001
+        print("[api] aviso: fechar pedidos do HD sem resposta:", type(e).__name__, e, flush=True)
     with conexao() as c:
         # D-A (dono, 24/11/2026): a janela de 60 s vale tambem GRAVANDO — ao sair da tela e nao voltar em
         # 60 s a sessao morre (e a gravacao do lado terra encerra junto; o cliente e' avisado a baixar
@@ -3285,7 +3365,26 @@ class Handler(SimpleHTTPRequestHandler):
                         origem = "serie do lado terra"
                 except Exception as e:  # noqa: BLE001
                     origem = f"serie do lado terra indisponivel ({type(e).__name__})"
-            return self._json(200, {"ok": True, "pontos": pontos, "limite": limite,
+            # POR QUE NAO HA SERIE (dono, 26/11/2026): "não está exibindo as informações de cpu, memória e
+            # rede" — a maquina estava sem medicao e a tela abria em "—", sem dizer o motivo. Agora a rota
+            # conta o motivo MEDIDO e a tela escreve ele (a tela continua sem inventar curva).
+            motivo = ""
+            if not pontos:
+                if origem and "indisponivel" in origem:
+                    motivo = origem
+                else:
+                    try:
+                        import saude_do_bordo
+                        nao = dict((saude_do_bordo.retrato() or {}).get("nao_medido") or {})
+                    except Exception as e:  # noqa: BLE001
+                        nao = {"leitura": f"{type(e).__name__}: {e}"}
+                    if nao:
+                        motivo = ("esta maquina nao conseguiu medir: "
+                                  + "; ".join(f"{k}: {v}" for k, v in sorted(nao.items())))
+                    else:
+                        motivo = ("o anel local desta maquina ainda nao tem ponto nenhum de saude — um "
+                                  "ponto a cada 60 s (a primeira curva aparece na primeira hora)")
+            return self._json(200, {"ok": True, "pontos": pontos, "limite": limite, "motivo": motivo,
                                     "origem": origem, "embarcacao_id": emb},
                               {"Cache-Control": "no-store"})
         if rota == "/api/bordo":
@@ -6005,6 +6104,28 @@ class Handler(SimpleHTTPRequestHandler):
         return {"no_ar": no_ar, "em": em, "em_em_segundos": round(idade, 1), "rodadas": rodadas,
                 "motivo": "" if no_ar else f"o agente não dá sinal há {int(idade)} s"}
 
+    @staticmethod
+    def _app_do_bordo() -> dict:
+        """O que o APP (Electron) fez nesta maquina — hoje: abre junto com o Windows?
+
+        Dono (26/11/2026): "o app precisa sempre ligar automaticamente junto com o computador". Quem sabe o
+        estado REAL e' o app: ele registra e mede pelo Windows (`setLoginItemSettings`/`getLoginItemSettings`)
+        e passa o resultado por ambiente ao servidor local que ele mesmo sobe. Sem esse sinal (servidor
+        rodando fora do app) a tela diz "sem medida" — nunca um "sim" de enfeite.
+        """
+        bruto = (os.environ.get("LECSOR_ABRE_COM_WINDOWS") or "").strip()
+        origem = (os.environ.get("LECSOR_ABRE_COM_WINDOWS_ORIGEM") or "").strip()
+        versao = (os.environ.get("LECSOR_VERSAO_APP") or "").strip()
+        if bruto in ("0", "1"):
+            ligado = bruto == "1"
+            texto = ("esta maquina abre o app junto com o Windows"
+                     if ligado else
+                     "o Windows NAO esta' abrindo o app no boot — o app reafirma o registro a cada "
+                     "abertura e usa o atalho de Inicializacao")
+        else:
+            ligado, texto = None, "sem medida: esta tela nao esta' rodando dentro do app de captura"
+        return {"abre_com_windows": ligado, "origem": origem, "versao_app": versao, "texto": texto}
+
     def _no_ar_do_bordo(self) -> list:
         """O que ESTE bordo ligou e ainda não foi mandado parar (`ordens/ligados.json`)."""
         d = self._ler_json_do_bordo(self._caminho_do_estado_do_agente("ligados.json",
@@ -6197,6 +6318,8 @@ class Handler(SimpleHTTPRequestHandler):
                                      if token else
                                      "falta o token de ingestão no pacote: o cadastro não publica")},
             "agente": self._agente_do_bordo(),
+            # O app de captura em si: abre junto com o Windows? (dono, 26/11/2026)
+            "app": self._app_do_bordo(),
             "varredura": varredura,
             "publicadas": list(varredura.get("publicadas") or []),
             "no_ar": self._no_ar_do_bordo(),

@@ -72,7 +72,10 @@ def main() -> int:
     env = dict(os.environ)
     env.update({"LECSOR_BANCO": str(banco), "LECSOR_SENHA_DEMO": SENHA,
                 "LECSOR_TOKEN_INGESTAO": TOKEN_INGESTAO,
-                "LECSOR_GRAVACOES_DIR": str(tmp / "gravacoes"), "PYTHONIOENCODING": "utf-8"})
+                "LECSOR_GRAVACOES_DIR": str(tmp / "gravacoes"), "PYTHONIOENCODING": "utf-8",
+                # o prazo de resposta do bordo reduzido a 1 min: e' o que prova, na TELA, o pedido
+                # vencido ("o bordo não respondeu") sem esperar 10 minutos (dono, 26/11/2026)
+                "LECSOR_MINUTOS_SEM_RESPOSTA_HD": "1"})
     for k in ("LECSOR_SUPABASE_URL", "LECSOR_SUPABASE_ANON_KEY", "LECSOR_SUPABASE_SERVICE_KEY",
               "LECSOR_LADO_TERRA_API", "LECSOR_DESTINO_SRT", "LECSOR_EMBARCACAO"):
         env.pop(k, None)
@@ -136,6 +139,15 @@ def main() -> int:
                        VALUES ('ped-0001',?,'radar-01',?,'cliente@lecsor.test','enviado',?,?,'',?,?)""",
                     (emb_id, blocos[0]["arquivo"], pronto_nome, (hd / pronto_nome).stat().st_size,
                      time.strftime("%Y-%m-%dT%H:%M:%S"), time.strftime("%Y-%m-%dT%H:%M:%S")))
+        # um pedido VENCIDO (3 min atras, com o prazo em 1 min): o dono viu isso na tela como um
+        # "chegando…" travado — aqui ele tem de aparecer como "o bordo não respondeu", com botão de
+        # pedir de novo (dono, 26/11/2026).
+        con.execute("""INSERT OR REPLACE INTO hd_pedidos
+                       (id,embarcacao_id,camera_id,arquivo,usuario_email,estado,trecho,bytes,motivo,
+                        criado_em,pronto_em)
+                       VALUES ('ped-0002',?,'radar-01',?,'cliente@lecsor.test','pedido','',0,'',?,'')""",
+                    (emb_id, blocos[1]["arquivo"],
+                     time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(agora - 180))))
 
         # ---- 2) o gravado EM TERRA: uma transmissao encerrada com gravacao (linha + arquivo)
         fim = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(agora))
@@ -201,6 +213,21 @@ def main() -> int:
             checar("os trechos ainda no HD do barco mostram PEDIR",
                    blocos_tela.nth(0).locator("button", has_text="pedir").count() == 2,
                    f"{blocos_tela.nth(0).locator('button', has_text='pedir').count()} botão(ões)")
+
+            print()
+            print("== 3b. o pedido que o bordo NAO respondeu (dono, 26/11/2026: \"parece que está travado\")")
+            vencida = blocos_tela.nth(0).locator("tbody tr", has_text="o bordo não respondeu")
+            checar("o pedido vencido aparece como 'o bordo não respondeu' (e não um 'chegando…' eterno)",
+                   vencida.count() == 1, blocos_tela.nth(0).inner_text()[:300].replace("\n", " | "))
+            if vencida.count() == 1:
+                texto_vencida = vencida.first.inner_text()
+                checar("a linha do pedido vencido mostra a IDADE (há quanto tempo ele esperou)",
+                       "há " in texto_vencida, texto_vencida)
+                checar("a linha do pedido vencido oferece PEDIR de novo",
+                       vencida.first.locator("button", has_text="pedir").count() == 1)
+            checar("nenhuma linha do bloco de bordo diz 'chegando…' sem pedido vivo",
+                   blocos_tela.nth(0).locator("tbody tr", has_text="chegando").count() == 0,
+                   blocos_tela.nth(0).inner_text()[:300].replace("\n", " | "))
 
             print()
             print("== 4. o bloco de terra (o que era a tela 'Gravações')")

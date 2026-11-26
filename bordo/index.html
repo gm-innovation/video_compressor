@@ -25,7 +25,11 @@
   * { box-sizing: border-box; }
   body { margin: 0; min-height: 100vh; background: #0b1220; color: #e8eefc;
          font: 15px/1.5 system-ui, "Segoe UI", Roboto, sans-serif; padding: 22px 18px 34px; }
-  .carta { width: min(880px, 96vw); margin: 0 auto; }
+  /* LARGURA TOTAL (dono, 26/11/2026): "o dashboard do app de captura não está com o layout padrão como o do
+     admin, está utilizando apenas a faixa central da tela, muito espaço vazio nas laterais". A carta era
+     `min(880px, 96vw)` centralizada — num monitor largo sobrava quase metade da tela vazia. Agora o painel
+     ocupa a largura toda, como a área do admin; quem organiza são as grades (`auto-fit`), não a largura. */
+  .carta { width: 100%; max-width: none; margin: 0; }
   h1 { margin: 0 0 4px; font-size: 20px; letter-spacing: .2px; }
   p.sub { margin: 0 0 18px; color: #9fb0d0; font-size: 13.5px; }
   .selo { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 700;
@@ -271,6 +275,10 @@
 <script>
 'use strict';
 const $ = (id) => document.getElementById(id);
+/* O retrato de saúde DE AGORA (vem do `/api/bordo`, a cada 10 s). Quando o anel local ainda não tem
+   série nenhuma, é daqui que sai o número das curvas — sem ele os quatro gráficos abriam em "—" e o
+   dono leu isso como "não está exibindo as informações de cpu, memória e rede" (26/11/2026). */
+let RETRATO_AGORA = {};
 
 function selo(el, texto, classe) {
   el.textContent = texto;
@@ -450,6 +458,16 @@ async function carregar() {
 
   // ----- saúde + DASHBOARD (dono, 24/11/2026) ---------------------------------------------------
   const s = d.saude || {};
+  RETRATO_AGORA = s;
+  /* SEM MEDIDA NAO E' TRACO MUDO (dono, 26/11/2026): "não está exibindo as informações de cpu, memória e
+     rede". Quando a máquina não conseguiu medir, a ficha diz "não medido" COM o motivo medido — o mesmo
+     que a série vazia faz nas curvas. Traço e a frase são a mesma regra do produto: nunca inventar. */
+  const naoMedido = s.nao_medido || {};
+  const porqueNaoMediu = Object.keys(naoMedido).map(k => k + ': ' + naoMedido[k]).join('; ');
+  const medidaOuMotivo = (chave, sufixo) => {
+    const t = textoMedida(s, chave, sufixo);
+    return t === '—' ? ('não medido — ' + (porqueNaoMediu || 'esta máquina não informou esta medida')) : t;
+  };
   const resumo = s.resumo || (s.retrato && s.retrato.resumo) || {};
   const g = s.global || {};
   const discos = s.discos || g.discos || [];
@@ -458,16 +476,20 @@ async function carregar() {
   selo($('selo-saude'), s.estado || resumo.estado || '—',
        (s.estado === 'ok' || resumo.estado === 'ok') ? 'ok'
          : ((s.estado === 'problema' || resumo.estado === 'problema') ? 'ruim' : 'neutro'));
-  ficha($('ficha-saude'), [
-    ['CPU', textoMedida(s, 'cpu_pct', '%')],
-    ['Memória', textoMedida(s, 'memoria_pct', '%')],
+  const redeTxt = (rede.enviado_mbps === undefined
+      ? ('não medido — ' + (porqueNaoMediu || 'esta máquina não informou a taxa'))
+      : numero(rede.enviado_mbps, 2, ' Mbps') + ' / ' + numero(rede.recebido_mbps, 2, ' Mbps'));
+  const linhasSaude = [
+    ['CPU', medidaOuMotivo('cpu_pct', '%')],
+    ['Memória', medidaOuMotivo('memoria_pct', '%')],
     ['Disco', piorDisco ? (piorDisco.usado_pct + ' % usado — ' + (piorDisco.nome || 'volume'))
-                        : textoMedida(s, 'disco_pct', '%')],
-    ['Rede (enviado / recebido)', (rede.enviado_mbps === undefined ? '—'
-        : numero(rede.enviado_mbps, 2, ' Mbps') + ' / ' + numero(rede.recebido_mbps, 2, ' Mbps'))],
+                        : medidaOuMotivo('disco_pct', '%')],
+    ['Rede (enviado / recebido)', redeTxt],
     ['Câmeras paradas/vivas', resumo.texto || s.texto || '—'],
     ['Gerado em', hora(s.gerado_em)],
-  ]);
+  ];
+  if (porqueNaoMediu) linhasSaude.push(['Não medido', porqueNaoMediu]);
+  ficha($('ficha-saude'), linhasSaude);
   /* a primeira dobra do Dock Check: bolinha de saúde + diagnóstico de conexões + por câmera/encoder */
   pintarDashboardDoBordo(d);
   pintarPainel(s);
@@ -748,6 +770,7 @@ function pintarDashboardDoBordo(d) {
   const terra = d.lado_terra || {};
   const proc = d.processos || [];
   const grav = d.gravacao || {};
+  const app = d.app || {};
   const estado = s.estado || (s.resumo && s.resumo.estado) || '';
   const tom = TOM_DO_ESTADO[estado === 'problema' ? 'ruim' : (estado === 'ok' ? 'ok'
     : (estado === 'alerta' ? 'atencao' : 'neutro'))];
@@ -769,6 +792,8 @@ function pintarDashboardDoBordo(d) {
     ' · token de ingestão ' + (tok.presente ? 'presente' : 'ausente') +
     ' · ' + (transmite ? transmite + ' fluxo(s) no ar' : 'nada transmitindo') +
     (gravando || grav.ligada ? ' · gravação full-time ativa' : '') +
+    ' · abre com o Windows ' + (app.abre_com_windows === true ? 'sim'
+      : (app.abre_com_windows === false ? 'NÃO' : 'sem medida')) +
     ' · esta tela se atualiza sozinha a cada 10 s';
   bloco.append(h2, q);
   tit.appendChild(bloco);
@@ -789,6 +814,12 @@ function pintarDashboardDoBordo(d) {
   caixa.appendChild(conexaoDoBordo('Agente de ordens', ag.no_ar ? 'ok' : 'problema',
     ag.no_ar ? ('no ar' + (ag.em ? ' · último sinal há ' + (segundos(ag.em_em_segundos) ?? '?') + ' s' : ''))
              : ('sem sinal nesta máquina' + (ag.motivo ? ' — ' + ag.motivo : ''))));
+  /* O APP ABRE JUNTO COM O WINDOWS? (dono, 26/11/2026: "o app precisa sempre ligar automaticamente junto
+     com o computador"). Quem mede é o próprio app (registro do Windows) e ele passa por ambiente para o
+     servidor local; sem esse sinal a linha diz "sem medida" — nunca um "sim" de enfeite. */
+  caixa.appendChild(conexaoDoBordo('Abre junto com o Windows',
+    app.abre_com_windows === true ? 'ok' : (app.abre_com_windows === false ? 'problema' : 'atencao'),
+    app.texto || 'sem medida'));
   cardConc.appendChild(caixa);
   diag.appendChild(cardConc);
 
@@ -949,7 +980,21 @@ function vazio(svg, texto) {
   svg.appendChild(t);
 }
 
-function desenharCurva(cfg, pontos) {
+/* O NÚMERO DE AGORA vem do retrato (`/api/bordo`) quando a série ainda não tem ponto — o MESMO recorte
+   que o bordo faz para gravar a série (`saude_do_bordo.ponto_do_retrato`), para os números das curvas
+   não abrirem em "—" (dono, 26/11/2026: "não está exibindo as informações de cpu, memória e rede"). */
+function pontoDeAgora() {
+  const r = RETRATO_AGORA || {};
+  const dentro = r.retrato || r;
+  const discos = r.discos || (r.global && r.global.discos) || [];
+  const hd = discos.find((d) => d && d.nome === 'hd do radar') || discos[0] || {};
+  const total = ((r.rede || {}).total) || {};
+  return { cpu: (dentro.cpu_pct !== undefined ? dentro.cpu_pct : dentro.cpu),
+           mem: (dentro.memoria_pct !== undefined ? dentro.memoria_pct : dentro.mem),
+           disco: hd.usado_pct, rede_mbps: total.taxa_mbps };
+}
+
+function desenharCurva(cfg, pontos, motivo) {
   const svg = $('g-' + cfg.rotulo);
   if (!svg) return;
   const L = 600, A = 120, M = 8;
@@ -957,15 +1002,23 @@ function desenharCurva(cfg, pontos) {
   const vals = pontos.map((p) => Number(p[cfg.chave])).filter((v) => isFinite(v));
   if (agora) {
     agora.innerHTML = '';
-    agora.textContent = vals.length ? vals[vals.length - 1].toFixed(1) : '—';
-    if (vals.length && cfg.unidade) {
-      const s = document.createElement('small'); s.textContent = cfg.unidade; agora.appendChild(s);
+    const v = vals.length ? vals[vals.length - 1] : Number(pontoDeAgora()[cfg.chave]);
+    if (isFinite(v)) {
+      agora.textContent = v.toFixed(1);
+      if (cfg.unidade) {
+        const s = document.createElement('small'); s.textContent = cfg.unidade; agora.appendChild(s);
+      }
+    } else {
+      agora.textContent = 'não medido';
     }
   }
   if (vals.length < 2) {
-    if (pe) pe.textContent = 'sem série ainda';
+    /* Sem série a curva diz "não medido" COM o motivo; sem motivo nenhum, "sem série ainda" (a primeira
+       hora de operação). O que a tela nunca faz é um traço mudo. */
+    if (pe) pe.textContent = motivo ? ('não medido — ' + motivo) : 'sem série ainda';
     if (jan) jan.textContent = '';
-    vazio(svg, 'sem série ainda — a curva aparece com a máquina rodando');
+    vazio(svg, motivo ? ('não medido — ' + motivo)
+                      : 'sem série ainda — a curva aparece com a máquina rodando');
     return;
   }
   const teto = cfg.teto || (Math.max.apply(null, vals) * 1.15 || 1);
@@ -1003,14 +1056,18 @@ async function carregarCurvas() {
     return;  // o painel de números já avisa que o servidor local caiu; a curva só fica como estava
   }
   const pontos = (d && d.pontos) || [];
-  for (const cfg of CURVAS) desenharCurva(cfg, pontos);
+  const motivo = (d && d.motivo) || '';
+  for (const cfg of CURVAS) desenharCurva(cfg, pontos, motivo);
   const nota = $('curva-nota');
   if (nota) {
     nota.textContent = pontos.length
       ? ('Evolução da saúde desta máquina — um ponto a cada 60 s, ' + pontos.length + ' ponto(s) na ' +
          'série' + (d.origem ? '  ·  ' + d.origem : '') + '. O anel guarda 2 dias.')
-      : ('Sem série ainda: esta máquina grava um ponto a cada 60 s e a curva aparece na primeira hora ' +
-         'de operação. Nada aqui é inventado.');
+      : (motivo
+        ? ('Não medido: ' + motivo + '. Os números ao lado dos gráficos são a medida de AGORA desta ' +
+           'máquina; a curva é que ainda não tem série. Nada aqui é inventado.')
+        : ('Sem série ainda: esta máquina grava um ponto a cada 60 s e a curva aparece na primeira hora ' +
+           'de operação. Nada aqui é inventado.'));
   }
 }
 

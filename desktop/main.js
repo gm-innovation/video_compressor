@@ -409,10 +409,15 @@ function menu() {
           dialog.showMessageBox({ message: servidor.estado(), detail: servidor.detalhe(config) });
         } },
       { type: 'separator' },
-      { label: 'Abrir junto com o Windows', type: 'checkbox', checked: !!config.abrirComWindows,
-        click: (item) => {
-          config.abrirComWindows = !!item.checked; gravarConfig(config);
-          try { app.setLoginItemSettings({ openAtLogin: !!item.checked }); } catch (e) {}
+      { label: 'Abrir junto com o Windows: sempre ligado', click: () => {
+          // P3 = sim (dono, 26/11/2026): "o app precisa sempre ligar automaticamente junto com o
+          // computador". Não existe mais caixa para DESMARCAR — este item só MOSTRA o que o Windows
+          // responde, porque é ele que manda no boot (Gerenciador de Tarefas → Inicializar).
+          const real = registrarAutostart();
+          dialog.showMessageBox({ message: 'Abrir junto com o Windows: ' + (real.ligado ? 'sim' : 'NÃO'),
+            detail: real.detalhe + (real.ligado
+              ? '\n\nA tela do bordo mostra este mesmo estado no diagnóstico de conexões.'
+              : '\n\nSem ele, o barco só publica quando alguém abre o aplicativo na mão.') });
         } },
       { label: 'Ver estado do servidor', click: async () => {
           // sondagem de verdade: porta respondendo e' diferente de processo vivo
@@ -513,6 +518,47 @@ function menu() {
   if (process.platform === 'darwin') modelo.unshift({ label: app.name, submenu: [{ role: 'quit' }] });
   Menu.setApplicationMenu(Menu.buildFromTemplate(modelo));
 }
+/* O BOOT DA MAQUINA DE CAPTURA (dono, 26/11/2026: "o app precisa sempre ligar automaticamente junto com o
+   computador"). O registro do Windows é REAFIRMADO a cada abertura: se alguém desabilitar a entrada no
+   Gerenciador de Tarefas, ou se o registro se perder numa atualização, ele volta na próxima abertura.
+   Quando o registro não pega, entra o atalho da pasta de Inicialização do usuário (a segunda via) — e o
+   resultado REAL (o que o Windows responde) vai por ambiente para a tela do bordo mostrar. */
+function registrarAutostart() {
+  const r = { ligado: false, origem: '', detalhe: '' };
+  try {
+    app.setLoginItemSettings({ openAtLogin: true });
+    r.ligado = !!app.getLoginItemSettings().openAtLogin;
+    r.origem = 'registro do Windows';
+  } catch (e) {
+    r.detalhe = 'o registro do Windows falhou: ' + ((e && e.message) || e);
+  }
+  if (!r.ligado) {
+    try {
+      const pasta = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs',
+                              'Startup');
+      const alvo = path.join(pasta, 'LECSOR - app de captura.lnk');
+      shell.writeShortcutLink(alvo, 'create', {
+        target: process.execPath,
+        args: app.isPackaged ? [] : [process.argv[1] || '.'],
+        cwd: path.dirname(process.execPath),
+        description: 'LECSOR - app de captura (abre junto com o Windows)',
+      });
+      r.ligado = true;
+      r.origem = 'atalho de Inicialização';
+      r.detalhe = 'o Windows não confirmou o registro; o app criou o atalho de Inicialização: ' + alvo;
+    } catch (e2) {
+      r.detalhe = (r.detalhe ? r.detalhe + ' · ' : '') +
+        'não consegui criar o atalho de Inicialização: ' + ((e2 && e2.message) || e2);
+    }
+  } else if (!r.detalhe) {
+    r.detalhe = 'o Windows responde que abre este aplicativo no boot (' + r.origem + ').';
+  }
+  // A tela do bordo lê daqui (o servidor local herda o ambiente de quem o sobe).
+  process.env.LECSOR_ABRE_COM_WINDOWS = r.ligado ? '1' : '0';
+  process.env.LECSOR_ABRE_COM_WINDOWS_ORIGEM = r.origem;
+  return r;
+}
+
 function aplicar() { for (const [, j] of janelas) j.setFullScreen(config.modoQuiosque); }
 
 app.whenReady().then(async () => {
@@ -521,7 +567,10 @@ app.whenReady().then(async () => {
   // VAZIO porque `saude_do_bordo._versao_app()` procura `VERSION`/`desktop/package.json` DENTRO do pacote
   // (nao existem la). Quem sabe a versao e' o proprio Electron — entao ela entra pelo ambiente aqui.
   try { process.env.LECSOR_VERSAO_APP = app.getVersion(); } catch (e) { /* sem versao nao quebra nada */ }
-  try { app.setLoginItemSettings({ openAtLogin: !!config.abrirComWindows }); } catch (e) {}
+  // O BOOT DESTA MÁQUINA (dono, 26/11/2026): reafirma o registro do Windows e, se ele não pegar, cria o
+  // atalho de Inicialização. Roda ANTES de subir o servidor local — a tela do bordo lê o resultado por
+  // ambiente (`LECSOR_ABRE_COM_WINDOWS`) para mostrar "abre com o Windows: sim/não" sem inventar nada.
+  try { registrarAutostart(); } catch (e) { /* sem o autostart o app ainda abre na mão */ }
   if (config.servidorLocal && config.servidorLocal.ligado) {
     const r = servidor.subir(config);
     // Falha do servidor local não pode ser silenciosa: sem ele o PC de captura não lista câmera nenhuma.
