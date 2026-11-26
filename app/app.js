@@ -85,7 +85,7 @@ async function abrir() {
    o servidor ja' devolve so' radar para este papel; aqui a tela apenas esconde o que nao existe. */
 async function abrirObservador() {
   for (const b of document.querySelectorAll('.lateral .item')) {
-    if (!['visualizar', 'radar_hd'].includes(b.dataset.tela)) b.classList.add('oculto');
+    if (!['visualizar', 'gravacoes'].includes(b.dataset.tela)) b.classList.add('oculto');
   }
   for (const g of document.querySelectorAll('.lateral .grupo')) g.classList.add('oculto');
   const ia = $('btn-ia'); if (ia) ia.classList.add('oculto');
@@ -129,18 +129,10 @@ async function atualizar() {
   S.cameras = novas;
   if (S.selecionadas.size === 0) S.cameras.forEach((c) => S.selecionadas.add(c.id));
   for (const id of Array.from(S.selecionadas)) if (!S.cameras.some((c) => c.id === id)) S.selecionadas.delete(id);
-  /* O ACESSO AO GRAVADO A BORDO NÃO SE ESCONDE (plano único, 25/11/2026): na 0.19.0 o item sumia quando
-     a embarcação não tinha câmera de tipo 'radar' — e era justamente esse o acesso que o dono procurava
-     ("onde eu consigo acessar as imagens gravadas a bordo?"). O item fica SEMPRE no menu; quem explica
-     a ausência de blocos é a própria tela. O rótulo volta a ser "Radar de óleo (HD)" quando a
-     embarcação TEM radar de óleo — o nome antigo não se perde. */
-  const btHd = document.querySelector('button[data-tela="radar_hd"]');
-  if (btHd) {
-    btHd.classList.remove('oculto');
-    const temRadar = (S.cameras || []).some((c) => c.tipo === 'radar');
-    btHd.innerHTML = '<span class="ic">🛰</span>'
-      + (temRadar ? 'Radar de óleo (HD)' : 'Imagens gravadas a bordo');
-  }
+  /* O ACESSO AO GRAVADO A BORDO NÃO SE ESCONDE (plano único, 25/11/2026): o item fica SEMPRE no menu;
+     quem explica a ausência de blocos é a própria tela. Na 0.24.0 o item virou "Gravações" (dono,
+     26/11/2026) e quem diz "Radar de óleo (HD)" é o TÍTULO DO BLOCO dentro da página — o nome antigo
+     não se perde e o menu para de mudar de rótulo conforme a embarcação. */
   const an = await api('/api/analises');
   if (an.ok && an.corpo) {
     S.analises = an.corpo;
@@ -151,7 +143,8 @@ async function atualizar() {
   // a GRADE tambem precisa das transmissoes abertas: e' nela que o cliente inicia/para a transmissao,
   // ve a contagem e o "Reconectar" (dono, 24/11/2026 — os controles sairam da tela "Transmitir").
   if (S.tela === 'gravacoes' || S.tela === 'visualizar') await carregarTransmissao();
-  if (S.tela === 'radar_hd') await carregarHd();
+  /* a página "Gravações" mostra as DUAS origens: o HD do bordo e o que já chegou em terra (0.24.0) */
+  if (S.tela === 'gravacoes') await carregarHd();
   if (S.tela === 'visualizar') {
     if (mudouLista || !$('palco').dataset.montado) desenharVisualizar();
     else { pintarEstados(); S.cameras.forEach((c) => desenharCaixas(c.id)); }
@@ -756,18 +749,9 @@ function montarPaginacao() {
 }
 
 /* ---------------------------------------------------------------- outras telas */
-function tabelaEmPalco(colunas, linhas, vazio) {
-  const palco = $('palco');
-  const assinaturaCols = colunas.map((c) => c.rotulo).join('|');
-  /* Mesma tabela com a mesma quantidade de linhas: troca somente a célula que mudou de texto.
-     Sem isso, cada ciclo apagava a tabela inteira e repintava — o "recarregamento" que a tela
-     mostrava a cada poucos segundos. */
-  const atual = palco.querySelector('table');
-  if (atual && linhas.length && palco.dataset.colunas === assinaturaCols && Number(palco.dataset.linhas) === linhas.length) {
-    atualizarTabela(atual, colunas, linhas);
-    return;
-  }
-  limpar(palco); palco.dataset.montado = '';
+/* Monta só a tabela — usada pela página de uma tabela e pelos BLOCOS da página "Gravações"
+   (0.24.0). Ficou separada para os dois caminhos desenharem a MESMA tabela. */
+function montarTabela(colunas, linhas, vazio) {
   const t = document.createElement('table'); t.style.width = '100%'; t.style.borderCollapse = 'collapse';
   t.style.fontSize = '13px'; t.style.background = 'var(--painel)';
   const th = document.createElement('thead'); const tr = document.createElement('tr');
@@ -789,7 +773,159 @@ function tabelaEmPalco(colunas, linhas, vazio) {
       tr2.appendChild(td); }
     tb.appendChild(tr2);
   }
-  t.appendChild(tb); palco.appendChild(t);
+  t.appendChild(tb);
+  return t;
+}
+
+/* ---------------------------------------------------------- página "Gravações" em BLOCOS (0.24.0)
+   `tabelaEmPalco` LIMPA o palco, então dois blocos na mesma página precisam de um desenho próprio:
+   cada bloco é título + explicação + tabela, e o palco só é remontado quando a IMPRESSÃO DIGITAL do
+   que está na tela muda. Remontar a cada ciclo de 5 s era o "piscar" corrigido na 0.22.0. */
+function impressaoDosBlocos(blocos) {
+  return JSON.stringify(blocos.map((b) => [b.titulo, b.sub, b.colunas.map((c) => c.rotulo),
+    b.linhas.map((l) => b.colunas.map((c) => {
+      const v = c.valor ? c.valor(l) : l[c.campo];
+      return v instanceof Node ? String(v.textContent) : String(v == null ? '' : v);
+    }))]));
+}
+
+function blocoEmPalco(b) {
+  const sec = document.createElement('section'); sec.className = 'bloco-gravacao';
+  const h = document.createElement('h2'); h.textContent = b.titulo;
+  h.style.cssText = 'margin:14px 10px 2px;font-size:14px;color:#e2e8f0';
+  const p = document.createElement('div'); p.textContent = b.sub;
+  p.style.cssText = 'margin:0 10px 8px;font-size:12px;color:#94a3b8';
+  sec.appendChild(h); sec.appendChild(p); sec.appendChild(montarTabela(b.colunas, b.linhas, b.vazio));
+  return sec;
+}
+
+function blocosEmPalco(blocos) {
+  const palco = $('palco');
+  const impressao = impressaoDosBlocos(blocos);
+  /* nada mudou de verdade: não encosta no DOM (é isto que evita a tela piscar) */
+  if (palco.dataset.blocos === impressao && palco.querySelectorAll('table').length === blocos.length) return;
+  limpar(palco); palco.dataset.montado = ''; palco.dataset.colunas = ''; palco.dataset.linhas = '';
+  for (const b of blocos) palco.appendChild(blocoEmPalco(b));
+  palco.dataset.blocos = impressao;
+}
+
+/* BLOCO 1 — o HD do computador de captura a bordo: o radar de óleo, gravando o tempo todo. O cliente
+   procura por data e hora, PEDE o trecho e baixa quando chegar (dono, 19/11/2026). */
+function blocoDoHd() {
+  const cat = S.hd || { catalogos: [], pedidos: [] };
+  const trechos = [];
+  for (const c of (cat.catalogos || [])) {
+    for (const b of (c.blocos || [])) {
+      trechos.push({ camera_id: c.camera_id, arquivo: b.arquivo, inicio: String(b.inicio || ''),
+                     bytes: b.bytes || 0, embarcacao: c.embarcacao_nome || c.embarcacao_id || '' });
+    }
+  }
+  trechos.sort((a, b) => String(b.inicio).localeCompare(String(a.inicio)));
+  const de = ($('hd-de') || {}).value || '';
+  const ate = ($('hd-ate') || {}).value || '';
+  const mostrados = trechos.filter((b) => (!de || b.inicio >= de) && (!ate || b.inicio <= ate + ':59'));
+  const resumo = $('hd-resumo');
+  if (resumo) {
+    const total = trechos.reduce((s, b) => s + (b.bytes || 0), 0);
+    resumo.textContent = trechos.length
+      ? `${trechos.length} trecho(s) · ${emMB(total)} · de ${trechos[trechos.length - 1].inicio.replace('T', ' ').slice(0, 16)} até ${trechos[0].inicio.replace('T', ' ').slice(0, 16)}`
+      : 'o computador de captura ainda não publicou blocos: a gravação contínua a bordo nasce desligada '
+        + 'e quem liga é o próprio PC de captura (o lado terra nunca abre conexão para o bordo)';
+  }
+  const jaPedido = {};
+  for (const p of (cat.pedidos || [])) jaPedido[p.camera_id + '|' + p.arquivo] = p;
+  const colunas = [];
+  /* o observador salta entre embarcações de empresas diferentes: a coluna diz onde ele está */
+  if (S.papel === 'observador') colunas.push({ rotulo: 'Embarcação', campo: 'embarcacao' });
+  colunas.push({ rotulo: 'Quando (início do trecho)', campo: 'quando' },
+               { rotulo: 'Tamanho', campo: 'tamanho' },
+               { rotulo: 'Situação', campo: 'situacao' },
+               { rotulo: 'Trecho', valor: (l) => l.acao });
+  const temRadar = (S.cameras || []).some((c) => c.tipo === 'radar');
+  return {
+    titulo: temRadar ? 'Gravado a bordo · Radar de óleo (HD)' : 'Gravado a bordo · imagens do computador de captura',
+    sub: 'As imagens ficam gravadas o tempo todo no computador de captura da embarcação. '
+         + 'Procure por data e hora e peça o trecho que quiser ver.',
+    colunas,
+    linhas: mostrados.slice(0, 300).map((b) => {
+      const p = jaPedido[b.camera_id + '|' + b.arquivo];
+      let acao;
+      let situacao = 'no HD do barco';
+      if (p && p.estado === 'enviado') {
+        acao = document.createElement('a');
+        acao.href = '/api/hd/baixar?id=' + encodeURIComponent(p.id);
+        acao.textContent = 'baixar';
+        situacao = 'pronto em terra';
+      } else if (p && p.estado === 'pedido') {
+        acao = document.createElement('button'); acao.className = 'pil'; acao.disabled = true;
+        acao.textContent = 'chegando…'; situacao = 'pedido enviado ao barco';
+      } else if (p && p.estado === 'erro') {
+        acao = document.createElement('button'); acao.className = 'pil'; acao.disabled = true;
+        acao.textContent = 'indisponível'; situacao = 'saiu do HD (' + (p.motivo || 'erro') + ')';
+      } else {
+        acao = document.createElement('button'); acao.className = 'pil'; acao.textContent = 'pedir';
+        acao.addEventListener('click', () => pedirTrechoDoHd(b.camera_id, b.arquivo, acao));
+      }
+      return { embarcacao: b.embarcacao, quando: b.inicio.replace('T', ' ').slice(0, 19),
+               tamanho: emMB(b.bytes), situacao, acao };
+    }),
+    vazio: S.hd
+      ? 'Nenhum trecho neste horário — tente um intervalo maior (as imagens ficam guardadas no computador de captura e o mais antigo gira quando o disco enche).'
+      : 'Carregando as imagens do radar…',
+  };
+}
+
+/* BLOCO 2 — o que já chegou EM TERRA nas transmissões (o vídeo que passou pela rede). Nada é apagado
+   do histórico; o cliente baixa o arquivo que sobrou de cada sessão. */
+function blocoDeTerra() {
+  const feitas = (((S.transmissao || {}).historico) || []).filter((x) => x.gravacao && x.gravacao.tem);
+  const eu = (S.usuario || {}).email;
+  return {
+    titulo: 'Gravado em terra · trechos das transmissões',
+    sub: 'A gravação fica no lado terra. Aqui você vê o que ficou gravado nas transmissões da sua '
+         + 'embarcação e baixa — nada é apagado do histórico.',
+    colunas: [
+      { rotulo: 'Quando', campo: 'quando' },
+      { rotulo: 'Câmera', campo: 'camera' },
+      { rotulo: 'Quem', campo: 'quem' },
+      { rotulo: 'Durou', campo: 'durou' },
+      { rotulo: 'Tamanho', campo: 'tamanho' },
+      /* o ESTADO de cada sessao era a coluna da tela "Transmitir" (que saiu do cliente na 0.20.0):
+         a informacao nao se perde — ela entra aqui, junto do arquivo que sobrou dela. */
+      { rotulo: 'Estado', campo: 'estado' },
+      { rotulo: 'Gravação', valor: (l) => l.baixar },
+    ],
+    linhas: feitas.map((x) => ({
+      quando: (x.criada_em || '').replace('T', ' ').slice(0, 19),
+      camera: rotuloDe(x.camera_id),
+      quem: x.usuario_email || '',
+      durou: duracaoDa(x),
+      tamanho: emMB((x.gravacao || {}).bytes),
+      estado: textoDaSessao(x, eu),
+      baixar: (() => {
+        const a = document.createElement('a');
+        a.href = '/api/gravacoes/' + encodeURIComponent(x.id);
+        a.textContent = 'baixar';
+        return a;
+      })(),
+    })),
+    vazio: 'Nenhuma gravação ainda. Grave pelo quadro da câmera na tela ao vivo — a gravação fica no lado terra e não é apagada.',
+  };
+}
+
+function tabelaEmPalco(colunas, linhas, vazio) {
+  const palco = $('palco');
+  const assinaturaCols = colunas.map((c) => c.rotulo).join('|');
+  /* Mesma tabela com a mesma quantidade de linhas: troca somente a célula que mudou de texto.
+     Sem isso, cada ciclo apagava a tabela inteira e repintava — o "recarregamento" que a tela
+     mostrava a cada poucos segundos. */
+  const atual = palco.querySelector('table');
+  if (atual && linhas.length && palco.dataset.colunas === assinaturaCols && Number(palco.dataset.linhas) === linhas.length) {
+    atualizarTabela(atual, colunas, linhas);
+    return;
+  }
+  limpar(palco); palco.dataset.montado = ''; palco.dataset.blocos = '';
+  palco.appendChild(montarTabela(colunas, linhas, vazio));
   palco.dataset.colunas = assinaturaCols; palco.dataset.linhas = String(linhas.length);
 }
 
@@ -812,11 +948,10 @@ function atualizarTabela(t, colunas, linhas) {
 const TELAS = {
   visualizar: ['Transmissões ao vivo', 'Monitoramento em tempo real das câmeras selecionadas.'],
   alertas: ['Alertas', 'Queda de câmera, perda de sinal e eventos das análises de vídeo.'],
-  gravacoes: ['Gravações', 'Trechos gravados pela operação (depende da retenção da embarcação).'],
-  /* O acesso às imagens GRAVADAS A BORDO (plano único, 25/11/2026): o HD do computador de captura,
-     gravando o tempo todo. O nome antigo ("Radar de óleo (HD)") ficou só como apelido quando a
-     embarcação TEM radar — o que o cliente procura é "as imagens gravadas a bordo". */
-  radar_hd: ['Imagens gravadas a bordo', 'As imagens ficam gravadas o tempo todo no computador de captura da embarcação. Procure por data e hora e peça o trecho que quiser ver.'],
+  /* PÁGINA ÚNICA (dono, 26/11/2026: "as telas 'Gravações' e 'Radar de óleo (HD)' podem ser uma
+     página apenas 'Gravações'"): o HD do computador de captura a bordo e o que já chegou em terra
+     ficam na MESMA página, em dois blocos. */
+  gravacoes: ['Gravações', 'O gravado a bordo (HD do computador de captura) e o que já chegou em terra.'],
   cameras: ['Câmeras', 'Câmeras liberadas para a sua empresa e o estado de cada uma.'],
   /* Saíram do cliente (plano único, 25/11/2026): `relatorios` (lia `analytics_*`, que ninguém
      escreve), `transmissao` (repetia o controle da GRADE) e `configuracao` (o teto é do admin). */
@@ -837,7 +972,7 @@ function desenharTela() {
   $('titulo-tela').textContent = titulo;
   $('sub-tela').textContent = sub + (emb ? ' · ' + emb : '');
   $('controles').classList.toggle('oculto', S.tela !== 'visualizar');
-  $('hd-filtro').classList.toggle('oculto', S.tela !== 'radar_hd');
+  $('hd-filtro').classList.toggle('oculto', S.tela !== 'gravacoes');
   $('paginacao').classList.add('oculto');
   const t = S.tela;
   if (t === 'alertas') {
@@ -854,88 +989,11 @@ function desenharTela() {
                    { rotulo: 'Clipe', campo: 'clipe' }], caidas.concat(daAnalise).concat(ev),
       'Nenhum alerta: todas as câmeras da sua embarcação estão no ar.');
   } else if (t === 'gravacoes') {
-    /* A gravação fica no LADO TERRA (o vídeo que já chegou pela rede). Aqui o cliente vê o que ficou
-       gravado nas transmissões da embarcação dele e baixa — nada é apagado do histórico. */
-    const feitas = (S.transmissao.historico || []).filter((x) => x.gravacao && x.gravacao.tem);
-    const eu = (S.usuario || {}).email;
-    tabelaEmPalco([
-      { rotulo: 'Quando', campo: 'quando' },
-      { rotulo: 'Câmera', campo: 'camera' },
-      { rotulo: 'Quem', campo: 'quem' },
-      { rotulo: 'Durou', campo: 'durou' },
-      { rotulo: 'Tamanho', campo: 'tamanho' },
-      /* o ESTADO de cada sessao era a coluna da tela "Transmitir" (que saiu do cliente na 0.20.0):
-         a informacao nao se perde — ela entra aqui, junto do arquivo que sobrou dela. */
-      { rotulo: 'Estado', campo: 'estado' },
-      { rotulo: 'Gravação', valor: (l) => l.baixar },
-    ], feitas.map((x) => ({
-      quando: (x.criada_em || '').replace('T', ' ').slice(0, 19),
-      camera: rotuloDe(x.camera_id),
-      quem: x.usuario_email || '',
-      durou: duracaoDa(x),
-      tamanho: emMB((x.gravacao || {}).bytes),
-      estado: textoDaSessao(x, eu),
-      baixar: (() => {
-        const a = document.createElement('a');
-        a.href = '/api/gravacoes/' + encodeURIComponent(x.id);
-        a.textContent = 'baixar';
-        return a;
-      })(),
-    })), 'Nenhuma gravação ainda. Grave pelo quadro da câmera na tela ao vivo — a gravação fica no lado terra e não é apagada.');
-  } else if (t === 'radar_hd') {
-    /* O HD do radar fica no PC de captura gravando o tempo todo; aqui o cliente procura por data e hora,
-       PEDE o trecho e baixa quando chegar (dono, 19/11/2026). Nada sobe de video sem pedido. */
-    const cat = S.hd || { catalogos: [], pedidos: [] };
-    const blocos = [];
-    for (const c of (cat.catalogos || [])) {
-      for (const b of (c.blocos || [])) {
-        blocos.push({ camera_id: c.camera_id, arquivo: b.arquivo, inicio: String(b.inicio || ''),
-                      bytes: b.bytes || 0, embarcacao: c.embarcacao_nome || c.embarcacao_id || '' });
-      }
-    }
-    blocos.sort((a, b) => String(b.inicio).localeCompare(String(a.inicio)));
-    const de = ($('hd-de') || {}).value || '';
-    const ate = ($('hd-ate') || {}).value || '';
-    const mostrados = blocos.filter((b) => (!de || b.inicio >= de) && (!ate || b.inicio <= ate + ':59'));
-    const resumo = $('hd-resumo');
-    if (resumo) {
-      const total = blocos.reduce((s, b) => s + (b.bytes || 0), 0);
-      resumo.textContent = blocos.length
-        ? `${blocos.length} trecho(s) · ${emMB(total)} · de ${blocos[blocos.length - 1].inicio.replace('T', ' ').slice(0, 16)} até ${blocos[0].inicio.replace('T', ' ').slice(0, 16)}`
-        : 'o computador de captura ainda não publicou blocos: a gravação contínua a bordo nasce desligada '
-          + 'e quem liga é o próprio PC de captura (o lado terra nunca abre conexão para o bordo)';
-    }
-    const jaPedido = {};
-    for (const p of (cat.pedidos || [])) jaPedido[p.camera_id + '|' + p.arquivo] = p;
-    const colunasHd = [];
-    if (S.papel === 'observador') colunasHd.push({ rotulo: 'Embarcação', campo: 'embarcacao' });
-    colunasHd.push({ rotulo: 'Quando (início do trecho)', campo: 'quando' },
-                   { rotulo: 'Tamanho', campo: 'tamanho' },
-                   { rotulo: 'Situação', campo: 'situacao' },
-                   { rotulo: 'Trecho', valor: (l) => l.acao });
-    tabelaEmPalco(colunasHd, mostrados.slice(0, 300).map((b) => {
-      const p = jaPedido[b.camera_id + '|' + b.arquivo];
-      let acao;
-      let situacao = 'no HD do barco';
-      if (p && p.estado === 'enviado') {
-        acao = document.createElement('a');
-        acao.href = '/api/hd/baixar?id=' + encodeURIComponent(p.id);
-        acao.textContent = 'baixar';
-        situacao = 'pronto em terra';
-      } else if (p && p.estado === 'pedido') {
-        acao = document.createElement('button'); acao.className = 'pil'; acao.disabled = true;
-        acao.textContent = 'chegando…'; situacao = 'pedido enviado ao barco';
-      } else if (p && p.estado === 'erro') {
-        acao = document.createElement('button'); acao.className = 'pil'; acao.disabled = true;
-        acao.textContent = 'indisponível'; situacao = 'saiu do HD (' + (p.motivo || 'erro') + ')';
-      } else {
-        acao = document.createElement('button'); acao.className = 'pil'; acao.textContent = 'pedir';
-        acao.addEventListener('click', () => pedirTrechoDoHd(b.camera_id, b.arquivo, acao));
-      }
-      return { embarcacao: b.embarcacao, quando: b.inicio.replace('T', ' ').slice(0, 19),
-               tamanho: emMB(b.bytes), situacao, acao };
-    }), S.hd ? 'Nenhum trecho neste horário — tente um intervalo maior (as imagens ficam guardadas no computador de captura e o mais antigo gira quando o disco enche).'
-      : 'Carregando as imagens do radar…');
+    /* Duas origens na mesma página: o HD do bordo e o que já chegou em terra. O observador
+       (Petrobras/IBAMA) não é dono das sessões de transmissão: para ele só existe o de bordo. */
+    const bs = [blocoDoHd()];
+    if (S.papel !== 'observador') bs.push(blocoDeTerra());
+    blocosEmPalco(bs);
   } else if (t === 'cameras') {
     /* A coluna Tipo (dono, 25/11/2026): radar de óleo e FLIR (térmica) aparecem nomeados — o
        observador (Petrobras/IBAMA) vê só esses dois; o cliente vê os seus. */
@@ -1325,7 +1383,7 @@ function relogios() {
 function trocarTela(tela) {
   S.tela = tela; S.pagina = 1;
   document.querySelectorAll('.item[data-tela]').forEach((b) => b.classList.toggle('on', b.dataset.tela === tela));
-  if (tela === 'gravacoes') { carregarTransmissao().then(desenharTela); }
+  if (tela === 'gravacoes') { Promise.all([carregarTransmissao(), carregarHd()]).then(desenharTela); }
   if (tela === 'visualizar') {
     desenharVisualizar();
     /* voltou para a tela do video: bate o "estou aqui" NA HORA (nao espera o tick de 10 s) — assim o

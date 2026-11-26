@@ -248,19 +248,23 @@ def main() -> int:
                    "Radar de oleo (B)" in pag.inner_text("#palco"),
                    pag.inner_text("#palco")[:160].replace("\n", " | "))
 
-            # ---- o HD do radar: os trechos das DUAS empresas numa tabela so'
-            pag.click(".lateral .item[data-tela=radar_hd]")
+            # ---- a pagina "Gravacoes" do observador: SO' o bloco do bordo, com os trechos das DUAS empresas
+            pag.click(".lateral .item[data-tela=gravacoes]")
             pag.wait_for_function(
                 "() => /Embarcacao A/.test(document.querySelector('#palco').innerText) && "
                 "/Embarcacao B/.test(document.querySelector('#palco').innerText)",
                 timeout=ESPERA)
             corpo = pag.inner_text("#palco")
-            checar("o HD lista os trechos do radar das DUAS empresas na mesma tabela",
+            checar("a pagina 'Gravacoes' do observador lista os trechos do radar das DUAS empresas",
                    "Embarcacao A" in corpo and "Embarcacao B" in corpo,
                    corpo[:200].replace("\n", " | "))
+            checar("o observador ve' SO' o bloco gravado a bordo (o gravado em terra e' do cliente)",
+                   pag.locator("section.bloco-gravacao").count() == 1
+                   and "Gravado a bordo" in corpo and "Gravado em terra" not in corpo,
+                   "%d bloco(s)" % pag.locator("section.bloco-gravacao").count())
+            cabecalho = pag.locator("section.bloco-gravacao").nth(0).locator("thead").inner_text()
             checar("a tabela do HD diz de qual embarcacao e' cada trecho (coluna propria)",
-                   "Embarca" in corpo.split("\n")[0] or "Embarca" in corpo[:80],
-                   corpo[:80].replace("\n", " | "))
+                   "Embarca" in cabecalho, cabecalho[:120].replace("\n", " | "))
 
             checar("sem erro de javascript na tela do observador", not erros, "; ".join(erros[:3]))
             navegador.close()

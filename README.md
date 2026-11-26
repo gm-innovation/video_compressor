@@ -182,8 +182,9 @@ Na página de releases: https://github.com/gm-innovation/video_compressor/releas
   qualquer câmera): blocos de **60 s** + `indice.sqlite`, **retenção = anel de disco** (sobrepõe o mais
   antigo e nunca para; trilha `bloco_sobreposto`). Nasce **desligada** — o admin liga com
   `LECSOR_GRAVACAO_CONTINUA=1` + `LECSOR_HD_DISPOSITIVO` + `LECSOR_HD_DIR`.
-- **O cliente acessa as imagens quando quiser:** tela **Radar de óleo (HD)** com **filtro por data e hora**,
-  **PEDIR** o trecho (o bordo lê o pedido e envia o bloco) e **BAIXAR** em terra.
+- **O cliente acessa as imagens quando quiser:** tela **Gravações** — **uma página só** desde a 0.24.0: o
+  **gravado a bordo** (o que era a tela "Radar de óleo (HD)") em cima e o **gravado em terra** embaixo —
+  com **filtro por data e hora**, **PEDIR** o trecho (o bordo lê o pedido e envia o bloco) e **BAIXAR** em terra.
 - **Configuração só do administrador:** com o tempo de transmissão fixado pelo admin, a caixa sai da tela do
   cliente e `/api/transmissao/config` responde **403**.
 - Provas: `tests/e2e-flag-de-estado-liga-a-camera.py`, `tests/e2e-dois-clientes-um-sai.py`,

@@ -3512,10 +3512,15 @@ class Handler(SimpleHTTPRequestHandler):
                     junto["pedidos"] += r["pedidos"]
                 return self._json(200, junto, {"Cache-Control": "no-store"})
             if u and u["papel"] == "cliente":
-                # O CLIENTE acessa as imagens da embarcacao dele (dono, 19/11/2026).
+                # O CLIENTE acessa as imagens da embarcacao dele (dono, 19/11/2026) — pela REGRA UNICA
+                # de `pode_ver_embarcacao`: com vinculo, exatamente as concedidas (tipos 1 e 2); sem
+                # vinculo nenhum, todas as da propria empresa (tipo 3). Antes esta rota filtrava so'
+                # pelo `cliente_id`: um usuario de UMA embarcacao via o HD das outras da mesma empresa
+                # (achado da prova dos 4 tipos de cliente, 0.24.0).
                 with conexao() as c:
                     embs = [x["id"] for x in c.execute(
-                        "SELECT id FROM embarcacoes WHERE cliente_id=?", (u["cliente_id"],)).fetchall()]
+                        "SELECT id FROM embarcacoes ORDER BY nome").fetchall()]
+                embs = [e for e in embs if pode_ver_embarcacao(u, e)]
                 junto = {"embarcacao_id": u["cliente_id"], "catalogos": [], "pedidos": []}
                 for e in embs:
                     r = catalogo_do_hd(e)

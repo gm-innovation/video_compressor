@@ -112,6 +112,15 @@ PROVAS = (
     "tests/test-fluxo-no-lado-terra.py",
     # observador / Petrobras (Fase 4)
     "tests/e2e-observador-do-radar.py",
+    # RODADA 0.24.0 — "as telas 'Gravacoes' e 'Radar de oleo (HD)' podem ser uma pagina apenas
+    # 'Gravacoes'" (dono, 26/11/2026): a pagina unica (bloco do bordo + bloco de terra), o filtro por
+    # data e hora valendo nos dois, e o pedido/baixar do bordo seguindo na mesma tela.
+    "tests/e2e-pagina-unica-de-gravacoes.py",
+    "tests/e2e-tela-do-radar-hd-do-cliente.py",
+    # RODADA 0.24.0 — os QUATRO TIPOS DE CLIENTE: o tipo e' DERIVADO dos vinculos (`escopo_do_cliente`)
+    # e a prova mede, contra o servidor, o que cada um dos 4 usuarios enxerga (1 embarcacao / algumas /
+    # todas da empresa / todas as empresas) — inclusive o HD do bordo e o historico de terra.
+    "tests/test-os-4-tipos-de-cliente.py",
     # RODADA 0.19.0 — O OBSERVADOR FILTRA POR TIPO, NAO POR NOME (dono, 25/11/2026: "petrobras ou ibama
     # pode acessar ... mas apenas do radar de oleo e camera flir se tiver"). A camera ganha a coluna
     # `tipo` (camera|radar|flir); o radar pelo TIPO aparece mesmo sem "radar" no nome; a FLIR aparece; a

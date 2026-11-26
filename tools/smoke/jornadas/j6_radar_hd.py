@@ -118,8 +118,15 @@ def rodar(amb, ctx: dict) -> Jornada:
         pagina.fill("#senha", senha_de_demo())
         pagina.click("form#form-entrar button[type=submit]")
         pagina.wait_for_selector("#sistema:not(.oculto)", timeout=25000)
-        pagina.click('[data-tela="radar_hd"]')
+        pagina.click('[data-tela="gravacoes"]')
         pagina.wait_for_selector("#hd-filtro:not(.oculto)", timeout=25000)
+        # RODADA 0.24.0: "Gravacoes" e' uma pagina SO' — o bloco do bordo (HD do PC de captura) em cima
+        # e o gravado em terra embaixo. Os dois testes abaixo falam do bloco do BORDO (o 1o).
+        pagina.wait_for_selector("section.bloco-gravacao", timeout=25000)
+        j.checar("a pagina unica 'Gravacoes' abre com o gravado a bordo e o gravado em terra",
+                 pagina.locator("section.bloco-gravacao").count() == 2,
+                 f"{pagina.locator('section.bloco-gravacao').count()} bloco(s)")
+        bloco_bordo = lambda: pagina.locator("section.bloco-gravacao").nth(0)  # noqa: E731
 
         # A tabela nasce com uma linha de "carregando": contar linha nao prova NADA. O que prova e' o
         # resumo dizer quantos trechos existem (o app so' escreve isso DEPOIS de o catalogo chegar).
@@ -130,14 +137,14 @@ def rodar(amb, ctx: dict) -> Jornada:
                 resumo = pagina.locator("#hd-resumo").inner_text()
             except Exception:  # noqa: BLE001
                 resumo = ""
-            linhas = pagina.locator("#palco tbody tr").count()
+            linhas = bloco_bordo().locator("tbody tr").count()
             if "trecho(s)" in resumo and linhas >= 1:
                 break
             pagina.wait_for_timeout(700)
         j.checar("o cliente VE o catalogo do HD na tela", "trecho(s)" in resumo and linhas >= 1,
                  f"{linhas} linha(s) · {resumo[:90]}")
 
-        pedir_btn = pagina.locator("#palco button", has_text="pedir")
+        pedir_btn = bloco_bordo().locator("button", has_text="pedir")
         j.checar("o trecho que ainda esta' no HD do barco mostra PEDIR", pedir_btn.count() >= 1,
                  f"{pedir_btn.count()} botao(oes) PEDIR")
         if pedir_btn.count() == 0:
@@ -168,13 +175,14 @@ def rodar(amb, ctx: dict) -> Jornada:
             return j
 
         # a tela troca PEDIR por BAIXAR quando o trecho chega; o download e' o que fecha a conta.
-        # A tela NAO se atualiza sozinha: quem faz o que o cliente faria e' reabrir a tela do radar.
-        link = pagina.locator('#palco a[href*="/api/hd/baixar?id="]')
+        # A tela NAO se atualiza sozinha: quem faz o que o cliente faria e' reabrir a tela de gravacoes
+        # (na pagina unica, o ciclo de 5 s do palco tambem repinta o bloco do bordo).
+        link = bloco_bordo().locator('a[href*="/api/hd/baixar?id="]')
         fim = time.time() + 40
         while time.time() < fim and link.count() == 0:
-            pagina.click('[data-tela="radar_hd"]')
+            pagina.click('[data-tela="gravacoes"]')
             pagina.wait_for_timeout(2500)
-            link = pagina.locator('#palco a[href*="/api/hd/baixar?id="]')
+            link = bloco_bordo().locator('a[href*="/api/hd/baixar?id="]')
         j.checar("a tela do cliente mostra BAIXAR quando o trecho chega em terra", link.count() >= 1,
                  f"{link.count()} link(s) BAIXAR")
         if link.count() >= 1:
@@ -185,7 +193,8 @@ def rodar(amb, ctx: dict) -> Jornada:
             j.medir(bytes_baixados=baixados)
             j.checar("o cliente BAIXOU o trecho inteiro pela tela do HD", baixados > 0,
                      f"{baixados} B baixados (o bloco no HD tem {blocos[0].stat().st_size} B)")
-        j.checar("a tela do radar de oleo abriu sem erro de javascript", not erros, "; ".join(erros)[:160])
+        j.checar("a pagina unica 'Gravacoes' do cliente abriu sem erro de javascript", not erros,
+                 "; ".join(erros)[:160])
     finally:
         try:
             ctxx.close()

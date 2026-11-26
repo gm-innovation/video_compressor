@@ -9,8 +9,8 @@ tempo arrastavel".
     python tests/e2e-tela-do-radar-hd-do-cliente.py
 
 Sobe a API de verdade (banco proprio) e abre o Chromium do Playwright. O que se prova, olhando a tela:
-  1) o menu do cliente tem "Radar de oleo (HD)" e a tela abre com a faixa de filtro (data e hora);
-  2) a tabela lista os trechos que o PC de captura publicou (horario + tamanho), do mais novo para o mais
+  1) a página única "Gravações" abre com a faixa de filtro (data e hora) e o gravado a bordo é o 1º bloco;
+  2) o bloco de bordo lista os trechos que o PC de captura publicou (horario + tamanho), do mais novo para
      antigo, e o resumo diz quantos sao e de quando ate' quando;
   3) o filtro por data e hora ESTREITA a lista (o cliente procura pelo horario que quer);
   4) o trecho que ele ja' pediu aparece "pronto em terra" e BAIXA (o arquivo chega inteiro);
@@ -140,44 +140,48 @@ def main() -> int:
             entrar(pag, base, "/app/", "cliente@lecsor.test")
 
             menu = pag.locator(".lateral").inner_text()
-            # PLANO UNICO (25/11/2026): o item do menu passou a se chamar "Imagens gravadas a bordo" (e
-            # volta a "Radar de óleo (HD)" quando existe câmera do tipo radar). O caminho de acesso ao
-            # gravado a bordo e' o mesmo, e a prova continua medindo o que interessa: o cliente tem o item.
-            checar("o menu do cliente abre o gravado a bordo (item 'Imagens gravadas a bordo')",
-                   "Imagens gravadas a bordo" in menu or "Radar de óleo (HD)" in menu, menu[:120])
-            pag.click('[data-tela="radar_hd"]')
+            # RODADA 0.24.0 (dono, 26/11/2026: "as telas 'Gravações' e 'Radar de óleo (HD)' podem ser uma
+            # página apenas 'Gravações'"): o item do menu virou UM só — "Gravações" — e dentro dela o
+            # gravado a bordo (o que era "Radar de óleo (HD)") é o PRIMEIRO bloco.
+            checar("o menu do cliente tem o item 'Gravações'", "Gravações" in menu, menu[:120])
+            pag.click('[data-tela="gravacoes"]')
             pag.wait_for_selector("#hd-filtro:not(.oculto)", timeout=20000)
+            pag.wait_for_selector("section.bloco-gravacao", timeout=20000)
             pag.wait_for_timeout(2500)
+            bloco_bordo = lambda: pag.locator("section.bloco-gravacao").nth(0)  # noqa: E731
+            checar("o gravado a bordo é o 1º bloco da página 'Gravações'",
+                   "Gravado a bordo" in bloco_bordo().inner_text(),
+                   bloco_bordo().inner_text()[:120].replace("\n", " | "))
 
             checar("a faixa de filtro por data e hora está na tela",
                    pag.locator("#hd-de").count() == 1 and pag.locator("#hd-ate").count() == 1)
-            linhas = pag.locator("#palco tbody tr")
+            linhas = bloco_bordo().locator("tbody tr")
             checar("a tabela lista os 3 trechos que o PC de captura publicou", linhas.count() == 3,
                    f"na tela: {linhas.count()}")
             resumo_txt = pag.locator("#hd-resumo").inner_text()
             checar("o resumo diz quantos trechos existem e de quando até quando",
                    "3 trecho(s)" in resumo_txt and " até " in resumo_txt, resumo_txt)
-            baixar = pag.locator('#palco a[href*="/api/hd/baixar?id="]')
+            baixar = bloco_bordo().locator('a[href*="/api/hd/baixar?id="]')
             checar("o trecho que já chegou em terra mostra BAIXAR", baixar.count() == 1,
                    f"{baixar.count()} link(s)")
-            pedir = pag.locator("#palco button", has_text="pedir")
+            pedir = bloco_bordo().locator("button", has_text="pedir")
             checar("os trechos ainda no HD do barco mostram PEDIR", pedir.count() == 2,
                    f"{pedir.count()} botão(ões)")
 
-            # o cliente procura por um horário: o filtro estreita a lista
+            # o cliente procura por um horário: o filtro estreita a lista (filtro da página inteira)
             hoje = time.strftime("%Y-%m-%dT%H:%M", time.localtime(agora))
             pag.fill("#hd-de", hoje)
             pag.click("#hd-filtrar")
             pag.wait_for_timeout(800)
-            checar("o filtro por data e hora estreita a lista",
-                   pag.locator("#palco tbody tr").count() < 3,
-                   f"na tela: {pag.locator('#palco tbody tr').count()}")
+            checar("o filtro por data e hora estreita a lista do bloco de bordo",
+                   bloco_bordo().locator("tbody tr").count() < 3,
+                   f"na tela: {bloco_bordo().locator('tbody tr').count()}")
             pag.click("#hd-tudo")
             pag.wait_for_timeout(800)
 
             # o cliente pede um trecho: o pedido chega de verdade no lado terra
             with pag.expect_response(lambda r: "/api/hd/pedir" in r.url) as resp:
-                pag.locator("#palco button", has_text="pedir").first.click()
+                bloco_bordo().locator("button", has_text="pedir").first.click()
             nota_pedido = f"{resp.value.status} {resp.value.text()[:160]}"
             print("     POST /api/hd/pedir -> " + nota_pedido)
             time.sleep(2.0)
@@ -194,7 +198,8 @@ def main() -> int:
             esperado = (hd / blocos[0]["arquivo"]).stat().st_size
             checar("o cliente BAIXOU o trecho inteiro pela tela do HD", tamanho == esperado,
                    f"{tamanho} B x {esperado} B")
-            checar("a tela do radar abriu sem erro de javascript", not erros, "; ".join(erros)[:160])
+            checar("a página única 'Gravações' do cliente abriu sem erro de javascript", not erros,
+                   "; ".join(erros)[:160])
             nav.close()
     finally:
         api.terminate()
