@@ -20,6 +20,16 @@ RAIZ = pathlib.Path(__file__).resolve().parent.parent
 # `ambiente.json` que esta' no repositorio, e passaria a falar com a producao em vez de responder em casa.
 os.environ["LECSOR_SEM_AMBIENTE"] = "1"
 PROVAS = (
+    # RODADA 0.22.0 — O TIPO LIDO A TELA, A TELA SEM PISCAR E A VARREDURA A PEDIDO (dono, 26/11/2026:
+    # "eu aplico novo tipo a camera, mas nao esta persistindo" · "quando a pagina atualiza, parece que
+    # remonta toda a pagina ... a pagina 'pisca' e eu perco o que estou fazendo" · "nesta tela preciso
+    # tambem de um botao para refazer varredura ... apenas inclui as que nao estao aparecendo, nao
+    # remonta tudo pra nao perder as configuracoes ja feitas"). O tipo NUNCA deixou de gravar: quem
+    # mentia era a LEITURA (`arvore_do_painel` lia as cameras sem a coluna `tipo`). A acao do usuario
+    # atualiza so' o cartao afetado e o auto-refresh nao repinta a tela de trabalho.
+    "tests/test-tipo-lido-do-banco.py",
+    "tests/test-varredura-a-pedido.py",
+    "tests/test-tela-sem-piscar-e-varredura.py",
     # RODADA 0.21.0 — MAIS QUALIDADE DE ENVIO E MENOS TELA (dono, 26/11/2026: "inclua no plano mais
     # possibilidades de qualidade de envio, 2mbps, 2,5mbps e 3mbps" · "o bloco de seleção de qualidade
     # de envio sumiu da tela de configuração de bordo" · "se eu consigo editar empresa, embarcação e

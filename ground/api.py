@@ -903,7 +903,12 @@ def pedir_trecho_do_hd(usuario, camera_id: str, arquivo: str) -> dict:
 # app a bordo precisa buscar o tempo todo as atualizacoes". Mesmo desenho da flag: terra PUBLICA (com
 # `versao`), o bordo OLHA, aplica SO' a diferenca e CONFIRMA o que aplicou.
 # --------------------------------------------------------------------------------------------
-CHAVES_DE_CONFIG = ("alvo_kbps", "teto_s", "gravacao_continua", "transmitir", "rotulo")
+CHAVES_DE_CONFIG = ("alvo_kbps", "teto_s", "gravacao_continua", "transmitir", "rotulo", "varrer")
+# `varrer` (dono, 26/11/2026): "nesta tela preciso também de um botão para refazer varredura... o app de
+# captura precisa refazer a varredura das câmeras, mas apenas inclui as que não estão aparecendo".
+# O pedido viaja pela configuracao publicada (o terra NAO abre conexao para o bordo, o bordo OLHA),
+# o bordo roda `varredura_do_bordo.varrer()` — que so' ACRESCENTA — e confirma o que fez.
+CHAVE_VARRER = "varrer"
 VALORES_DE_ALVO = ("3000", "2500", "2000", "1500", "1200", "1000", "800", "500", "300")   # a banda do produto, fechada (3 / 2,5 / 2 Mbps pedidos pelo dono em 26/11/2026)
 # O NOME da camera (dono, 23/11/2026): "a captura pega as informações e replica no app de captura,
 # inclusive os nomes das câmeras". É a chave `rotulo` — o admin escreve o nome em terra e o bordo
@@ -956,6 +961,16 @@ def publicar_config(embarcacao_id: str, camera_id: str, chave: str, valor: str, 
         if not 60 <= n <= 7200:
             return {"erro": "teto_s fora da faixa do produto (60 a 7200 s)"}
         valor = str(n)
+    if chave == CHAVE_VARRER:
+        # "REFAZER VARREDURA" (dono, 26/11/2026): a chave e' da EMBARCACAO (quem varre e' o PC de
+        # captura dela) e o valor e' so' uma MARCA (a hora do pedido, para a tela e o bordo verem que
+        # este pedido e' novo). O trabalho e' do bordo: ele roda a varredura, que so' ACRESCENTA.
+        if cam:
+            return {"erro": "varrer e' da embarcacao: a varredura olha a maquina toda (sem camera_id)"}
+        if not valor:
+            valor = em_iso()
+        if "\n" in valor or "\r" in valor or len(valor) > 40:
+            return {"erro": "marca do pedido invalida (uma linha de ate 40 caracteres)"}
     if chave == CHAVE_NOME_CAMERA:
         # O nome vai para o cadastro da camera NO BORDO: recusa o que nao e' nome (vazio, quebra de
         # linha, grande demais) aqui, na borda de quem publica — nunca "achei que apliquei".
@@ -1027,6 +1042,25 @@ def aplicar_config_local(camera_id: str, chave: str, valor: str) -> dict:
                          ON CONFLICT(camera_id,chave) DO UPDATE SET valor=excluded.valor,
                            atualizado_em=excluded.atualizado_em""", (chave, str(n), em_iso()))
         return {"ok": True, "motivo": f"teto local do bordo em {n} s", "chave": chave, "valor": str(n)}
+    if chave == CHAVE_VARRER:
+        # "REFAZER VARREDURA" (dono, 26/11/2026): o pedido publicado em terra e' aplicado AQUI, na
+        # propria maquina de captura (a dona das cameras). `varrer()` so' ACRESCENTA: o id nasce do
+        # dispositivo (nao duplica), camera que ja' existe nao tem `alvo`/`ativo`/transmissao tocados
+        # (e o rotulo so' acompanha quando o admin nunca nomeou) e camera que sumiu NAO e' apagada.
+        try:
+            import varredura_do_bordo
+            r = varredura_do_bordo.varrer()
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "motivo": f"a varredura falhou: {type(e).__name__}: {e}"}
+        if not r.get("ok"):
+            return {"ok": False, "motivo": f"a varredura nao rodou: {r.get('motivo') or 'sem motivo'}"}
+        novas = list(r.get("cadastradas") or [])
+        ja = list(r.get("atualizadas") or [])
+        falhas = list(r.get("falhas_de_publicacao") or [])
+        motivo = (f"varredura feita: {len(novas)} camera(s) nova(s), {len(ja)} ja' cadastrada(s)"
+                  + (f", {len(falhas)} falha(s) de publicacao" if falhas else ""))
+        return {"ok": True, "chave": chave, "valor": valor, "motivo": motivo,
+                "cadastradas": novas, "atualizadas": ja, "falhas_de_publicacao": falhas}
     if chave == CHAVE_NOME_CAMERA:
         # O NOME que o admin escolheu em terra, aplicado no CADASTRO LOCAL desta maquina. Fica em
         # `config_local` de proposito: e' o que faz a varredura respeitar o nome (ver
@@ -1134,7 +1168,10 @@ def arvore_do_painel(usuario) -> dict:
     with conexao() as c:
         clientes = [dict(x) for x in c.execute("SELECT id,nome,ativo FROM clientes ORDER BY nome")]
         embs = [dict(x) for x in c.execute("SELECT * FROM embarcacoes ORDER BY nome")]
-        linhas_cam = c.execute("""SELECT id,embarcacao_id,rotulo,fluxo_id,local,ativo,alvo
+        # `tipo` PRECISA vir no SELECT (dono, 26/11/2026: "aplico novo tipo a camera e nao esta
+        # persistindo"): sem a coluna, `tipo_da_camera` caia no fallback pelo NOME e devolvia "camera",
+        # entao o cartao repintava "camera comum" para uma camera que o banco ja' tinha como radar.
+        linhas_cam = c.execute("""SELECT id,embarcacao_id,rotulo,fluxo_id,local,ativo,alvo,tipo
                                   FROM cameras ORDER BY rotulo""").fetchall()
         estados = {x["camera_id"]: dict(x) for x in c.execute(
             """SELECT camera_id,estado,motivo,fluxo_id,desde,gravando,atualizado_em

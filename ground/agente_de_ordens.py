@@ -533,8 +533,12 @@ def aplicar_config(cfg, local: str, base: str, token: str, emb: str) -> dict:
                 recusadas.append({"camera_id": cam, "chave": chave, "valor": valor, "versao": versao,
                                   "motivo": motivo_t})
             continue
+        # `varrer` roda o ffmpeg de verdade (listar dispositivos): cabe em 60s e nao cabe em 40s. Sem
+        # esta folga o pedido de refazer-varredura era contado como falha enquanto a varredura ainda
+        # estava acontecendo — e o agente tentava de novo a cada volta.
         s, r = _http("POST", local + "/api/config/aplicar",
-                     {"camera_id": cam, "chave": chave, "valor": valor})
+                     {"camera_id": cam, "chave": chave, "valor": valor},
+                     timeout=(90.0 if chave == "varrer" else 40.0))
         if s == 200 and r.get("ok"):
             JA_APLICADAS[marca] = versao
             aplicadas.append({"camera_id": cam, "chave": chave, "valor": valor, "versao": versao,

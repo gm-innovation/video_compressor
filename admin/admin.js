@@ -1,6 +1,6 @@
 /* Admin do projeto e do sistema: acompanhamento (§6) + administracao (clientes, embarcacoes,
    cameras, usuarios, analises, auditoria, saude). Le e escreve tudo pela API do produto. */
-const A = { usuario: null, resumo: null, clientes: [], usuarios: [], verificarCredencial: false, sistema: null, cameras: [], embarcacoes: [], licencas: [], tela: 'empresas', timer: null, chaveRevelada: null, marca: null, radarForm: null, radarAviso: null, prontidao: null, config: null, empresaId: null, arvore: null, hd: null, teto: {} };
+const A = { usuario: null, resumo: null, clientes: [], usuarios: [], verificarCredencial: false, sistema: null, cameras: [], embarcacoes: [], licencas: [], tela: 'empresas', timer: null, chaveRevelada: null, marca: null, radarForm: null, radarAviso: null, prontidao: null, config: null, empresaId: null, arvore: null, hd: null, teto: {}, mudancaNova: false };
 const $ = (id) => document.getElementById(id);
 const limpar = (el) => { while (el.firstChild) el.removeChild(el.firstChild); };
 const esc = (s) => String(s === null || s === undefined ? '' : s);
@@ -100,7 +100,7 @@ async function abrir() {
   await atualizar();
   // Nao redesenhar por cima do que o usuario esta digitando: era isso que apagava o formulario de
   // envio (link + rotulo) a cada 15 s e parecia que o app "voltava ao estado anterior".
-  if (!A.timer) A.timer = setInterval(() => { if (!digitandoNaTela()) atualizar(); }, 15000);
+  if (!A.timer) A.timer = setInterval(() => { if (!digitandoNaTela()) atualizarDoRelogio(); }, 15000);
 }
 
 function digitandoNaTela() {
@@ -108,7 +108,16 @@ function digitandoNaTela() {
   return !!(a && a.closest && a.closest('#tela') && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
 }
 
-async function atualizar() {
+/* Telas em que o usuario esta' TRABALHANDO (formulario): se a tela for reconstruida no meio, o que ele
+   digitou/escolheu se perde. O auto-refresh de 15 s NAO repinta estas telas — ele so' AVISA
+   (dono, 26/11/2026: "eu estou fazendo algo e do nada a pagina 'pisca' e eu perco o que estou fazendo").
+   Quem repinta e' o usuario, pelo botao "Atualizar" (ou trocando de tela). */
+const TELAS_DE_FORMULARIO = { empresas: 1, envios: 1, hd_bordo: 1, usuarios: 1, licencas: 1,
+  medicoes: 1, decisoes: 1, evidencias: 1, documentos: 1 };
+
+/* Le tudo que as telas mostram, SEM desenhar. Separado de `atualizar()` porque o cartao da camera
+   recarrega SO' ele depois de uma acao: o resto da tela do usuario fica exatamente como estava. */
+async function atualizarDados() {
   statusAtualizar('atualizando\u2026');
   try { const rc = await fetch('/api/cameras/detalhe'); if (rc.ok) A.camerasInterno = await rc.json(); } catch (e) {}
   /* SSIM por fluxo: o número é medido no PC de captura (a máquina que tem a fonte crua) e chega
@@ -155,11 +164,32 @@ async function atualizar() {
   } else {
     const cl = await api('/api/clientes'); A.clientes = (cl.corpo && cl.corpo.clientes) || [];
   }
-  /* So apaga e repinta a tela quando o que ela mostra mudou de verdade. Antes isto desenhava a
-     cada 15 s por causa de campos que mudam sozinhos (gerado_em do resumo, uptime_s do sistema):
-     a tela era limpa no meio da leitura do operador. */
+}
+
+/* AÇÃO DO USUÁRIO (salvar, publicar, cadastrar): pode repintar — ele acabou de pedir. Só não repinta
+   quando o que a tela mostra não mudou (antes isto desenhava a cada 15 s por causa de campos que
+   mudam sozinhos — `gerado_em` do resumo, `uptime_s` do sistema — e a tela era limpa no meio da
+   leitura do operador). */
+async function atualizar() {
+  await atualizarDados();
   const marca = assinaturaTelas();
   if (marca === A.marca) { statusAtualizar('sem mudan\u00e7as desde ' + agora()); return; }
+  A.marca = marca; A.mudancaNova = false;
+  desenhar();
+  statusAtualizar('atualizado ' + agora());
+}
+
+/* O AUTO-REFRESH (o timer de 15 s): NUNCA repinta a tela em que o usu\u00e1rio est\u00e1 trabalhando. Chegou
+   coisa nova? S\u00f3 avisa — quem repinta \u00e9 ele, pelo bot\u00e3o "Atualizar". */
+async function atualizarDoRelogio() {
+  await atualizarDados();
+  const marca = assinaturaTelas();
+  if (marca === A.marca) { statusAtualizar('sem mudan\u00e7as desde ' + agora()); return; }
+  if (TELAS_DE_FORMULARIO[A.tela]) {
+    A.mudancaNova = true;
+    statusAtualizar('h\u00e1 mudan\u00e7a nova \u2014 clique em Atualizar');
+    return;
+  }
   A.marca = marca;
   desenhar();
   statusAtualizar('atualizado ' + agora());
@@ -172,7 +202,11 @@ function agora() { const d = new Date(); const p = (n) => String(n).padStart(2, 
 
 /* Impressao digital do que as telas realmente mostram. Campos que mudam sozinhos (relogio do
    resumo, uptime, idade das medidas) ficam de fora: sozinhos nao justificam repintar. */
-const RUIDO_TELA = { gerado_em: 1, uptime_s: 1, idade_s: 1, atualizado_em: 1, lido_em: 1, agora: 1 };
+const RUIDO_TELA = { gerado_em: 1, uptime_s: 1, idade_s: 1, atualizado_em: 1, lido_em: 1, agora: 1,
+  /* Campos que mudam SOZINHOS e nao sao "novidade" para o operador (plano 26/11/2026): o uso da
+     licenca, a hora da ultima varredura e o carimbo dos dispositivos. Sem isto a assinatura mudava a
+     cada leitura e o timer achava que havia mudanca nova toda vez. */
+  ultimo_uso_em: 1, ultimo_em: 1, quando: 1, ultima_varredura: 1, primeira_em: 1 };
 function assinaturaTelas() {
   try {
     return JSON.stringify([A.resumo, A.embarcacoes, A.cameras, A.clientes, A.usuarios, A.sistema, A.camerasInterno,
@@ -288,6 +322,48 @@ function envioEmAndamento() {
   return false;
 }
 
+/* O que o usuário estava vendo, para devolver depois do redesenho: a rolagem da área e o campo em foco
+   (com a posição do cursor). Sem isto um redesenho no meio do trabalho "pisca" e joga o usuário para o
+   topo da tela (dono, 26/11/2026). A chave do campo vem do dono mais próximo com marcador estável
+   (`[data-cam]`/`[data-emb]`) — sem isso, dez cartões com `[data-papel="tipo"]` apontariam para o 1º. */
+function chaveDoCampo(a, tela) {
+  const partes = [];
+  let no = a;
+  while (no && no !== tela && no.dataset) {
+    if (no.dataset.cam) partes.unshift('[data-cam="' + no.dataset.cam + '"]');
+    else if (no.dataset.emb) partes.unshift('[data-emb="' + no.dataset.emb + '"]');
+    no = no.parentElement;
+  }
+  if (a.id) partes.push('#' + a.id);
+  else if (a.dataset && a.dataset.papel) partes.push('[data-papel="' + a.dataset.papel + '"]');
+  else if (a.className && String(a.className).trim()) partes.push('.' + String(a.className).trim().split(/\s+/)[0]);
+  else return '';
+  return partes.join(' ');
+}
+
+function guardarOLhar(tela) {
+  const m = { topo: tela.scrollTop || 0, foco: '', inicio: null, fim: null };
+  const a = document.activeElement;
+  if (a && a !== document.body && tela.contains(a)) {
+    m.foco = chaveDoCampo(a, tela);
+    try { m.inicio = a.selectionStart; m.fim = a.selectionEnd; } catch (e) {}
+  }
+  return m;
+}
+
+function devolverOLhar(tela, m) {
+  if (!m) return;
+  tela.scrollTop = m.topo;
+  if (!m.foco) return;
+  let alvo = null;
+  try { alvo = tela.querySelector(m.foco); } catch (e) { alvo = null; }
+  if (!alvo || !alvo.focus) return;
+  alvo.focus();
+  if (m.inicio !== null && m.inicio !== undefined && alvo.setSelectionRange) {
+    try { alvo.setSelectionRange(m.inicio, m.fim); } catch (e) {}
+  }
+}
+
 function desenhar(forcado) {
   /* NAO repinta a tela de envio enquanto o operador esta' preenchendo: o redesenho recria os campos e
      o que ele digitou/escolheu se perde (medido 18/11/2026: o rotulo digitado sumia e o "Comprimir e
@@ -296,7 +372,10 @@ function desenhar(forcado) {
   if (!forcado && envioEmAndamento()) { statusAtualizar('segurando a tela: você está preenchendo o envio'); return; }
   const [titulo, sub] = SUBS[A.tela] || SUBS.painel;
   $('titulo-tela').textContent = titulo; $('sub-tela').textContent = sub;
-  const tela = $('tela'); limpar(tela);
+  const tela = $('tela');
+  // O redesenho continua recriando a tela, mas o que o usuario estava vendo volta (rolagem e foco).
+  const olhar = guardarOLhar(tela);
+  limpar(tela);
   if (timerEnvios) { clearInterval(timerEnvios); timerEnvios = null; }
   if (timerTempo) { clearInterval(timerTempo); timerTempo = null; }
   if (timerProducao) { clearInterval(timerProducao); timerProducao = null; }
@@ -309,7 +388,10 @@ function desenhar(forcado) {
     licencas: telaLicencas, usuarios: telaUsuarios, auditoria: telaAuditoria, envios: telaEnvios,
     saude_bordo: telaSaudeDoBordo, saude: telaSaude,
     hd_bordo: telaHdDoBordo };
-  (despacho[A.tela] || telaPainel)(tela);
+  const construida = (despacho[A.tela] || telaPainel)(tela);
+  // Telas que buscam dados são assíncronas: a olhada só volta depois que os cartões existem na tela.
+  if (construida && typeof construida.then === 'function') construida.then(() => devolverOLhar(tela, olhar));
+  else devolverOLhar(tela, olhar);
 }
 
 function telaPainel(t) {
@@ -2826,6 +2908,7 @@ function painelDeSaude(emb) {
 
 function cartaoDaEmbarcacao(emb) {
   const caixa = document.createElement('div'); caixa.className = 'cartao-embarcacao';
+  caixa.dataset.emb = emb.id;
   const h = document.createElement('h2');
   h.appendChild(document.createTextNode(emb.nome + ' — ' + emb.id + '  '));
   const se = emb.saude && emb.saude.estado;
@@ -2869,6 +2952,35 @@ function cartaoDaEmbarcacao(emb) {
       : 'nada publicado';
     ct.appendChild(notaTeto);
     caixa.appendChild(ct);
+
+    /* REFAZER VARREDURA (dono, 26/11/2026): "nesta tela preciso também de um botão para refazer
+       varredura, para que caso tenha sido removida uma câmera por engano, ou não estão aparecendo
+       câmeras novas, o app de captura precisa refazer a varredura das câmeras, mas apenas inclui as
+       que não estão aparecendo, não remonta tudo pra não perder as configurações já feitas".
+       O pedido viaja pela CONFIGURAÇÃO publicada (o terra não abre conexão para o bordo): o bordo olha,
+       varre e confirma. A varredura SÓ ACRESCENTA — não duplica, não apaga e não mexe em alvo/ativo. */
+    const cv = document.createElement('div'); cv.className = 'linha-form';
+    const cfgVarrer = (A.teto || {})[emb.id] || { chaves: [], aplicadas: [] };
+    const pedidoVarrer = (cfgVarrer.chaves || []).filter((x) => x.camera_id === '' && x.chave === 'varrer').pop();
+    const aplicVarrer = (cfgVarrer.aplicadas || []).filter((x) => x.camera_id === '' && x.chave === 'varrer').pop();
+    const btVarrer = botao('refazer varredura', 'mini', async () => {
+      const r = await api('/api/config', { method: 'POST', body: JSON.stringify({
+        embarcacao_id: emb.id, camera_id: '', chave: 'varrer', valor: '' }) });
+      await refazerCartaoDaEmbarcacao(emb.id);
+      mostrarRecado(r.ok ? ('varredura pedida ao PC de captura (v' + (((r.corpo || {}).versao) || '?')
+        + '): ele inclui só as câmeras que faltam') : 'recusado: ' + JSON.stringify(r.corpo), !r.ok);
+    });
+    /* O que o botão faz, nas palavras do dono — para ninguém achar que ele "remonta" a configuração. */
+    btVarrer.title = 'só entram as câmeras que ainda não aparecem; nada já configurado é mexido';
+    cv.appendChild(btVarrer);
+    cv.appendChild(notaDe('só entram as câmeras que ainda não aparecem; nada já configurado é mexido.'));
+    const notaVarrer = document.createElement('span'); notaVarrer.className = 'nota';
+    notaVarrer.textContent = pedidoVarrer
+      ? ('pedido: ' + pedidoVarrer.valor + (aplicVarrer && aplicVarrer.versao >= pedidoVarrer.versao
+          ? ' — o bordo: ' + (aplicVarrer.motivo || 'aplicado') : ' — aguardando o bordo'))
+      : 'nunca pedido';
+    cv.appendChild(notaVarrer);
+    caixa.appendChild(cv);
   }
   caixa.appendChild(notaDe('Câmeras: ' + emb.resumo.cameras + ' · no ar: ' + emb.resumo.no_ar
     + ' · ativas: ' + emb.resumo.ativas
@@ -2956,6 +3068,9 @@ function caixaDaChave(chave) {
 
 function cartaoDaCamera(c, emb) {
   const caixa = document.createElement('div'); caixa.className = 'cartao-camera' + (c.no_ar ? ' no-ar' : '');
+  /* Marcador ESTÁVEL do cartão: é o que deixa recarregar SÓ este cartão depois de uma ação (e devolver
+     o foco no campo certo depois de um redesenho). Sem ele, dez cartões seriam indistinguíveis. */
+  caixa.dataset.cam = c.id; caixa.dataset.emb = emb.id;
   const topo = document.createElement('div'); topo.className = 'linha-form linha-nome';
   const nome = document.createElement('input');
   nome.type = 'text'; nome.value = c.rotulo || ''; nome.maxLength = 120; nome.className = 'nome-camera';
@@ -2964,9 +3079,9 @@ function cartaoDaCamera(c, emb) {
   topo.appendChild(botao('salvar nome', 'mini', async () => {
     const r = await api('/api/cameras/' + encodeURIComponent(c.id) + '/nome',
       { method: 'POST', body: JSON.stringify({ rotulo: nome.value.trim() }) });
-    // ATUALIZA PRIMEIRO: o recado vive dentro da tela e o redesenho o apagaria (a tela mostra o nome
-    // novo do cartao e o aviso fica na cara do admin).
-    await atualizar();
+    // REFAZ SO' ESTE CARTAO: o recado vive dentro da tela e o redesenho o apagaria, e a tela do
+    // usuario (a rolagem, os outros cartoes) nao pode ser remontada por baixo dele.
+    await refazerCartao(c.id);
     if (r.ok) mostrarRecado('nome salvo e publicado para o PC de captura: ' + r.corpo.rotulo, false);
     else mostrarRecado('recusado: ' + ((r.corpo && r.corpo.erro) || JSON.stringify(r.corpo)), true);
   }));
@@ -3002,7 +3117,7 @@ function cartaoDaCamera(c, emb) {
   acoes.appendChild(botao(c.ativo ? 'desativar' : 'ativar', 'mini', async () => {
     if (c.ativo && !confirm('Desativar "' + (c.rotulo || c.id) + '"? Ela sai da tela do cliente; o histórico fica guardado.')) return;
     const r = await api('/api/cameras/' + encodeURIComponent(c.id) + '/ativo', { method: 'POST', body: JSON.stringify({ ativo: !c.ativo }) });
-    await atualizar();
+    await refazerCartao(c.id);
     if (!r.ok) mostrarRecado('recusado: ' + JSON.stringify(r.corpo), true);
   }));
   const sel = document.createElement('select');
@@ -3029,7 +3144,7 @@ function cartaoDaCamera(c, emb) {
   acoes.appendChild(botao('aplicar qualidade', 'mini', async () => {
     const r = await api('/api/config', { method: 'POST', body: JSON.stringify({
       embarcacao_id: emb.id, camera_id: c.id, chave: 'alvo_kbps', valor: sel.value }) });
-    await atualizar();
+    await refazerCartao(c.id);
     if (r.ok) mostrarRecado('qualidade publicada para o PC de captura: ' + sel.value + ' kbps', false);
     else mostrarRecado('recusado: ' + ((r.corpo && r.corpo.erro) || JSON.stringify(r.corpo)), true);
   }));
@@ -3048,7 +3163,7 @@ function cartaoDaCamera(c, emb) {
   acoes.appendChild(botao('aplicar tipo', 'mini', async () => {
     const r = await api('/api/cameras/' + encodeURIComponent(c.id) + '/editar',
       { method: 'POST', body: JSON.stringify({ tipo: tipo.value }) });
-    await atualizar();
+    await refazerCartao(c.id);
     if (r.ok) mostrarRecado('tipo gravado: ' + tipo.value + ' — o anúncio do bordo não sobrescreve mais', false);
     else mostrarRecado('recusado: ' + ((r.corpo && r.corpo.erro) || JSON.stringify(r.corpo)), true);
   }));
@@ -3058,7 +3173,7 @@ function cartaoDaCamera(c, emb) {
   if (c.no_ar) {
     acoes.appendChild(botao('desligar o envio', 'mini', async () => {
       const r = await api('/api/cameras/desligar', { method: 'POST', body: JSON.stringify({ camera_id: c.id }) });
-      await atualizar();
+      await refazerCartao(c.id);
       if (r.ok) mostrarRecado('ordem de parar enviada ao PC de captura', false);
       else mostrarRecado('recusado: ' + ((r.corpo && r.corpo.erro) || JSON.stringify(r.corpo)), true);
     }));
@@ -3072,13 +3187,75 @@ function cartaoDaCamera(c, emb) {
                    'cliente. Os trechos gravados e a auditoria continuam.')) return;
       const r = await api('/api/cameras/' + encodeURIComponent(c.id) + '/remover',
                           { method: 'POST', body: JSON.stringify({}) });
-      await atualizar();
+      await refazerCartao(c.id);
       mostrarRecado(r.ok ? ('câmera ' + (c.rotulo || c.id) + ' removida do cadastro')
         : 'recusado: ' + ((r.corpo && r.corpo.erro) || JSON.stringify(r.corpo)), !r.ok);
     }));
   }
   caixa.appendChild(acoes);
   return caixa;
+}
+
+/* ACHA a câmera na árvore que a tela já tem (o cartão é desenhado a partir dela). */
+function acharNaArvore(camId) {
+  const arv = A.arvore || {};
+  const filas = [].concat((arv.empresas || []).map((e) => e.embarcacoes || []), [arv.embarcacoes_sem_empresa || []]);
+  for (const embs of filas) for (const emb of (embs || [])) for (const c of (emb.cameras || [])) {
+    if (c.id === camId) return { camera: c, emb };
+  }
+  return null;
+}
+
+/* REFAZ SÓ O CARTÃO DAQUELA CÂMERA. O resto da tela (a rolagem do usuário, os outros cartões, o
+   formulário aberto) fica exatamente como estava — é o pedido do dono (26/11/2026: re-varrer e
+   configurar "não remonta tudo pra não perder as configurações já feitas"). Devolve `false` quando o
+   cartão não está na tela (aí quem chamou redesenha). */
+async function recarregarCartao(camId) {
+  const alvo = '.cartao-camera[data-cam="' + (window.CSS && CSS.escape ? CSS.escape(camId) : camId) + '"]';
+  const no = document.querySelector(alvo);
+  if (!no) return false;
+  await atualizarDados();
+  const r = await api('/api/empresas');
+  if (r.ok) A.arvore = r.corpo || { empresas: [], embarcacoes_sem_empresa: [] };
+  const achado = acharNaArvore(camId);
+  if (!achado) return false;
+  const novo = cartaoDaCamera(achado.camera, achado.emb);
+  no.replaceWith(novo);
+  A.marca = assinaturaTelas();   // a tela já reflete o que acabou de ser lido: o timer não precisa avisar
+  return true;
+}
+
+/* Depois de uma ação no cartão: atualiza o cartão em cima do lugar; se ele não está na tela (a câmera
+   foi removida, por exemplo), aí sim redesenha tudo. */
+async function refazerCartao(camId) { if (!(await recarregarCartao(camId))) await atualizar(); }
+
+/* ACHA a embarcação na árvore que a tela já tem. */
+function acharEmbarcacao(embId) {
+  const arv = A.arvore || {};
+  for (const e of (arv.empresas || [])) for (const emb of (e.embarcacoes || [])) if (emb.id === embId) return emb;
+  for (const emb of (arv.embarcacoes_sem_empresa || [])) if (emb.id === embId) return emb;
+  return null;
+}
+
+/* Refaz SÓ o cartão daquela embarcação (o teto e o pedido de varredura são lidos POR embarcação: a
+   leitura de `/api/config` é uma por embarcação). O resto da tela do usuário não é tocado. */
+async function recarregarCartaoDaEmbarcacao(embId) {
+  const alvo = '.cartao-embarcacao[data-emb="' + (window.CSS && CSS.escape ? CSS.escape(embId) : embId) + '"]';
+  const no = document.querySelector(alvo);
+  if (!no) return false;
+  const rc = await api('/api/config?embarcacao_id=' + encodeURIComponent(embId));
+  if (rc.ok) { A.teto = A.teto || {}; A.teto[embId] = rc.corpo || { chaves: [], aplicadas: [] }; }
+  const r = await api('/api/empresas');
+  if (r.ok) A.arvore = r.corpo || { empresas: [], embarcacoes_sem_empresa: [] };
+  const emb = acharEmbarcacao(embId);
+  if (!emb) return false;
+  no.replaceWith(cartaoDaEmbarcacao(emb));
+  A.marca = assinaturaTelas();
+  return true;
+}
+
+async function refazerCartaoDaEmbarcacao(embId) {
+  if (!(await recarregarCartaoDaEmbarcacao(embId))) await atualizar();
 }
 
 /* --------------------------------------------------------- interface */
