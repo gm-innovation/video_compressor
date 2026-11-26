@@ -212,6 +212,41 @@ def escrever_sql(banco: pathlib.Path, consulta: str, args: tuple = ()) -> None:
         con.close()
 
 
+def espera_estado(pagina, cam: str, limite_s: float = 20.0) -> str:
+    """Le' o estado que a GRADE mostra para a camera (o texto do `[data-estado]`)."""
+    return (pagina.locator(f'[data-estado="{cam}"]').inner_text() or "").strip().lower()
+
+
+def iniciar_transmissao(pagina, cam: str, limite_s: float = 30.0) -> str:
+    """Pede a transmissao da camera pela GRADE, lidando com a sessao que a bancada JA tem de pe'.
+
+    O botao "iniciar" do quadro so' aparece quando esta camera NAO esta' no ar para este usuario; se ja'
+    estiver, o quadro mostra "parar"/"gravar" (a tela esta' certa). As jornadas do smoke rodam em
+    sequencia na mesma bancada e a janela de carencia mantem a sessao da jornada anterior viva — nesse
+    caso a jornada ENCERRA a sessao primeiro e depois pede de novo (e' o que o dono faria na tela).
+    """
+    sel_ini = f'.janela[data-cam="{cam}"] [data-papel="iniciar"]'
+    sel_par = f'.janela[data-cam="{cam}"] [data-papel="parar"]'
+    fim = time.time() + limite_s
+    while time.time() < fim:
+        # Caminho normal: a camera esta' parada para este usuario e o "iniciar" ja' esta' na tela.
+        try:
+            if pagina.locator(sel_ini).is_visible():
+                break
+        except Exception:  # noqa: BLE001 — a GRADE repinta sozinha e a leitura pode pegar a troca
+            pass
+        # Sessao DESTE usuario de pe' (a jornada anterior): o quadro oferece "parar" — encerra.
+        try:
+            if pagina.locator(sel_par).is_visible():
+                pagina.locator(sel_par).click(timeout=4000)
+        except Exception:  # noqa: BLE001 — idem: entre o is_visible e o click a tela pode trocar
+            pass
+        pagina.wait_for_timeout(600)
+    pagina.wait_for_selector(sel_ini, state="visible", timeout=int(limite_s * 1000))
+    pagina.locator(sel_ini).click()
+    return espera_estado(pagina, cam)
+
+
 class Ambiente:
     """Sobe (e derruba) o lado terra, o bordo e o mediamtx. Guarda as migalhas para o relatorio."""
 

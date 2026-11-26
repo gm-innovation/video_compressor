@@ -904,7 +904,7 @@ def pedir_trecho_do_hd(usuario, camera_id: str, arquivo: str) -> dict:
 # `versao`), o bordo OLHA, aplica SO' a diferenca e CONFIRMA o que aplicou.
 # --------------------------------------------------------------------------------------------
 CHAVES_DE_CONFIG = ("alvo_kbps", "teto_s", "gravacao_continua", "transmitir", "rotulo")
-VALORES_DE_ALVO = ("1500", "1200", "1000", "800", "500", "300")   # a banda do produto, fechada
+VALORES_DE_ALVO = ("3000", "2500", "2000", "1500", "1200", "1000", "800", "500", "300")   # a banda do produto, fechada (3 / 2,5 / 2 Mbps pedidos pelo dono em 26/11/2026)
 # O NOME da camera (dono, 23/11/2026): "a captura pega as informações e replica no app de captura,
 # inclusive os nomes das câmeras". É a chave `rotulo` — o admin escreve o nome em terra e o bordo
 # APLICA no cadastro local (e a varredura passa a respeitar o nome escolhido, em vez de reescrevê-lo
@@ -2383,7 +2383,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     # Niveis que a tela pode escolher POR CAMERA (pedido do dono, 16/11/2026): lista FECHADA. Qualquer
     # outro numero e' recusado com a lista na mensagem — alvo voltou a ser escolha, nao texto livre.
-    ALVOS_DE_QUALIDADE = ("1500k", "1200k", "1000k", "800k", "500k", "300k")
+    ALVOS_DE_QUALIDADE = ("3000k", "2500k", "2000k", "1500k", "1200k", "1000k", "800k", "500k", "300k")
 
     # RADAR por embarcacao (Fase 6, 17/11/2026): cada embarcacao pode ter o SEU radar — fonte, modo de
     # imagem e taxa ficam gravados nela, como o alvo por camera da 0.4.0. Listas FECHADAS, pelo mesmo
@@ -3479,17 +3479,17 @@ class Handler(SimpleHTTPRequestHandler):
                 sugerido = ""
                 if not passa and atual:
                     # A sugestao tem de ser um degrau da lista FECHADA de qualidade (senao a tela sugere
-                    # um numero que o servidor recusa). E' sempre o degrau SEGUINTE: subir um nivel por
-                    # vez e' como o dono compara na tela: 300k -> 500k -> 800k -> 1000k -> 1200k -> 1500k.
+                    # um numero que o servidor recusa). E' sempre o degrau SEGUINTE, e a escada vem da
+                    # PROPRIA lista do produto (`VALORES_DE_ALVO`, 26/11/2026) — antes era uma copia a
+                    # mao e ia parar em 1500k mesmo depois de a lista ganhar 2/2,5/3 Mbps.
                     try:
                         kbps = int(re.sub(r"[^0-9]", "", atual) or 0)
                     except ValueError:
                         kbps = 0
-                    acima = [n for n in ("300k", "500k", "800k", "1000k", "1200k", "1500k")
-                             if int(n[:-1]) > kbps]
+                    acima = [n + "k" for n in VALORES_DE_ALVO if int(n) > kbps]
                     if acima:
                         sugerido = min(acima, key=lambda n: int(n[:-1]))
-                    # no teto (1500k) nao ha' degrau acima: nao se sugere nada — o caminho ali e' a fonte
+                    # no teto da lista nao ha' degrau acima: nao se sugere nada — o caminho ali e' a fonte
                 itens.append({"fluxo_id": l["fluxo_id"], "ssim": l["ssim"], "ajuste": l["ajuste"],
                               "resolucao": l["resolucao"], "fps": l["fps"], "medido_em": l["medido_em"],
                               "idade_s": idade, "passa": bool(passa), "alvo_atual": atual,

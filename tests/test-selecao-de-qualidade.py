@@ -6,8 +6,8 @@ ter uma taxa de envio selecionavel".
 
 O que este teste exige (API de verdade, banco temporario, sem camera e sem mediamtx — o alvo se prova
 na lista e na reabertura, nao precisa de video):
-  1. os SEIS niveis da lista sao aceitos: 1500k/1200k/1000k/800k/500k/300k;
-  2. a lista e' FECHADA: 2500k, 1500, 1k, abc -> 422, e a resposta diz quais sao os validos;
+  1. os NOVE niveis da lista sao aceitos: 3000k/2500k/2000k/1500k/1200k/1000k/800k/500k/300k;
+  2. a lista e' FECHADA: 4000k, 1500, 1k, abc -> 422, e a resposta diz quais sao os validos;
   3. a selecao e' INDIVIDUAL: mudar uma camera nao mexe na outra (o banco prova);
   4. a resposta diz em voz alta se valeu NO AR (`aplicado`) e, quando nao valeu, POR QUE (`motivo`);
   5. alvo vazio = padrao da tela (tambem e' uma escolha valida);
@@ -31,7 +31,7 @@ import urllib.request
 
 RAIZ = pathlib.Path(__file__).resolve().parents[1]
 SENHA = "teste-1234"
-NIVEIS = ["1500k", "1200k", "1000k", "800k", "500k", "300k"]
+NIVEIS = ["3000k", "2500k", "2000k", "1500k", "1200k", "1000k", "800k", "500k", "300k"]
 
 
 def porta_livre() -> int:
@@ -124,9 +124,9 @@ def main() -> int:
             exigir(s == 200 and j.get("alvo") == n, "nivel %s aceito (http %s, alvo=%r)" % (n, s, j.get("alvo")))
 
         # 2) a lista e' fechada
-        s, j = admin.pedir("/api/cameras/cam-a/alvo", {"alvo": "2500k"})
+        s, j = admin.pedir("/api/cameras/cam-a/alvo", {"alvo": "4000k"})
         exigir(s == 422 and j.get("alvos") == NIVEIS,
-               "2500k (texto livre de antes) e' RECUSADO e a resposta traz a lista (%s)" % j.get("alvos"))
+               "4000k (acima do teto da lista) e' RECUSADO e a resposta traz a lista (%s)" % j.get("alvos"))
         for ruim in ("1500", "1k", "abc", "1500kk"):
             s, _ = admin.pedir("/api/cameras/cam-a/alvo", {"alvo": ruim})
             exigir(s == 422, "%r fora da lista -> 422 (http %s)" % (ruim, s))

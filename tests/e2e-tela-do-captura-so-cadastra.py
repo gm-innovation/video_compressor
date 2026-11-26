@@ -171,27 +171,34 @@ def main() -> int:
             checar("admin NAO recebe o aviso de 'so' cadastro'", not visivel(pag2, "#aviso-captura"))
             checar("sem erro de javascript na tela da bancada", not erros, "; ".join(erros[:3]))
 
-            # ---- 4. a tela NOVA do admin: "Configuração do bordo" (publica e mostra desejo x aplicado)
+            # ---- 4. a tela "Configuração do bordo" SAIU e o que ela tinha foi para o cartão -------
+            # Dono (26/11/2026): "se eu consigo editar empresa, embarcação e câmeras em 'Empresas e
+            # configuração', é necessário 'Configuração do bordo'?" · "não daria pra mudar para essa
+            # outra tela e remover configuração do bordo? precisamos deixar tudo mais simples".
             erros.clear()
             pag2.goto(base + "/admin/")
             pag2.wait_for_selector("#sistema:not(.oculto)", timeout=ESPERA)
-            pag2.click('button.item[data-tela="config_bordo"]')
-            pag2.wait_for_selector("#tela", timeout=ESPERA)
+            checar("admin NÃO tem mais 'Configuração do bordo' no menu",
+                   pag2.locator('button.item[data-tela="config_bordo"]').count() == 0)
+            pag2.click('button.item[data-tela="empresas"]')
+            pag2.wait_for_selector("button:has-text('Abrir')", timeout=ESPERA)
+            pag2.click("button:has-text('Abrir')")
             try:
-                pag2.wait_for_selector("#cfg-teto", timeout=ESPERA)
+                pag2.wait_for_selector("input[id^=cfg-teto-]", timeout=ESPERA)
             except Exception:  # noqa: BLE001 — se nao aparecer, a prova FALHA na checagem abaixo
                 pass
-            checar("admin tem a tela 'Configuração do bordo'", visivel(pag2, "#cfg-emb"))
-            # PLANO UNICO (25/11/2026, dono: "ha' blocos duplicados"): a tela ficou so' com o que e' da
-            # EMBARCACAO. O alvo por camera e o ligar/desligar do envio moram no cartao da camera
-            # ("Empresas e configuracao"), entao aqui NAO pode existir select de alvo por camera.
-            checar("...com o teto da embarcação", visivel(pag2, "#cfg-teto"))
-            checar("...e SEM repetir o alvo por câmera (o cartão da câmera é o dono disso)",
-                   pag2.locator("#tela select[id^=cfg-alvo-]").count() == 0
-                   and "cartão da câmera" in pag2.inner_text("#tela"))
-            checar("...e diz o que está publicado (desejada x aplicada)",
-                   "nada publicado" in pag2.inner_text("#tela") or "v" in pag2.inner_text("#tela").lower())
-            checar("sem erro de javascript na tela de configuração do bordo", not erros, "; ".join(erros[:3]))
+            checar("o TETO da embarcação mora no cartão da embarcação (Empresas e configuração)",
+                   visivel(pag2, "input[id^=cfg-teto-]"))
+            checar("a QUALIDADE de envio mora no cartão da câmera (dono do ajuste desde a 0.20.0)",
+                   pag2.locator("select[data-papel=alvo]").count() >= 1,
+                   "seletores: %d" % pag2.locator("select[data-papel=alvo]").count())
+            checar("o menu continua com o TIPO da câmera e o ligar/desligar no cartão",
+                   pag2.locator("select[data-papel=tipo]").count() >= 1)
+            checar("a lista da qualidade abre com os 3 níveis novos (3,0 / 2,5 / 2,0 Mbps)",
+                   pag2.locator("select[data-papel=alvo] option[value='3000']").count() >= 1
+                   and pag2.locator("select[data-papel=alvo] option[value='2500']").count() >= 1
+                   and pag2.locator("select[data-papel=alvo] option[value='2000']").count() >= 1)
+            checar("sem erro de javascript na área de empresas", not erros, "; ".join(erros[:3]))
             navegador.close()
     finally:
         api.terminate()

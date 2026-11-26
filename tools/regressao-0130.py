@@ -20,6 +20,15 @@ RAIZ = pathlib.Path(__file__).resolve().parent.parent
 # `ambiente.json` que esta' no repositorio, e passaria a falar com a producao em vez de responder em casa.
 os.environ["LECSOR_SEM_AMBIENTE"] = "1"
 PROVAS = (
+    # RODADA 0.21.0 — MAIS QUALIDADE DE ENVIO E MENOS TELA (dono, 26/11/2026: "inclua no plano mais
+    # possibilidades de qualidade de envio, 2mbps, 2,5mbps e 3mbps" · "o bloco de seleção de qualidade
+    # de envio sumiu da tela de configuração de bordo" · "se eu consigo editar empresa, embarcação e
+    # câmeras em 'Empresas e configuração', é necessário 'Configuração do bordo'?" · "precisamos deixar
+    # tudo mais simples"): a lista FECHADA passou a ter 3,0 / 2,5 / 2,0 Mbps e virou UMA fonte so' (o
+    # servidor na frente, o admin derivando dela), o TETO da embarcação foi para o cartão da embarcação
+    # e a tela "Configuração do bordo" saiu do menu.
+    "tests/test-lista-de-alvos-igual-ao-servidor.py",
+    "tests/e2e-qualidade-e-teto-em-empresas.py",
     # RODADA 0.20.0 — DASHBOARDS NO PADRAO DOCK CHECK (dono, 25/11/2026: "tanto o dashboard do admin
     # quanto o do app de captura continuam horriveis, precisa ser algo mais proximo desse do Dock
     # Check"): a leitura unica do admin (`/api/frota-resumo`, SO' ADMIN) com fileira de KPI, a

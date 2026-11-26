@@ -17,7 +17,7 @@ import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from ambiente import PORTA_RTSP, pedir, senha_de_demo, sql  # noqa: E402
+from ambiente import PORTA_RTSP, iniciar_transmissao, pedir, senha_de_demo, sql  # noqa: E402
 from relatorio import Jornada  # noqa: E402
 
 # O bordo do produto confere a licenca a cada 300 s. A bancada encurta o CICLO (5 s) para a medida
@@ -56,11 +56,12 @@ def _cliente_entra(navegador, amb, cam: str):
     pagina.fill("#senha", senha_de_demo())
     pagina.click("form#form-entrar button[type=submit]")
     pagina.wait_for_selector("#sistema:not(.oculto)", timeout=25000)
-# PLANO UNICO (25/11/2026): a tela "Transmitir" saiu do cliente - o controle de transmissao
+    # PLANO UNICO (25/11/2026): a tela "Transmitir" saiu do cliente - o controle de transmissao
     # (iniciar/parar/contagem/gravar) mora na GRADE, no quadro de cada camera. O cliente ja'
-    # cai nessa tela ao entrar; o botao do quadro e' o `[data-papel="iniciar"]`.
-    pagina.wait_for_selector(f'.janela[data-cam="{cam}"] [data-papel="iniciar"]', timeout=20000)
-    pagina.click(f'.janela[data-cam="{cam}"] [data-papel="iniciar"]')
+    # cai nessa tela ao entrar; quem pede a transmissao e' o `iniciar_transmissao` (ele encerra
+    # antes a sessao que uma jornada anterior deixou de pe' — o "iniciar" so' aparece com a
+    # camera parada para este usuario, que e' o comportamento certo da tela).
+    iniciar_transmissao(pagina, cam)
     return ctxx, pagina
 
 

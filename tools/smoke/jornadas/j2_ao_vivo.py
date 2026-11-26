@@ -14,7 +14,7 @@ import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from ambiente import PORTA_RTSP, pedir, sql, token_do_bordo  # noqa: E402
+from ambiente import PORTA_RTSP, iniciar_transmissao, pedir, sql, token_do_bordo  # noqa: E402
 from medidor import medir_fluxo, tela_do_cliente  # noqa: E402
 from relatorio import Jornada  # noqa: E402
 
@@ -68,17 +68,27 @@ def rodar(amb, ctx: dict) -> Jornada:
     j.checar("o cliente entra na web", True, "tela do cliente no ar")
 
     # 2) a camera do barco esta' na lista dele e ele PEDE a transmissao
-# PLANO UNICO (25/11/2026): a tela "Transmitir" saiu do cliente - o controle de transmissao
+    # PLANO UNICO (25/11/2026): a tela "Transmitir" saiu do cliente - o controle de transmissao
     # (iniciar/parar/contagem/gravar) mora na GRADE, no quadro de cada camera. O cliente ja'
-    # cai nessa tela ao entrar; o botao do quadro e' o `[data-papel="iniciar"]`.
-    pagina.wait_for_selector(f'.janela[data-cam="{cam}"] [data-papel="iniciar"]', timeout=20000)
+    # cai nessa tela ao entrar; o botao do quadro e' o `[data-papel="iniciar"]` (ele so' aparece com
+    # a camera parada para este usuario — por isso a espera e' pelo QUADRO, nao pelo botao).
+    pagina.wait_for_selector(f'.janela[data-cam="{cam}"]', timeout=20000)
     j.checar("a camera do barco aparece para o cliente", pagina.locator(f'.janela[data-cam="{cam}"] [data-papel="iniciar"]').count() > 0,
              f"botao de iniciar da camera {cam}")
     t_clique = time.time()
-    pagina.click(f'.janela[data-cam="{cam}"] [data-papel="iniciar"]')
-    pedido = _espera_estado(pagina, cam, "pedido", 20.0) or _estado_da_tela(pagina, cam)
-    j.checar("o pedido sai da tela do cliente", "pedido" in pedido.lower() or "chegando" in pedido.lower(),
-             f"estado na tela: {pedido[:70]!r}")
+    # O clique e' o mesmo que o dono faria no quadro da camera; o `iniciar_transmissao` encerra antes
+    # a sessao que a bancada possa ter deixado de pe'. A TELA nao diz "pedido": no quadro o estado sai
+    # de "parada" para "conectando…" e depois "no ar" — o que se mede aqui e' que o pedido SAIU.
+    iniciar_transmissao(pagina, cam)
+    estado = ""
+    fim_da_espera = time.time() + 20.0
+    while time.time() < fim_da_espera:
+        estado = _estado_da_tela(pagina, cam)
+        if "parada" not in estado.lower():
+            break
+        time.sleep(0.5)
+    j.checar("o pedido sai da tela do cliente (o quadro deixa de dizer 'parada')",
+             "parada" not in estado.lower(), f"estado na tela: {estado[:70]!r}")
 
     # 3) o DESEJO chegou ao lado terra e o BORDO leu a flag (rota real do agente)
     codigo, r = pedir("GET", f"{amb.terra}/api/estado-desejado?embarcacao_id={amb.embarcacao}",

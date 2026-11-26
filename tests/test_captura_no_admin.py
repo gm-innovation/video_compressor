@@ -305,7 +305,11 @@ class AplicativoEAvisarATela(unittest.TestCase):
         # a "Qualidade por câmera (lista fechada)" saiu da tela: uma escolha de banda, num lugar so'
         self.assertNotIn("env-qualidade-camera", s)
         self.assertNotIn("Qualidade por câmera (lista fechada) — vale no ar", s)
-        self.assertIn("const LISTA_ALVO = ['', '1500k', '1200k', '1000k', '800k', '500k', '300k']", s)
+        # 0.21.0 (dono, 26/11/2026): a lista ganhou 2 / 2,5 / 3 Mbps e passou a ter UMA fonte so' no
+        # admin (`ALVOS_DE_ENVIO`), que o teste `tests/test-lista-de-alvos-igual-ao-servidor.py`
+        # compara com a lista do servidor.
+        self.assertIn("const ALVOS_DE_ENVIO = ['3000', '2500', '2000', '1500', '1200', '1000', '800', '500', '300'];", s)
+        self.assertIn("const LISTA_ALVO = ['', ...ALVOS_DE_ENVIO_K];", s)
         # a caixa de qualidade do ao vivo passa a mandar BANDA para a API
         self.assertIn("bitrate: (qualidade.value || 'auto')", s)
 

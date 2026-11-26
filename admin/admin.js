@@ -1,9 +1,16 @@
 /* Admin do projeto e do sistema: acompanhamento (§6) + administracao (clientes, embarcacoes,
    cameras, usuarios, analises, auditoria, saude). Le e escreve tudo pela API do produto. */
-const A = { usuario: null, resumo: null, clientes: [], usuarios: [], verificarCredencial: false, sistema: null, cameras: [], embarcacoes: [], licencas: [], tela: 'empresas', timer: null, chaveRevelada: null, marca: null, radarForm: null, radarAviso: null, prontidao: null, config: null, empresaId: null, arvore: null, hd: null };
+const A = { usuario: null, resumo: null, clientes: [], usuarios: [], verificarCredencial: false, sistema: null, cameras: [], embarcacoes: [], licencas: [], tela: 'empresas', timer: null, chaveRevelada: null, marca: null, radarForm: null, radarAviso: null, prontidao: null, config: null, empresaId: null, arvore: null, hd: null, teto: {} };
 const $ = (id) => document.getElementById(id);
 const limpar = (el) => { while (el.firstChild) el.removeChild(el.firstChild); };
 const esc = (s) => String(s === null || s === undefined ? '' : s);
+
+/* LISTA FECHADA de qualidade de envio — UMA fonte so (dono, 26/11/2026). E' o espelho de
+   `VALORES_DE_ALVO` em `ground/api.py`: o servidor RECUSA valor fora dela, entao as duas listas tem
+   de andar juntas — o teste `tests/test-lista-de-alvos-igual-ao-servidor.py` compara as duas.
+   Ordem: do MAIOR para o MENOR (3,0 / 2,5 / 2,0 Mbps entraram nesta rodada). */
+const ALVOS_DE_ENVIO = ['3000', '2500', '2000', '1500', '1200', '1000', '800', '500', '300'];
+const ALVOS_DE_ENVIO_K = ALVOS_DE_ENVIO.map((v) => v + 'k');
 
 /* --------------------------------------------------- captura nesta maquina (dono, 16/11/2026)
    "deve liberar as funcoes de captura, nao mudar para o app de captura": quando o aplicativo libera
@@ -258,7 +265,6 @@ const SUBS = {
   envios: ['Enviar vídeo', 'Escolhe a fonte (arquivo, link ou câmera desta máquina) e a qualidade por câmera: o sistema codifica, publica em SRT e mede o corte de banda.'],
   saude: ['Saúde do sistema', 'Estado da API, do lado terra e das contagens do banco.'],
   saude_bordo: ['Saúde do bordo', 'O computador de captura reporta sozinho: CPU, memória, disco (e o anel do HD do radar), ffmpeg, captura viva, mediamtx, erros. Semáforo com o limiar e o que fazer.'],
-  config_bordo: ['Configuração do bordo', 'Você publica aqui e o computador de captura busca: o TETO de tempo da embarcação. O ajuste por câmera (qualidade de envio, ligar/desligar) mora no cartão da câmera, em "Empresas e configuração" — aqui não se repete. O bordo confirma o que aplicou — ou o motivo da recusa.'],
   hd_bordo: ['Imagens gravadas a bordo', 'O HD do computador de captura, embarcação por embarcação: o que ele gravou (o radar de óleo grava o tempo todo), pesquisável por data e hora. O pedido vai ao bordo e o download abre quando o trecho chega em terra.'],
   licencas: ['Licenças do PC de captura', 'A chave que se digita no app de captura: ela liga aquela máquina à empresa e à embarcação. Vale por tempo ou sem prazo, e quantos PCs usam a mesma licença é ajustável.']
 };
@@ -301,7 +307,7 @@ function desenhar(forcado) {
     painel: telaPainel, fases: telaFases, medicoes: telaMedicoes, decisoes: telaDecisoes,
     evidencias: telaEvidencias, documentos: telaDocumentos,
     licencas: telaLicencas, usuarios: telaUsuarios, auditoria: telaAuditoria, envios: telaEnvios,
-    config_bordo: telaConfigDoBordo, saude_bordo: telaSaudeDoBordo, saude: telaSaude,
+    saude_bordo: telaSaudeDoBordo, saude: telaSaude,
     hd_bordo: telaHdDoBordo };
   (despacho[A.tela] || telaPainel)(tela);
 }
@@ -707,13 +713,13 @@ function telaCameras(t) {
         const sel = document.createElement('select');
         sel.className = 'mini';
         sel.title = 'Taxa de envio só desta câmera';
-        for (const op of ['', '1500k', '1200k', '1000k', '800k', '500k', '300k']) {
+        for (const op of ['', ...ALVOS_DE_ENVIO_K]) {
           sel.appendChild(Object.assign(document.createElement('option'), {
             value: op, textContent: op ? op.replace('k', ' kbps') : 'padrão da tela',
             selected: (c.alvo || '') === op }));
         }
         // um alvo antigo (ex.: 2500k de antes da lista) continua visível, para não parecer "voltou ao padrão"
-        if (c.alvo && !['', '1500k', '1200k', '1000k', '800k', '500k', '300k'].includes(c.alvo)) {
+        if (c.alvo && !['', ...ALVOS_DE_ENVIO_K].includes(c.alvo)) {
           sel.appendChild(Object.assign(document.createElement('option'), { value: c.alvo, textContent: c.alvo + ' (fora da lista)', selected: true }));
         }
         caixa.appendChild(sel);
@@ -1423,7 +1429,7 @@ function telaEnvios(t) {
   /* O QUE FICA NA TELA DO ADMIN (dono, 18/11/2026: "por que esses testes de video estao na minha tela?
      isso nao e' necessario e ainda da' o aspecto de baguncado"): transmissao ao vivo, teto do produto e a
      trilha das gravacoes. O caminho de bancada (comprimir, medir, publicar) fica so' com a OPERACAO. */
-  const LISTA_ALVO = ['', '1500k', '1200k', '1000k', '800k', '500k', '300k'];
+  const LISTA_ALVO = ['', ...ALVOS_DE_ENVIO_K];
 
   const caixa = document.createElement('div'); caixa.className = 'caixa-form';
   caixa.appendChild(Object.assign(document.createElement('h2'),
@@ -1547,7 +1553,7 @@ function telaEnvios(t) {
   const rAlvoRadar = document.createElement('div');
   rAlvoRadar.appendChild(Object.assign(document.createElement('label'), { textContent: 'Alvo do radar (banda)' }));
   const radarAlvo = document.createElement('select'); radarAlvo.id = 'env-radar-alvo';
-  for (const v of ['1500k', '1200k', '1000k', '800k', '500k', '300k']) {
+  for (const v of ALVOS_DE_ENVIO_K) {
     const o = document.createElement('option'); o.value = v; o.textContent = v; radarAlvo.appendChild(o);
   }
   rAlvoRadar.appendChild(radarAlvo); linhaRadar.appendChild(rAlvoRadar);
@@ -2000,78 +2006,6 @@ function telaSaude(t) {
   const d = document.createElement('div'); d.className = 'recado ok';
   d.textContent = 'banco: ' + (s.banco || '—');
   t.appendChild(d);
-}
-
-
-/* ------------------------------------------------------------------ configuração do bordo (0.8.0)
-   O dono: "eu configuraria tudo pelo meu usuario admin, pela premissa de nao enviar nada para bordo".
-   Aqui o admin PUBLICA (terra) e vê o que o bordo confirmou. Campos que o bordo ainda não aplica
-   aparecem como publicáveis, e a resposta dele vem com o motivo — nada de "achei que apliquei". */
-const ALVOS_DA_BANDA = ['1500', '1200', '1000', '800', '500', '300'];
-
-async function telaConfigDoBordo(t) {
-  const embs = A.embarcacoes || [];
-  if (!embs.length) { t.appendChild(recado('nenhuma embarcação cadastrada ainda', true)); return; }
-  const escolhida = (A.config && A.config.embarcacao_id) || embs[0].id;
-
-  const barra = document.createElement('div'); barra.className = 'linha-form';
-  const rot = document.createElement('label'); rot.textContent = 'Embarcação';
-  const sel = document.createElement('select'); sel.id = 'cfg-emb';
-  embs.forEach((e) => sel.appendChild(Object.assign(document.createElement('option'),
-    { value: e.id, textContent: (e.nome || e.id) + ' (' + e.id + ')', selected: e.id === escolhida })));
-  barra.appendChild(rot); barra.appendChild(sel); t.appendChild(barra);
-  sel.onchange = () => { A.config = { embarcacao_id: sel.value }; desenhar(true); };
-
-  const r = await api('/api/config?embarcacao_id=' + encodeURIComponent(escolhida));
-  const dados = (r.ok && r.corpo) || { chaves: [], aplicadas: [], versao: 0 };
-  const achar = (cam, chave) => (dados.aplicadas || []).find((x) => x.camera_id === (cam || '') && x.chave === chave) || null;
-
-  /* POR CÂMERA MORA NO CARTÃO DA CÂMERA (plano único, 25/11/2026 — dono: "há blocos duplicados"): o
-     bloco "Banda por câmera" repetia o cartão de "Empresas e configuração" (qualidade de envio e
-     ligar/desligar transmissão) e a tabela do fim listava tudo uma terceira vez. Aqui fica só o que é
-     da EMBARCAÇÃO (o teto) e o resumo de leitura do que está publicado. */
-  const cams = (A.cameras || []).filter((c) => c.embarcacao_id === escolhida);
-  const cx = document.createElement('div'); cx.className = 'caixa-form';
-  cx.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Por câmera: no cartão da câmera' }));
-  cx.appendChild(notaDe(cams.length
-    ? 'Qualidade de envio, ligar/desligar a transmissão, nome e TIPO de cada uma das ' + cams.length
-      + ' câmera(s) desta embarcação ficam na área "Empresas e configuração", no cartão da câmera — o '
-      + 'mesmo ajuste não se repete aqui.'
-    : 'esta embarcação ainda não tem câmera cadastrada'));
-  t.appendChild(cx);
-
-  /* --- teto de tempo da embarcação (o bordo passa a usar este teto) --- */
-  const tetoDesejado = (dados.chaves || []).find((x) => x.camera_id === '' && x.chave === 'teto_s');
-  const tetoAplic = achar('', 'teto_s');
-  const ct = document.createElement('div'); ct.className = 'caixa-form';
-  ct.appendChild(Object.assign(document.createElement('h2'), { textContent: 'Teto de transmissão da embarcação' }));
-  const l2 = document.createElement('div'); l2.className = 'linha-form';
-  const inp = campo(l2, 'cfg-teto', 'Teto (minutos)', tetoDesejado ? String(Math.round(Number(tetoDesejado.valor) / 60)) : '');
-  l2.appendChild(botao('Publicar teto', 'mini', async () => {
-    const rr = await api('/api/config', { method: 'POST', body: JSON.stringify({ embarcacao_id: escolhida, camera_id: '', chave: 'teto_s', valor: String(Math.round(Number(inp.value) * 60)) }) });
-    await atualizar();
-    A.tela = 'config_bordo'; A.config = { embarcacao_id: escolhida }; desenhar(true);
-    mostrarRecado(rr.ok ? 'teto publicado (v' + (rr.corpo.versao || '?') + '): o bordo corta sozinho depois disso'
-      : 'recusado: ' + JSON.stringify(rr.corpo), !rr.ok);
-  }));
-  const nota2 = document.createElement('span'); nota2.className = 'nota';
-  nota2.textContent = tetoDesejado ? ('publicado: ' + Math.round(Number(tetoDesejado.valor) / 60) + ' min — '
-    + (tetoAplic && tetoAplic.versao >= tetoDesejado.versao ? 'aplicado (v' + tetoAplic.versao + ')' : 'aguardando o bordo')) : 'nada publicado';
-  l2.appendChild(nota2);
-  ct.appendChild(l2); t.appendChild(ct);
-
-  /* --- desejada x aplicada, tudo o que está publicado --- */
-  const linhas = (dados.chaves || []).map((k) => ({
-    camera_id: k.camera_id || '(embarcação)', chave: k.chave, desejada: k.valor,
-    versao: 'v' + k.versao, quando: k.atualizado_em || '',
-    estado: (() => { const a = achar(k.camera_id, k.chave);
-      if (!a) return 'aguardando o bordo';
-      if (a.motivo) return 'RECUSADO: ' + a.motivo;
-      return a.versao >= k.versao ? 'aplicado (v' + a.versao + ')' : 'aguardando o bordo'; })() }));
-  t.appendChild(tabela([{ rotulo: 'Câmera', campo: 'camera_id' }, { rotulo: 'Chave', campo: 'chave' },
-    { rotulo: 'Valor', campo: 'desejada' }, { rotulo: 'Publicado', campo: 'versao' },
-    { rotulo: 'Quando', campo: 'quando' }, { rotulo: 'No bordo', campo: 'estado' }], linhas,
-    'nada publicado para esta embarcação ainda'));
 }
 
 
@@ -2686,8 +2620,6 @@ async function telaSaudeDoBordo(t) {
    as câmeras (as achadas pela varredura inclusive) em CARTÃO — cada uma com ligar/desligar,
    ativar/desativar, nome que desce ao bordo e qualidade de envio. As telas antigas continuam
    alcançáveis pelo grupo "Avançado" do menu, para nenhum link salvo quebrar. */
-const ALVOS_DE_ENVIO = ['1500', '1200', '1000', '800', '500', '300'];
-
 function seloDe(tom, texto) {
   const s = document.createElement('span');
   s.className = 'pill';
@@ -2731,7 +2663,7 @@ async function telaEmpresas(t) {
   A.arvore = r.corpo || { empresas: [], embarcacoes_sem_empresa: [] };
   const empresas = A.arvore.empresas || [];
   const escolhida = empresas.find((e) => e.id === A.empresaId);
-  if (escolhida) { areaDaEmpresa(t, escolhida); return; }
+  if (escolhida) { await areaDaEmpresa(t, escolhida); return; }
   areaDasEmpresas(t, empresas, A.arvore.embarcacoes_sem_empresa || []);
 }
 
@@ -2791,7 +2723,7 @@ function areaDasEmpresas(t, empresas, semEmpresa) {
   }
 }
 
-function areaDaEmpresa(t, empresa) {
+async function areaDaEmpresa(t, empresa) {
   const barra = document.createElement('div'); barra.className = 'linha-form';
   barra.appendChild(botao('← todas as empresas', 'mini', () => { A.empresaId = null; desenhar(true); }));
   if (A.usuario.papel === 'admin') {
@@ -2830,6 +2762,14 @@ function areaDaEmpresa(t, empresa) {
   if (!empresa.embarcacoes.length) {
     t.appendChild(recado('Nenhuma embarcação nesta empresa ainda. Crie a primeira acima — a chave se '
       + 'gera ali e as câmeras da varredura aparecem depois que o PC de captura entrar com ela.', true));
+  }
+  /* TETO de transmissão da embarcação (dono, 26/11/2026: "precisamos deixar tudo mais simples"): é o
+     que sobrava da tela "Configuração do bordo", que saiu. Uma leitura por embarcação — o cartão mostra
+     o que foi publicado em terra e o que o bordo confirmou. */
+  A.teto = {};
+  for (const emb of empresa.embarcacoes) {
+    const rc = await api('/api/config?embarcacao_id=' + encodeURIComponent(emb.id));
+    A.teto[emb.id] = (rc.ok && rc.corpo) || { chaves: [], aplicadas: [] };
   }
   for (const emb of empresa.embarcacoes) t.appendChild(cartaoDaEmbarcacao(emb));
 }
@@ -2906,6 +2846,29 @@ function cartaoDaEmbarcacao(emb) {
         : 'recusado: ' + ((r.corpo && r.corpo.erro) || JSON.stringify(r.corpo)), !r.ok);
     })));
     caixa.appendChild(ae);
+    /* TETO de transmissão da embarcação: veio da tela "Configuração do bordo" (dono, 26/11/2026:
+       "se eu consigo editar empresa, embarcação e câmeras em 'Empresas e configuração'... precisamos
+       deixar tudo mais simples"). Mesma chave (`teto_s`, `camera_id=''`) e mesma rota de antes. */
+    const ct = document.createElement('div'); ct.className = 'linha-form';
+    const cfgTeto = (A.teto || {})[emb.id] || { chaves: [], aplicadas: [] };
+    const tetoDesejado = (cfgTeto.chaves || []).find((x) => x.camera_id === '' && x.chave === 'teto_s');
+    const tetoAplic = (cfgTeto.aplicadas || []).find((x) => x.camera_id === '' && x.chave === 'teto_s');
+    const inpTeto = campo(ct, 'cfg-teto-' + emb.id, 'Teto de transmissão (minutos)',
+      tetoDesejado ? String(Math.round(Number(tetoDesejado.valor) / 60)) : '');
+    ct.appendChild(botao('Publicar teto', 'mini', async () => {
+      const r = await api('/api/config', { method: 'POST', body: JSON.stringify({
+        embarcacao_id: emb.id, camera_id: '', chave: 'teto_s', valor: String(Math.round(Number(inpTeto.value) * 60)) }) });
+      await atualizar();
+      mostrarRecado(r.ok ? ('teto publicado (v' + (((r.corpo || {}).versao) || '?') + '): o bordo corta sozinho depois disso')
+        : 'recusado: ' + JSON.stringify(r.corpo), !r.ok);
+    }));
+    const notaTeto = document.createElement('span'); notaTeto.className = 'nota';
+    notaTeto.textContent = tetoDesejado
+      ? ('publicado: ' + Math.round(Number(tetoDesejado.valor) / 60) + ' min — '
+         + (tetoAplic && tetoAplic.versao >= tetoDesejado.versao ? 'aplicado (v' + tetoAplic.versao + ')' : 'aguardando o bordo'))
+      : 'nada publicado';
+    ct.appendChild(notaTeto);
+    caixa.appendChild(ct);
   }
   caixa.appendChild(notaDe('Câmeras: ' + emb.resumo.cameras + ' · no ar: ' + emb.resumo.no_ar
     + ' · ativas: ' + emb.resumo.ativas
@@ -3047,8 +3010,21 @@ function cartaoDaCamera(c, emb) {
      dois desde a 0.20.0). */
   sel.dataset.papel = 'alvo';
   sel.title = 'qualidade de envio desta câmera (kbps) — desce para o PC de captura';
-  for (const a of ALVOS_DE_ENVIO) { const o = document.createElement('option'); o.value = a; o.textContent = a + ' kbps'; sel.appendChild(o); }
-  sel.value = String(c.alvo || '').replace(/k$/i, '');   // `cameras.alvo` guarda "800k"; o menu e' "800"
+  const alvoAtual = String(c.alvo || '').replace(/k$/i, '');
+  /* O menu NAO pode ficar em branco (defeito visto no print do dono em 26/11/2026): sem `alvo`
+     publicado, `sel.value = ''` nao casa com opcao nenhuma e o navegador mostra o campo vazio — parece
+     que nao ha escolha. Com valor vazio a primeira opcao (a que o produto usa hoje) fica escolhida. */
+  for (const a of ALVOS_DE_ENVIO) {
+    const o = document.createElement('option');
+    o.value = a;
+    o.textContent = a + ' kbps' + (!alvoAtual && a === ALVOS_DE_ENVIO[0] ? ' (padrão do produto)' : '');
+    sel.appendChild(o);
+  }
+  if (alvoAtual && !ALVOS_DE_ENVIO.includes(alvoAtual)) {   // alvo antigo/fora da lista nao some do menu
+    const o = document.createElement('option'); o.value = alvoAtual; o.textContent = alvoAtual + ' (fora da lista)';
+    sel.appendChild(o);
+  }
+  sel.value = alvoAtual || ALVOS_DE_ENVIO[0];   // `cameras.alvo` guarda "800k"; o menu e' "800"
   acoes.appendChild(sel);
   acoes.appendChild(botao('aplicar qualidade', 'mini', async () => {
     const r = await api('/api/config', { method: 'POST', body: JSON.stringify({

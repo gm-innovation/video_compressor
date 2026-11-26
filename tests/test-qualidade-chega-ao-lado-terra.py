@@ -188,14 +188,14 @@ def main() -> int:
         s, j = captura.pedir("/api/entrar", {"email": "admin@lecsor.test", "senha": SENHA})
         exigir(s == 200 and j.get("ok"), "admin autenticou (http %s)" % s)
         s, j = captura.pedir("/api/cameras", {"id": FLUXO, "fluxo_id": FLUXO, "rotulo": "CAM 02",
-                                              "embarcacao_id": "bancada", "alvo": "1500k"})
+                                              "embarcacao_id": "bancada", "alvo": "3000k"})
         exigir(s == 201, "admin gravou o alvo da cam-02 (http %s)" % s)
         s, j = operacao.pedir("/api/qualidade")
         fluxo = next((f for f in j.get("fluxos", []) if f["fluxo_id"] == FLUXO), None)
-        exigir(bool(fluxo) and fluxo.get("alvo_atual") == "1500k",
+        exigir(bool(fluxo) and fluxo.get("alvo_atual") == "3000k",
                "a qualidade mostra o alvo atual da camera: %r" % (fluxo or {}).get("alvo_atual"))
         exigir(bool(fluxo) and fluxo.get("alvo_sugerido") == "",
-               "no TETO da lista (1500k) nao se sugere degrau nenhum: %r" % (fluxo or {}).get("alvo_sugerido"))
+               "no TETO da lista (3000k) nao se sugere degrau nenhum: %r" % (fluxo or {}).get("alvo_sugerido"))
 
         # abaixo do teto a sugestao e' o PROXIMO degrau aceito (nunca um numero que o servidor recusaria)
         s, j = captura.pedir("/api/cameras/%s/alvo" % FLUXO, {"alvo": "800k"})
@@ -208,8 +208,10 @@ def main() -> int:
         s, j = captura.pedir("/api/cameras/%s/alvo" % FLUXO, {"alvo": "nao-e-numero"})
         exigir(s == 422, "alvo invalido e' recusado (http %s)" % s)
         s, j = captura.pedir("/api/cameras/%s/alvo" % FLUXO, {"alvo": "2300"})
-        exigir(s == 422 and j.get("alvos") == ["1500k", "1200k", "1000k", "800k", "500k", "300k"],
-               "texto livre de antes (2300) e' recusado e a resposta traz a lista: %r" % j.get("alvos"))
+        exigir(s == 422 and j.get("alvos") == ["3000k", "2500k", "2000k", "1500k", "1200k", "1000k",
+                                               "800k", "500k", "300k"],
+               "texto livre de antes (2300, entre dois degraus) e' recusado e a resposta traz a lista: %r"
+               % j.get("alvos"))
         s, j = captura.pedir("/api/cameras/%s/alvo" % FLUXO, {"alvo": "1000k"})
         exigir(s == 200 and j.get("alvo") == "1000k", "nivel da lista gravado (http %s): %r" % (s, j.get("alvo")))
         con = sqlite3.connect(banco)

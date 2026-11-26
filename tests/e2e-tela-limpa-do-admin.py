@@ -42,7 +42,7 @@ RAIZ = pathlib.Path(__file__).resolve().parents[1]
 falhas: list[str] = []
 SENHA = os.environ.get("LECSOR_SENHA_DEMO", "") or "senha-de-bancada-transmissao"
 TOKEN = "token-de-teste-tela-limpa"
-BANDAS = ["", "1500k", "1200k", "1000k", "800k", "500k", "300k"]
+BANDAS = ["", "3000k", "2500k", "2000k", "1500k", "1200k", "1000k", "800k", "500k", "300k"]
 
 
 def checar(nome: str, cond: bool, detalhe: str = "") -> None:
@@ -136,7 +136,7 @@ def main() -> int:
             rotulo_qual = pag_adm.locator("#env-qualidade").evaluate(
                 "s => s.parentElement.querySelector('label').textContent")
             valores = pag_adm.eval_on_selector_all("#env-qualidade option", "os => os.map(o => o.value)")
-            checar("a qualidade do ao vivo é a lista fechada de 1500 a 300 kbps",
+            checar("a qualidade do ao vivo é a lista fechada de 3000 a 300 kbps",
                    [v for v in valores] == BANDAS, f"na tela: {valores}")
             checar("o rótulo diz que é BANDA (a caixa antiga de CRF saiu)", "banda" in rotulo_qual.lower(),
                    rotulo_qual)
@@ -207,7 +207,7 @@ def main() -> int:
     if falhas:
         print(f"E2E-TELA-LIMPA: {len(falhas)} FALHA(S): " + " · ".join(falhas))
         return 1
-    print("E2E-TELA-LIMPA_OK — a tela do admin está limpa e a banda do vídeo ao vivo é 1500 a 300 kbps")
+    print("E2E-TELA-LIMPA_OK — a tela do admin está limpa e a banda do vídeo ao vivo é 3000 a 300 kbps")
     return 0
 
 

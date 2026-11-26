@@ -469,7 +469,7 @@ checar(r25.returncode == 0, "test-declarado-chega-ao-lado-terra.py passou" if r2
 
 
 print()
-print("== 26. seleção de QUALIDADE por câmera: 1500k/1200k/1000k/800k/500k/300k, individual ==")
+print("== 26. seleção de QUALIDADE por câmera: 3000k/2500k/2000k/1500k/1200k/1000k/800k/500k/300k, individual ==")
 r26 = subprocess.run([sys.executable, str(RAIZ / "tests" / "test-selecao-de-qualidade.py")],
                      capture_output=True, text=True, encoding="utf-8", errors="replace")
 checar(r26.returncode == 0, "test-selecao-de-qualidade.py passou" if r26.returncode == 0

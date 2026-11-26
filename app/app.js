@@ -155,6 +155,9 @@ async function atualizar() {
   if (S.tela === 'visualizar') {
     if (mudouLista || !$('palco').dataset.montado) desenharVisualizar();
     else { pintarEstados(); S.cameras.forEach((c) => desenharCaixas(c.id)); }
+    // O aviso da gravacao pronta tem que aparecer nos DOIS caminhos: o caminho leve nao redesenha a
+    // GRADE, e a gravacao pode ficar pronta enquanto o cliente so' olha a tela (prova J5).
+    pintarAvisoDeGravacao();
     atualizarSeloIA();
   }
   else {
@@ -459,6 +462,11 @@ function desenharVisualizar() {
     desenharCaixas(c.id);
   }
   montarPaginacao();
+  /* O AVISO DA GRAVACAO PRONTA mora na GRADE (plano único, 25/11/2026): ele era chamado so' pela tela
+     "Transmitir", que saiu do cliente — sem isto o cliente gravava e NUNCA era avisado de que o
+     arquivo estava pronto para baixar (a suite J5 mede exatamente isso). O poll da tela repinta o
+     aviso a cada batida; aqui ele entra no desenho completo. */
+  pintarAvisoDeGravacao();
   pintarEstados();
   ajustarGrade();   // a grade é dimensionada depois de montada (imagem inteira, sem corte)
 }
@@ -849,12 +857,16 @@ function desenharTela() {
     /* A gravação fica no LADO TERRA (o vídeo que já chegou pela rede). Aqui o cliente vê o que ficou
        gravado nas transmissões da embarcação dele e baixa — nada é apagado do histórico. */
     const feitas = (S.transmissao.historico || []).filter((x) => x.gravacao && x.gravacao.tem);
+    const eu = (S.usuario || {}).email;
     tabelaEmPalco([
       { rotulo: 'Quando', campo: 'quando' },
       { rotulo: 'Câmera', campo: 'camera' },
       { rotulo: 'Quem', campo: 'quem' },
       { rotulo: 'Durou', campo: 'durou' },
       { rotulo: 'Tamanho', campo: 'tamanho' },
+      /* o ESTADO de cada sessao era a coluna da tela "Transmitir" (que saiu do cliente na 0.20.0):
+         a informacao nao se perde — ela entra aqui, junto do arquivo que sobrou dela. */
+      { rotulo: 'Estado', campo: 'estado' },
       { rotulo: 'Gravação', valor: (l) => l.baixar },
     ], feitas.map((x) => ({
       quando: (x.criada_em || '').replace('T', ' ').slice(0, 19),
@@ -862,13 +874,14 @@ function desenharTela() {
       quem: x.usuario_email || '',
       durou: duracaoDa(x),
       tamanho: emMB((x.gravacao || {}).bytes),
+      estado: textoDaSessao(x, eu),
       baixar: (() => {
         const a = document.createElement('a');
         a.href = '/api/gravacoes/' + encodeURIComponent(x.id);
         a.textContent = 'baixar';
         return a;
       })(),
-    })), 'Nenhuma gravação ainda. Grave pela tela Transmitir — a gravação fica no lado terra e não é apagada.');
+    })), 'Nenhuma gravação ainda. Grave pelo quadro da câmera na tela ao vivo — a gravação fica no lado terra e não é apagada.');
   } else if (t === 'radar_hd') {
     /* O HD do radar fica no PC de captura gravando o tempo todo; aqui o cliente procura por data e hora,
        PEDE o trecho e baixa quando chegar (dono, 19/11/2026). Nada sobe de video sem pedido. */
@@ -1178,6 +1191,17 @@ function minutosAte(carimbo) {
   if (!carimbo) return null;
   const resta = Math.round((new Date(carimbo) - new Date()) / 60000);
   return resta > 0 ? resta : 0;
+}
+
+/* O aviso da gravacao pronta NAO vive no quadro: quem cuida dele e' esta funcao, chamada a cada
+   batida da tela (dono, 25/11/2026 — o aviso era pintado so' pela tela "Transmitir", que saiu do
+   cliente). Ela e' idempotente: apaga o aviso anterior e repinta com o que acabou de chegar do lado
+   terra, entao pode ser chamada tanto no desenho completo quanto no caminho leve do poll. */
+function pintarAvisoDeGravacao() {
+  const antigo = document.getElementById('aviso-gravacao');
+  if (antigo) antigo.remove();
+  const palco = $('palco');
+  if (palco) avisoDeGravacao(palco);
 }
 
 /* A faixa fica no alto da tela de transmissão enquanto houver gravacao pronta para baixar. */
