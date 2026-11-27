@@ -65,6 +65,9 @@ import subprocess
 import sys
 import time
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import processos  # noqa: E402  (identidade de processo: um pid sozinho NAO e' identidade)
+
 RAIZ = pathlib.Path(__file__).resolve().parent.parent
 NOME_BLOCO = re.compile(r"^bloco-(\d{8})-(\d{6})\.mp4$")
 LOG_DIR = RAIZ / "ground" / "hd"
@@ -131,7 +134,7 @@ def camera_do_gravador() -> str:
 
 def gravador_de_pe() -> bool:
     """O laco do gravador esta' VIVO agora (a medida, nao o desejo)."""
-    return _pid_vivo(gravador_pid())
+    return _laco_vivo()
 
 
 def dono_da_camera(camera_id_ou_fluxo: str) -> bool:
@@ -170,9 +173,17 @@ def garantir() -> dict:
     if not dispositivo():
         r = resolucao(recarregar=True)
         return {"ok": False, "ligada": True, "motivo": f"sem dispositivo de video: {r.get('motivo') or ''}"}
-    subido = _subir_gravador()   # 0 = ja' estava de pe'
+    subido = _subir_gravador()   # 0 = ja' estava de pe' (ou nao subiu — conferido logo abaixo)
     if subido:
         _log(f"gravador reerguido (pid {subido}) — o laco anterior tinha morrido com o desejo ligado")
+    # O supervisor NAO pode achar que esta' tudo bem so' porque pediu para subir (dono, 27/11/2026: o
+    # laco morreu calado e nada o reergueu). Se depois de garantir o laco nao esta' de pe', isto e'
+    # falha declarada — e vai com motivo para a tela e para o catalogo de terra.
+    if not _laco_vivo():
+        motivo = "o laco do gravador nao subiu (veja ground/hd/log/gravacao-continua.log)"
+        _log(f"aviso: {motivo}")
+        return {"ok": False, "ligada": True, "subido": subido, "pid": gravador_pid(),
+                "motivo": motivo, "gravando": False}
     return {"ok": True, "ligada": True, "subido": subido, "pid": gravador_pid(),
             "gravando": gravando_agora()}
 
@@ -215,25 +226,66 @@ def _arquivo_do_pid() -> pathlib.Path:
 
 
 def _pid_vivo(pid: int) -> bool:
-    if pid <= 0:
-        return False
+    """Existe processo com este pid? (nao diz de QUEM ele e' — para isso ver `_laco_vivo`).
+
+    MEDIDO NESTA MAQUINA em 27/11/2026: `os.kill(pid, 0)` no Windows **MATA** o processo (chama
+    `TerminateProcess`), nao apenas "pergunta se existe" como no Linux — conferido com um processo
+    de teste: `os.kill(pid, 0)` o fez sair com codigo `0xC000013A`. Era o codigo daqui: entao TODA
+    checagem de vida do gravador (o supervisor, a tela, o `gravador_de_pe`) DERRUBAVA o proprio laco
+    que estava conferindo — e o `_subir_gravador` respondia "ja' estava de pe'". A checagem passa a
+    ser pelo `processos` (psutil/WMI), que so' OLHA.
+    """
+    return processos.vivo(pid)
+
+
+def _linhas_do_pid() -> list[str]:
     try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
+        return [x.strip() for x in _arquivo_do_pid().read_text(encoding="utf-8").splitlines() if x.strip()]
+    except Exception:
+        return []
 
 
 def gravador_pid() -> int:
+    linhas = _linhas_do_pid()
     try:
-        return int((_arquivo_do_pid().read_text(encoding="utf-8").strip() or 0))
-    except Exception:
+        return int(linhas[0]) if linhas else 0
+    except ValueError:
         return 0
+
+
+def gravador_criado_em() -> float:
+    """Quando o laco do gravador nasceu (epoch), gravado na 2a linha do `gravador.pid`.
+
+    Arquivo antigo (so' o pid): vale a hora do ARQUIVO como piso — e' o suficiente para provar que um
+    pid nao foi reciclado (um pid reciclado nasceu DEPOIS do arquivo). 0.0 = nao sei.
+    """
+    linhas = _linhas_do_pid()
+    if len(linhas) >= 2:
+        try:
+            return float(linhas[1])
+        except ValueError:
+            return 0.0
+    try:
+        return _arquivo_do_pid().stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _laco_vivo() -> bool:
+    """O laco do gravador esta' de pe' **E e' o NOSSO** (pid + hora de criacao)?
+
+    Um pid sozinho nao serve (o Windows recicla numero): sem a hora de criacao, um pid reciclado faz
+    o supervisor achar que o gravador esta' no ar quando o dono dele ja' morreu.
+    """
+    pid = gravador_pid()
+    if pid <= 0:
+        return False
+    return processos.mesmo_processo(pid, gravador_criado_em())
 
 
 def _subir_gravador():
     """Sobe o laco do gravador DESACOPLADO do servidor de captura. 0 = ja' estava de pe'."""
-    if _pid_vivo(gravador_pid()):
+    if _laco_vivo():
         return 0
     diretorio().mkdir(parents=True, exist_ok=True)
     try:
@@ -244,7 +296,8 @@ def _subir_gravador():
         _log(f"aviso: nao consegui subir o gravador ({e})")
         return 0
     try:
-        _arquivo_do_pid().write_text(str(p.pid), encoding="utf-8")
+        # (pid, hora de criacao) — e' o que permite, depois, dizer se o pid de agora ainda e' ESTE laco.
+        _arquivo_do_pid().write_text(f"{p.pid}\n{processos.criado_em(p.pid)}", encoding="utf-8")
     except Exception:
         pass
     _log(f"gravador subido pelo desejo do admin (pid {p.pid})")
@@ -253,7 +306,13 @@ def _subir_gravador():
 
 def _parar_gravador() -> bool:
     pid = gravador_pid()
-    if not _pid_vivo(pid):
+    if not _laco_vivo():
+        # nao e' o nosso laco (ou ja' morreu): NAO se mata nada. O pid gravado pode ter sido reciclado
+        # pelo Windows e pertencer a outro processo — apagar o carimbo e' o certo aqui.
+        try:
+            _arquivo_do_pid().unlink()
+        except Exception:
+            pass
         return False
     try:
         if os.name == "nt":
@@ -297,8 +356,7 @@ def gravando_agora() -> bool:
     Nao basta o desejo: sem quadro chegando nao ha' bloco novo, e a tela nao pode dizer "gravando"."""
     if not ligada():
         return False
-    pid = gravador_pid()
-    if pid and not _pid_vivo(pid):
+    if not _laco_vivo():
         return False
     bs = blocos()
     if not bs:
@@ -315,19 +373,33 @@ def gravando_agora() -> bool:
 # propõe) · D2 GB · D3 um disco só grava nele, com dois ou mais o admin escolhe" · D4 · D5 · D6.
 # O BORDO mede os discos e PROPÕE (vão no retrato e no catálogo); o ADMIN escolhe na tela; o comando volta
 # pelo caminho que já existe (config publicada → o bordo olha → a rota local chama `definir_escolha`).
-# O ARQUIVO da escolha mora em lugar FIXO (a pasta do aplicativo) — se morasse no disco escolhido, trocar de
-# disco apagaria a própria escolha. Nada do que foi gravado é movido (D3).
-CONFIG_DO_HD = RAIZ / "ground" / "hd" / "config.json"
+# O ARQUIVO da escolha mora em lugar FIXO — mas FORA da pasta de instalacao. Se morasse NO disco
+# escolhido, trocar de disco apagaria a propria escolha; e se morasse na pasta do aplicativo
+# (`resources/servidor/...`), a ATUALIZACAO a apagaria: MEDIDO em 27/11/2026, ao passar de 0.28.1 para
+# 0.29.0 a escolha de `D:\` sumiu (`origem_da_escolha: padrao`) e a gravacao voltou para a pasta do
+# pacote. Por isso a escolha vai para a pasta do USUARIO (`LECSOR_HD_CONFIG`, que o app aponta — mesma
+# ideia do banco em `LECSOR_BANCO`); sem a variavel (bancada), vale a pasta do codigo. Nada do que foi
+# gravado e' movido (D3).
+def _config_do_hd() -> pathlib.Path:
+    v = (os.environ.get("LECSOR_HD_CONFIG") or "").strip()
+    return pathlib.Path(v) if v else (RAIZ / "ground" / "hd" / "config.json")
+
+
+CONFIG_DO_HD = _config_do_hd()
+_PADRAO_DO_PACOTE = RAIZ / "ground" / "hd" / "config.json"   # onde a escolha morava (leitura de resgate)
 PASTA_NO_DISCO = "lecsor-radar"
 COTA_MINIMA_GB, COTA_MAXIMA_GB = 0.1, 100000.0
 
 
 def _ler_escolha() -> dict:
-    try:
-        d = json.loads(CONFIG_DO_HD.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    return d if isinstance(d, dict) else {}
+    for caminho in (CONFIG_DO_HD, _PADRAO_DO_PACOTE):
+        try:
+            d = json.loads(caminho.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(d, dict) and d:
+            return d
+    return {}
 
 
 def escolha() -> dict:
@@ -625,6 +697,14 @@ def blocos_no_intervalo(de: str, ate: str) -> list[dict]:
     return [b for b in blocos() if d0 <= dt.datetime.fromisoformat(b["inicio"]) <= d1]
 
 
+def _segundos_desde(iso: str) -> float:
+    """Segundos inteiros desde um carimbo ISO local; -1.0 se nao der para ler (nunca explode a tela)."""
+    try:
+        return max(0.0, (dt.datetime.now() - dt.datetime.fromisoformat(iso)).total_seconds())
+    except Exception:
+        return -1.0
+
+
 def resumo() -> dict:
     """Estado do HD do radar: quantos blocos, o primeiro, o ultimo, quanto ocupa, quanto ha' livre."""
     bs = blocos()
@@ -659,6 +739,15 @@ def resumo() -> dict:
             # laco (o desejo e' `ligada`), e e' o que o `garantir()` usa para reerguer.
             "relay": relay_ligado(), "relay_fluxo": (fluxo_do_relay() if relay_ligado() else ""),
             "relay_url": (url_do_relay() if relay_ligado() else ""), "gravador_de_pe": gravador_de_pe(),
+            # A IDENTIDADE do laco (dono, 27/11/2026): a tela e o catalogo de terra mostram QUEM e' o
+            # gravador — sem isto, um pid sozinho nao diz se o laco de agora e' o mesmo que subiu. Junto
+            # vai o que a tela precisava para nao so' dizer "parado": quando foi o ultimo bloco e o
+            # motivo declarado de nao estar de pe'.
+            "laco_pid": gravador_pid(), "laco_criado_em": gravador_criado_em(),
+            "ultimo_bloco_em": (bs[-1]["fim"] if bs else ""),
+            "segundos_sem_bloco": (_segundos_desde(bs[-1]["fim"]) if bs else None),
+            "motivo_de_nao_subir": ("desligada" if not ligada()
+                                    else ("" if _laco_vivo() else "o laco do gravador nao esta' de pe'")),
             "proximo_bloco_em": (max(0.0, bloco_segundos() - (time.time() % bloco_segundos()))
                                  if ligada() else 0.0)}
 
@@ -787,7 +876,8 @@ def rodar(uma_vez: bool = False) -> int:
          f"(origem {origem()}{', nome ' + r0['nome'] if r0.get('nome') else ''}) · "
          f"blocos de {bloco_segundos()}s em {diretorio()}")
     try:
-        _arquivo_do_pid().write_text(str(os.getpid()), encoding="utf-8")
+        # (pid, hora de criacao): o laco se identifica — o mesmo par que o supervisor confere depois.
+        _arquivo_do_pid().write_text(f"{os.getpid()}\n{processos.criado_em(os.getpid())}", encoding="utf-8")
     except Exception:
         pass
     proc = None

@@ -14,7 +14,11 @@ CREATE TABLE IF NOT EXISTS ingestoes (
   bitrate_entrada_kbps REAL, bitrate_saida_kbps REAL, corte_pct REAL,
   fps REAL, velocidade REAL, tamanho_mb REAL, duracao_s REAL,
   estado TEXT DEFAULT 'iniciando',   -- iniciando | no_ar | parado | erro
-  pid INTEGER, erro TEXT, log TEXT,
+  pid INTEGER,
+  -- hora de criacao do processo (epoch): `pid` sozinho NAO e' identidade (o Windows recicla numero);
+  -- e' o par (pid, pid_criado_em) que prova, antes de matar, que o processo e' o ffmpeg DESTA linha.
+  pid_criado_em REAL,
+  erro TEXT, log TEXT,
   srt_host TEXT,                     -- onde o fluxo foi publicado (127.0.0.1 = esta maquina; IP = lado terra)
   criado_em TEXT, atualizado_em TEXT, parado_em TEXT,
   -- Declaracao que o PC de captura manda JUNTO com o video (POST /api/envios/anuncio): quando o lado

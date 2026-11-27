@@ -30,6 +30,10 @@ function lerConfig() {
   // O banco local fica na pasta do usuario: sobrevive a atualizacao do aplicativo (dentro da pasta de
   // instalacao ele seria apagado/reiniciado a cada versao nova).
   process.env.LECSOR_BANCO = process.env.LECSOR_BANCO || path.join(app.getPath('userData'), 'pipeline.db');
+  // A escolha do HD (disco + cota) tambem mora na pasta do usuario: dentro da pasta de instalacao ela
+  // era apagada a cada atualizacao (medido em 27/11/2026, de 0.28.1 para 0.29.0: a escolha de `D:\`
+  // sumiu e a gravacao voltou para a pasta do pacote).
+  process.env.LECSOR_HD_CONFIG = process.env.LECSOR_HD_CONFIG || path.join(app.getPath('userData'), 'hd-escolha.json');
   let doUsuario = null;
   try { doUsuario = JSON.parse(fs.readFileSync(caminhoConfig(), 'utf8')); } catch (e) { doUsuario = null; }
   // A resolução (fábrica do papel + o que o usuário gravou) mora em `configuracao.js`, testável sem

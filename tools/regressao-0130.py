@@ -20,6 +20,15 @@ RAIZ = pathlib.Path(__file__).resolve().parent.parent
 # `ambiente.json` que esta' no repositorio, e passaria a falar com a producao em vez de responder em casa.
 os.environ["LECSOR_SEM_AMBIENTE"] = "1"
 PROVAS = (
+    # RODADA 0.30.0 — UM PID SOZINHO NAO E' IDENTIDADE: o gravador do HD voltava a morrer por `signal 15`
+    # (dono, 27/11/2026: *"4 blocos no hd e o gravador nao esta' de pe'"*, com o `gravador.log` mostrando
+    # 4x `Exiting normally, received signal 15`). MEDIDO nesta bancada: `os.kill(pid, 0)` no **Windows
+    # MATA** o processo (chama `TerminateProcess`) — entao TODA checagem de vida do gravador derrubava o
+    # laco que estava conferindo e o `_subir_gravador` dizia "ja' estava de pe'". A rodada passa a matar
+    # por IDENTIDADE `(pid, hora de criacao)` (pid reciclado = nao e' o nosso = nao se mata), conserta o
+    # `parar()` que derrubava o ffmpeg do gravador por pid velho de linha, e faz a ESCOLHA DO HD
+    # sobreviver a atualizacao (a escolha de `D:\` sumia ao passar de 0.28.1 para 0.29.0).
+    "tests/test-identidade-de-processo.py",
     # RODADA 0.29.0 — O GRAVADOR E' O DONO DA CAMERA DO RADAR: O RELE' E O SUPERVISOR (incidente do dono,
     # 27/11/2026: no app de captura, *"radar - parado - 5 bloco(s) no HD - a gravacao full-time esta'
     # ligada (desejo do admin), mas o gravador NAO esta' de pe'"*). A causa foi MEDIDA: o `gravador.log`

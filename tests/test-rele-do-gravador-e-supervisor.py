@@ -118,7 +118,10 @@ def main() -> int:  # noqa: C901
            "sem deixar de soltar quem segura a camera (a funcao nao virou inutil)")
 
     # 5) o vivo LE' o rele' quando a camera e' a do gravador
+    #    (identidade: pid + hora de criacao — um pid sozinho nao basta, o Windows recicla numero)
+    import processos as _pr   # noqa: PLC0415
     g.gravador_pid = lambda: os.getpid()      # um pid VIVO (este processo) = o laco de pe'
+    g.gravador_criado_em = lambda: _pr.criado_em(os.getpid())
     try:
         exigir(g.gravador_de_pe() is True, "com o pid do laco vivo, `gravador_de_pe()` e' True (a MEDIDA)")
         exigir(g.dono_da_camera("cam-radar-de-teste") is True,
@@ -132,6 +135,7 @@ def main() -> int:  # noqa: C901
                "e o `iniciar()` enxerga o rele' (nao passa por `liberar_camera`)")
     finally:
         g.gravador_pid = lambda: 0
+        g.gravador_criado_em = lambda: 0.0
     exigir(g.gravador_de_pe() is False and g.dono_da_camera("cam-radar-de-teste") is False,
            "sem o laco de pe', nada de rele': o vivo volta a abrir a camera (nunca fica mudo)")
     exigir(ing._rele_do_gravador("cam-radar-de-teste") == "",

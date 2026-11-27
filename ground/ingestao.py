@@ -14,6 +14,7 @@ import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ferramentas import caminho_banco, caminho_ffmpeg, caminho_ffprobe  # noqa: E402  (embutidos no app)
 import segredo_camera  # noqa: E402  (segredo da camera de rede: vive SO' no PC de captura)
+import processos  # noqa: E402  (identidade de processo: um pid sozinho NAO e' identidade)
 
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -40,7 +41,10 @@ def garantir_schema():
         c.executescript(sql)
         # colunas novas em banco que ja existia (CREATE TABLE IF NOT EXISTS nao altera tabela pronta)
         for coluna, tipo in (("srt_host", "TEXT"), ("declarado_em", "TEXT"),
-                             ("declarado_por", "TEXT"), ("recebido_em", "TEXT")):
+                             ("declarado_por", "TEXT"), ("recebido_em", "TEXT"),
+                             # hora de criacao do processo (epoch): e' o que permite provar, antes de
+                             # matar, que o pid da linha ainda e' o ffmpeg DESTA ingestao (dono, 27/11/2026)
+                             ("pid_criado_em", "REAL")):
             try:
                 c.execute(f"ALTER TABLE ingestoes ADD COLUMN {coluna} {tipo}")
             except sqlite3.OperationalError:
@@ -345,9 +349,9 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
                          args=(proc, fonte, radar_modo, radar_taxa, fps, fluxo_id), daemon=True).start()
     with conexao() as c:
         cur = c.execute("""INSERT INTO ingestoes (fluxo_id, camera_id, rotulo, fonte, tipo, repetir, codec,
-              bitrate_alvo, resolucao, fps_nativo, bitrate_entrada_kbps, estado, pid, log, srt_host,
-              criado_em, atualizado_em)
-              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+              bitrate_alvo, resolucao, fps_nativo, bitrate_entrada_kbps, estado, pid, pid_criado_em, log,
+              srt_host, criado_em, atualizado_em)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (fluxo_id, camera_id, rotulo or slug,
              origem_pagina or (f"dshow:{dispositivo or DISPOSITIVO_PADRAO}" if tipo == "camera"
                                else f"rtsp:{dispositivo}" if tipo == "rede"
@@ -355,7 +359,9 @@ def iniciar(fonte: str, *, rotulo: str, fluxo_id: str | None = None, bitrate: st
                                else f"radar:{fonte}:{radar_modo}:{radar_taxa}" if tipo == "radar"
                                else fonte),
              tipo, 1 if repetir else 0, codec, bitrate,
-             s.get("resolucao"), s.get("fps"), s.get("bitrate_kbps"), "iniciando", proc.pid, str(log),
+             s.get("resolucao"), s.get("fps"), s.get("bitrate_kbps"), "iniciando", proc.pid,
+             # a hora de criacao e' a IDENTIDADE: um pid sozinho nao basta (o Windows recicla numero)
+             processos.criado_em(proc.pid), str(log),
              srt_host, agora(), agora()))
         ident = cur.lastrowid
         if tipo in ("camera", "sintetica", "rede"):
@@ -579,13 +585,23 @@ def parar(ident: int, remover_camera: bool = False) -> dict:
         # foi da rede (reabre) ou se foi a tela que desligou (nao reabre). A ordem evita corrida.
         c.execute("UPDATE ingestoes SET estado='parado', parado_em=?, atualizado_em=? WHERE id=?", (agora(), agora(), ident))
         if r["pid"]:
-            try:
-                os.kill(r["pid"], signal.SIGTERM)
-            except Exception:
+            pid = int(r["pid"])
+            # MATAR POR IDENTIDADE (dono, 27/11/2026). O Windows RECICLA numero de pid: este `os.kill`
+            # chegou a matar o ffmpeg do GRAVADOR do HD lendo o pid de uma linha VELHA — no PC real
+            # sairam 4 blocos de 1 s e o HD parou. Agora so' se mata o processo FFMPEG DESTA ingestao,
+            # provado pela hora de criacao; na duvida, NAO se mata nada (e fica registrado no log).
+            if processos.mesmo_processo(pid, _criado_em_da_linha(r)):
                 try:
-                    subprocess.run(["taskkill", "/F", "/PID", str(r["pid"])], capture_output=True)
+                    os.kill(pid, signal.SIGTERM)
                 except Exception:
-                    pass
+                    try:
+                        subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
+                    except Exception:
+                        pass
+            else:
+                reciclado = " (o pid foi reciclado pelo Windows)" if processos.vivo(pid) else " (ja' havia morrido)"
+                print(f"[envios] {ident}: nao matei o pid {pid}{reciclado}: nao e' o processo desta ingestao",
+                      flush=True)
         if remover_camera and r["camera_id"]:
             c.execute("DELETE FROM cameras WHERE id=?", (r["camera_id"],))
         # parar de verdade = soltar o dispositivo: sem isso a webcam ficava presa e o proximo
@@ -1272,14 +1288,16 @@ def _camera_em_uso(dispositivo: str | None, validade_s: int = 12) -> dict | None
     """Diz se algum envio VIVO ainda esta segurando a mesma webcam (dshow nao compartilha o dispositivo)."""
     alvo = f"dshow:{_normalizar_dispositivo(dispositivo or DISPOSITIVO_PADRAO)}"
     with conexao() as c:
-        for r in c.execute("""SELECT id, fluxo_id, rotulo, estado, atualizado_em, fonte, pid FROM ingestoes
+        for r in c.execute("""SELECT id, fluxo_id, rotulo, estado, atualizado_em, fonte, pid, pid_criado_em
+                              FROM ingestoes
                               WHERE tipo='camera' AND fonte=? ORDER BY id DESC LIMIT 10""", (alvo,)):
             d = dict(r)
             if d["estado"] not in ("no_ar", "no ar", "iniciando"):
                 continue
             # o processo tem que estar VIVO: depois de reiniciar a API o registro fica 'no_ar' mas o
-            # ffmpeg morreu junto, e sem isso a camera parecia ocupada para sempre.
-            if not _processo_vivo(d.get("pid")):
+            # ffmpeg morreu junto, e sem isso a camera parecia ocupada para sempre. E tem que ser o
+            # MESMO processo (`_linha_viva`): um pid reciclado faria a camera parecer presa por outro.
+            if not _linha_viva(d):
                 continue
             try:
                 idade = time.time() - dt.datetime.fromisoformat(d["atualizado_em"]).timestamp()
@@ -1402,6 +1420,32 @@ def _envio_vivo_do_fluxo(fluxo_id: str) -> dict | None:
     return None
 
 
+def _criado_em_da_linha(linha) -> float:
+    """A hora de criacao (epoch) do processo desta ingestao, gravada ao subir. 0.0 = nao sei.
+
+    Linha antiga (sem o campo) devolve 0.0 — e `processos.mesmo_processo` com 0.0 diz "nao da' para
+    provar", que e' o certo: nao se derruba processo alheio por causa de linha velha.
+    """
+    try:
+        return float(linha["pid_criado_em"] or 0.0)
+    except Exception:
+        return 0.0
+
+
+def _linha_viva(d) -> bool:
+    """O processo DESTA linha de `ingestoes` ainda esta' de pe' **e e' o mesmo** (pid nao basta)?
+
+    Sem `pid_criado_em` (linha antiga) cai no `_processo_vivo` de sempre: aqui o lado seguro e' NAO
+    declarar a camera livre (soltar por engano derruba um envio vivo), entao um campo ausente nao vira
+    "morto". Com o campo, um pid reciclado (a criacao de agora e' muito mais nova) conta como morto.
+    """
+    pid = d.get("pid")
+    if not _processo_vivo(pid):
+        return False
+    criado = _criado_em_da_linha(d)
+    return processos.mesmo_processo(pid, criado) if criado else True
+
+
 def _processo_vivo(pid) -> bool:
     if not pid:
         return False
@@ -1414,11 +1458,9 @@ def _processo_vivo(pid) -> bool:
         saida = (bruto or b"").decode("utf-8", "ignore") or (bruto or b"").decode("cp850", "ignore")
         return str(int(pid)) in saida
     except Exception:
-        try:
-            os.kill(int(pid), 0)
-            return True
-        except OSError:
-            return False
+        # NAO usar `os.kill(pid, 0)` aqui: MEDIDO em 27/11/2026 que no Windows ele MATA o processo
+        # (`TerminateProcess`), nao apenas responde "existe". `processos.vivo` so' OLHA.
+        return processos.vivo(pid)
 
 
 def limpar_vivos_mortos() -> int:

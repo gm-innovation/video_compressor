@@ -265,6 +265,34 @@ def main() -> int:  # noqa: C901
            f"({linhas[0].get('usado_pct') if linhas else None}, erro={linhas[0].get('erro') if linhas else None})")
     os.environ.pop("LECSOR_HD_DIR", None)
 
+    # 12) a ESCOLHA sobrevive a ATUALIZACAO do app. MEDIDO em 27/11/2026: ao passar de 0.28.1 para
+    #     0.29.0 a escolha de `D:\` sumiu (`origem_da_escolha: padrao`) — o arquivo morava DENTRO da
+    #     pasta de instalacao (troca a cada versao). Agora ele mora na pasta do usuario
+    #     (`LECSOR_HD_CONFIG`, que o app aponta) e a escolha ANTIGA e' resgatada (nao se perde a atualizacao).
+    antigo_cfg, antigo_padrao = g.CONFIG_DO_HD, g._PADRAO_DO_PACOTE
+    try:
+        usuario = tmp / "usuario"
+        usuario.mkdir(parents=True, exist_ok=True)
+        novo = usuario / "hd-escolha.json"
+        velho = tmp / "antigo-pacote" / "config.json"
+        velho.parent.mkdir(parents=True, exist_ok=True)
+        velho.write_text(json.dumps({"disco": "D:\\", "pasta": str(tmp / "D" / "lecsor-radar"),
+                                     "cota_gb": 400, "origem": "admin"}), encoding="utf-8")
+        g.CONFIG_DO_HD, g._PADRAO_DO_PACOTE = novo, velho
+        exigir(g.escolha().get("cota_gb") == 400.0,
+               "a escolha ANTIGA (gravada dentro da pasta do pacote) e' RESGATADA — a atualizacao nao perde a escolha")
+        novo.write_text(json.dumps({"disco": "D:\\", "pasta": str(tmp / "D" / "lecsor-radar"),
+                                    "cota_gb": 500, "origem": "admin"}), encoding="utf-8")
+        exigir(g.escolha().get("cota_gb") == 500.0, "e a escolha NOVA (pasta do usuario) vence a antiga")
+    finally:
+        g.CONFIG_DO_HD, g._PADRAO_DO_PACOTE = antigo_cfg, antigo_padrao
+    os.environ["LECSOR_HD_CONFIG"] = str(tmp / "escolha-no-usuario.json")
+    exigir(g._config_do_hd() == tmp / "escolha-no-usuario.json",
+           "`LECSOR_HD_CONFIG` tira a escolha da pasta de instalacao (o app aponta para a pasta do usuario)")
+    os.environ.pop("LECSOR_HD_CONFIG", None)
+    exigir(g._config_do_hd() == g.RAIZ / "ground" / "hd" / "config.json",
+           "sem a variavel (bancada), a escolha volta para a pasta do codigo")
+
     shutil.rmtree(tmp, ignore_errors=True)
     print()
     if falhas:
