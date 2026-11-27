@@ -69,6 +69,113 @@ RAIZ = pathlib.Path(__file__).resolve().parent.parent
 NOME_BLOCO = re.compile(r"^bloco-(\d{8})-(\d{6})\.mp4$")
 LOG_DIR = RAIZ / "ground" / "hd"
 
+# ------------------------------------------------------------------ O RELE' (dono, 27/11/2026)
+# A camera do radar so' abre UMA vez (dshow) e o GRAVADOR e' quem a segura 24h. Sem isto, quando o
+# cliente pedia o vivo da MESMA camera o app "liberava" o dispositivo (matando o gravador — medido em
+# 27/11/2026: 5 blocos de 1 s e o laco morto) ou o vivo nao subia. Com o rele', o gravador PUBLICA o
+# fluxo que ja' comprimiu no mediamtx DESTA maquina, e o vivo le' dali — ninguem abre a camera duas
+# vezes. O caminho do rele' tem prefixo fixo e NAO entra no repasse para o lado terra (senao a banda
+# iria embora 24h por dia): quem publica para o mundo e' o envio do vivo, so' quando alguem pede.
+PREFIXO_DO_RELAY = "gravador-"
+MEDIAMTX_RTSP = "127.0.0.1:8554"     # `rtspAddress` do ground/mediamtx.yml
+MEDIAMTX_SRT = "127.0.0.1:8890"      # `srtAddress` do ground/mediamtx.yml
+
+
+def relay_ligado() -> bool:
+    """O rele' nasce LIGADO (e' o que deixa o gravador e o vivo conviverem). `LECSOR_HD_RELAY=0` desliga."""
+    v = (os.environ.get("LECSOR_HD_RELAY") or "").strip().lower()
+    return v not in ("0", "nao", "não", "no", "false", "off")
+
+
+def _endereco_do_mediamtx(qual: str) -> str:
+    if qual == "srt":
+        return (os.environ.get("LECSOR_MEDIAMTX_SRT") or "").strip() or MEDIAMTX_SRT
+    return (os.environ.get("LECSOR_MEDIAMTX_RTSP") or "").strip() or MEDIAMTX_RTSP
+
+
+def fluxo_do_relay() -> str:
+    """O nome do caminho no mediamtx local: `gravador-<fluxo_id da camera do radar>`.
+
+    Usa o `fluxo_id` do cadastro (o mesmo nome que o vivo publica) para a tela e o mediamtx falarem a
+    mesma lingua; sem cadastro, cai no `camera_id` e, em ultimo caso, no rotulo do perfil.
+    """
+    cam = camera_id()
+    fluxo = ""
+    try:
+        db = _modulo_da_api()
+        if db:
+            with db.conexao() as c:
+                r = c.execute("SELECT fluxo_id FROM cameras WHERE id=?", (cam,)).fetchone()
+                if r:
+                    fluxo = str(r["fluxo_id"] or "").strip()
+    except Exception:
+        fluxo = ""
+    return PREFIXO_DO_RELAY + (fluxo or cam or "radar")
+
+
+def url_do_relay() -> str:
+    """Onde o vivo LE' o fluxo do gravador (RTSP no mediamtx desta maquina)."""
+    return f"rtsp://{_endereco_do_mediamtx('rtsp')}/{fluxo_do_relay()}"
+
+
+def destino_do_relay() -> str:
+    """Para onde o gravador PUBLICA (SRT no mediamtx desta maquina, mesma forma do envio do vivo)."""
+    return (f"srt://{_endereco_do_mediamtx('srt')}?mode=caller&latency=200&pkt_size=1316"
+            f"&streamid=publish:{fluxo_do_relay()}")
+
+
+def camera_do_gravador() -> str:
+    """A camera cujo dispositivo o gravador segura (para o vivo saber de quem e' a camera)."""
+    return camera_id()
+
+
+def gravador_de_pe() -> bool:
+    """O laco do gravador esta' VIVO agora (a medida, nao o desejo)."""
+    return _pid_vivo(gravador_pid())
+
+
+def dono_da_camera(camera_id_ou_fluxo: str) -> bool:
+    """Esta camera e' a do gravador E o gravador esta' de pe'? (o vivo tem de ler o rele').
+
+    Compara por id e por `fluxo_id`: a tela do cliente e o agente do bordo falam dos dois jeitos.
+    """
+    alvo = str(camera_id_ou_fluxo or "").strip()
+    if not alvo or not relay_ligado() or not gravador_de_pe():
+        return False
+    meu = camera_do_gravador()
+    if alvo in (meu, fluxo_do_relay(), PREFIXO_DO_RELAY + meu):
+        return True
+    try:
+        db = _modulo_da_api()
+        if db:
+            with db.conexao() as c:
+                r = c.execute("SELECT id, fluxo_id FROM cameras WHERE id=? OR fluxo_id=?",
+                              (alvo, alvo)).fetchone()
+                if r and str(r["id"]) == meu:
+                    return True
+    except Exception:
+        return False
+    return False
+
+
+def garantir() -> dict:
+    """O gravador TEM de estar de pe' enquanto o desejo do admin for LIGADO.
+
+    Medido em 27/11/2026: o laco morreu calado as 13:20:29 (o `gravador.pid` ficou no disco e ninguem
+    o reergueu) — o HD ficou sem blocos novos e a tela so' dizia "nao esta' de pe'". Quem chama isto e'
+    o servidor, de tempo em tempo.
+    """
+    if not ligada():
+        return {"ok": True, "ligada": False, "motivo": "desligada pelo desejo"}
+    if not dispositivo():
+        r = resolucao(recarregar=True)
+        return {"ok": False, "ligada": True, "motivo": f"sem dispositivo de video: {r.get('motivo') or ''}"}
+    subido = _subir_gravador()   # 0 = ja' estava de pe'
+    if subido:
+        _log(f"gravador reerguido (pid {subido}) — o laco anterior tinha morrido com o desejo ligado")
+    return {"ok": True, "ligada": True, "subido": subido, "pid": gravador_pid(),
+            "gravando": gravando_agora()}
+
 
 def _arquivo_do_desejo() -> pathlib.Path:
     """O DESEJO do admin (ligar/desligar) mora em ARQUIVO, dentro do HD da gravacao (dono, 26/11/2026).
@@ -547,6 +654,11 @@ def resumo() -> dict:
             "blocos": len(bs), "bytes": usado,
             "primeiro": bs[0]["inicio"] if bs else "", "ultimo": bs[-1]["inicio"] if bs else "",
             "livre_bytes": livre, "total_bytes": total,
+            # O RELE' (dono, 27/11/2026): com ele a camera que o gravador ja' segura tambem alimenta o
+            # vivo — a tela mostra que o vivo NAO esta' abrindo o dispositivo. `de_pe` e' a MEDIDA do
+            # laco (o desejo e' `ligada`), e e' o que o `garantir()` usa para reerguer.
+            "relay": relay_ligado(), "relay_fluxo": (fluxo_do_relay() if relay_ligado() else ""),
+            "relay_url": (url_do_relay() if relay_ligado() else ""), "gravador_de_pe": gravador_de_pe(),
             "proximo_bloco_em": (max(0.0, bloco_segundos() - (time.time() % bloco_segundos()))
                                  if ligada() else 0.0)}
 
@@ -588,9 +700,50 @@ def manter_anel(quantos: int = 1) -> list[str]:
 
 
 # ---------------------------------------------------------------------------------------- gravador
+def _escapar_no_tee(caminho: "str | pathlib.Path") -> str:
+    r"""Caminho do Windows dentro do spec do muxer `tee`: barras normais e `:` escapado.
+
+    Medido no prototipo de 27/11/2026: sem isto o ffmpeg entende o `:` do `C:\` como separador de
+    opcao do tee e o destino sai errado. O `\` tambem precisa virar `/`.
+    """
+    return str(caminho).replace("\\", "/").replace(":", "\\:")
+
+
+def especificacao_do_tee(blocos: pathlib.Path, relay: bool | None = None) -> str:
+    """O spec do `tee` do gravador: bloco no HD (primeiro) + relé no mediamtx local (segundo).
+
+    UM encode, DOIS destinos — provado em 27/11/2026 (prototipo): os blocos saem no HD e o fluxo
+    aparece no mediamtx local (`gravador-...`), sem reencode e sem custo de CPU dobrado.
+    """
+    if relay is None:
+        relay = relay_ligado()
+    segundos = bloco_segundos()
+    spec = ("[f=segment:segment_time=" + str(segundos) + ":segment_atclocktime=1:reset_timestamps=1:"
+            "strftime=1:segment_format_options=movflags=+frag_keyframe+empty_moov+default_base_moof]"
+            + _escapar_no_tee(blocos))
+    if relay:
+        # SRT no mediamtx DESTA maquina (mesma forma que o envio do vivo usa). Os `:` do URL entram
+        # escapados porque dentro do tee eles separam opcao.
+        spec += "|[f=mpegts]" + destino_do_relay().replace(":", "\\:")
+    return spec
+
+
 def comando_do_gravador() -> list:
     p = perfil()
     d = diretorio()
+    if relay_ligado():
+        # COM O RELE': o mesmo comando de sempre, mas o muxer vira `tee` e o bloco vira o PRIMEIRO
+        # destino (o nome e os parametros do segmento moram dentro do spec — ver `especificacao_do_tee`).
+        return ["ffmpeg", "-hide_banner", "-nostdin",
+                "-rtbufsize", "512M",
+                "-f", "dshow", "-framerate", p["fps"], "-video_size", p["resolucao"],
+                "-i", f"video={dispositivo()}",
+                "-an",
+                "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+                "-b:v", p["bitrate"], "-maxrate", p["bitrate"], "-bufsize", "2M",
+                "-g", p["fps"],
+                "-f", "tee", "-map", "0:v",
+                especificacao_do_tee(d / "bloco-%Y%m%d-%H%M%S.mp4")]
     return ["ffmpeg", "-hide_banner", "-nostdin",
             "-rtbufsize", "512M",
             "-f", "dshow", "-framerate", p["fps"], "-video_size", p["resolucao"],

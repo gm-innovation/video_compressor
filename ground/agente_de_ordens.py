@@ -265,6 +265,30 @@ def _ligado(cam_id: str) -> str:
     return alvo
 
 
+def alvo_da_camera(cam_id: str) -> str:
+    """O alvo (kbps) GRAVADO nesta camera AQUI NO BORDO — o que o envio usa de verdade.
+
+    A config publicada ja' foi aplicada nesta maquina (`aplicar_config_local` escreve `cameras.alvo`);
+    mandar esse numero para o lado terra e' o que faz o menu da qualidade do admin mostrar o valor REAL
+    em vez de voltar ao padrao (defeito do dono, 3a vez, 27/11/2026).
+    """
+    try:
+        import sqlite3
+        if str(RAIZ / "ground") not in sys.path:
+            sys.path.insert(0, str(RAIZ / "ground"))
+        from ferramentas import caminho_banco
+        c = sqlite3.connect(caminho_banco(), timeout=10)
+        c.row_factory = sqlite3.Row
+        try:
+            linha = c.execute("SELECT alvo FROM cameras WHERE id=? OR fluxo_id=? LIMIT 1",
+                              (cam_id, cam_id)).fetchone()
+        finally:
+            c.close()
+        return str(linha["alvo"] or "") if linha else ""
+    except Exception:  # noqa: BLE001  (banco ausente/torto: nao derruba o atendimento)
+        return ""
+
+
 def estado_gravado_do_fluxo(fluxo_id: str) -> str:
     """Ultimo estado GRAVADO do fluxo no banco do bordo ("" quando nao da' para ler)."""
     try:
@@ -327,6 +351,7 @@ def aplicar_flag(cameras: list, local: str, base: str, token: str, emb: str) -> 
                    "desde": (time.strftime("%Y-%m-%dT%H:%M:%S",
                                            time.localtime(LIGADOS.get(fluxo_agora, {}).get("desde", time.time())))
                              if fluxo_agora else ""),
+                   "alvo": alvo_da_camera(cam_id),
                    "versao_desejo": int((cam or {}).get("versao") or 0)}
         # GRAVANDO A BORDO (dono, 26/11/2026): a medida e' DESTA maquina. Nao consegui medir (None) =
         # a chave NAO vai — em terra isso fica "nao medido", nunca "desligado".

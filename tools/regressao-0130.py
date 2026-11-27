@@ -20,6 +20,18 @@ RAIZ = pathlib.Path(__file__).resolve().parent.parent
 # `ambiente.json` que esta' no repositorio, e passaria a falar com a producao em vez de responder em casa.
 os.environ["LECSOR_SEM_AMBIENTE"] = "1"
 PROVAS = (
+    # RODADA 0.29.0 — O GRAVADOR E' O DONO DA CAMERA DO RADAR: O RELE' E O SUPERVISOR (incidente do dono,
+    # 27/11/2026: no app de captura, *"radar - parado - 5 bloco(s) no HD - a gravacao full-time esta'
+    # ligada (desejo do admin), mas o gravador NAO esta' de pe'"*). A causa foi MEDIDA: o `gravador.log`
+    # tem 5 execucoes do ffmpeg e as 5 terminam em `received signal 15` — o app MATAVA o gravador porque
+    # o vivo abria a MESMA camera (`liberar_camera()` mata quem tem `video=<camera>` na linha de comando),
+    # e depois o laco morreu calado sem ninguem reerguer. Agora o gravador publica o fluxo que ja'
+    # comprimiu no mediamtx local e o vivo LE' dali (relé, um encode so'), o `liberar_camera` nao encosta
+    # no gravador, e um supervisor reergue o laco com o desejo ligado. A MESMA rodada fecha o defeito da
+    # qualidade (dono, 3ª vez: *"quando altero a qualidade e aplico, ela nao persiste, retorna a
+    # anterior"*): o bordo passa a contar o alvo no estado real e o menu do admin le' a config PUBLICADA.
+    "tests/test-rele-do-gravador-e-supervisor.py",
+    "tests/test-alvo-do-bordo-chega-no-terra.py",
     # RODADA 0.28.0 — A TELEMETRIA EVIDENTE, O DISCO ESCOLHIDO E O PLAY DO TRECHO (dono, 27/11/2026:
     # "a telemetria do pc de captura precisa estar evidente no dashboard do admin, note que não tem disco
     # e nem rede" · "precisamos definir qual disco e quanto dele será utilizado para gravação" · "preciso

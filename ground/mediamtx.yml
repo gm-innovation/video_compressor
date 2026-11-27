@@ -35,6 +35,10 @@ api: yes
 apiAddress: 127.0.0.1:9997
 
 paths:
+  # O RELE' DO GRAVADOR (dono, 27/11/2026): a camera do radar e' segurada pelo GRAVADOR (24h) e o vivo
+  # le' daqui em vez de abrir o mesmo dispositivo. O prefixo `gravador-` fica de FORA do repasse: o
+  # gravador publica 24h por dia e repassar isto para terra seria banda dobrada sem ninguem pedindo.
+  "~^gravador-": {}
   all_others:
     # PC de captura: todo fluxo publicado aqui (camera ligada direto na maquina, ja' comprimido)
     # e' repassado para o lado terra quando LECSOR_DESTINO_SRT estiver definido (ex.: 187.127.60.250:8890).

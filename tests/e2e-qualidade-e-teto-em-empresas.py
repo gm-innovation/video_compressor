@@ -165,6 +165,15 @@ def main() -> int:
             checar("escolher 3,0 Mbps no cartão da câmera publica `alvo_kbps=3000` (o banco prova)",
                    publicado)
 
+            # ---- 4b) O DEFEITO DO DONO (3ª vez, 27/11/2026): "altero a qualidade, aplico e ela
+            #          retorna a anterior". As câmeras desta prova foram gravadas com `alvo='500k'` e o
+            #          LADO TERRA nunca recebe esse campo do bordo — o menu lia `cameras.alvo` e voltava
+            #          ao valor velho. Agora ele lê a config PUBLICADA (a mesma da linha "publicado ao
+            #          bordo"): publicamos 3000 e o menu TEM de continuar em 3000.
+            mostrado = adm.eval_on_selector("select[data-papel=alvo]", "s => s.value")
+            checar("publicar 3000 e o menu do cartão CONTINUA mostrando a qualidade publicada (o defeito era voltar ao valor velho)",
+                   mostrado == "3000", "no menu: %r (publicado: 3000)" % mostrado)
+
             # ---- 5) publicar o TETO pelo CARTÃO DA EMBARCAÇÃO ------------------------------------
             adm.fill("input[id^=cfg-teto-]", "50")
             adm.locator("button:has-text('Publicar teto')").first.click()

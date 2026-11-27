@@ -774,6 +774,11 @@ def guardar_estado_real(embarcacao_id: str, cameras: list, de=None) -> dict:
         motivo = str(item.get("motivo") or "")[:300]
         fluxo = str(item.get("fluxo_id") or "")[:80]
         desde = str(item.get("desde") or "")[:40]
+        # O ALVO QUE O BORDO REALMENTE USA (defeito do dono, 3a vez, 27/11/2026): `cameras.alvo` e' do
+        # lado terra e quem o escreve e' o PC de captura — o terra so' sabia o que o bordo anunciava, e o
+        # anuncio nao levava o alvo, entao o campo ficava VAZIO e a tela da qualidade voltava ao padrao.
+        # Agora o bordo conta o alvo que tem gravado e o terra guarda (campo vazio NAO apaga o que ha').
+        alvo_do_bordo = str(item.get("alvo") or "").strip()[:16]
         gravando_medido = 1 if ("gravando" in item) else 0
         gravando = 1 if item.get("gravando") else 0
         try:
@@ -791,6 +796,11 @@ def guardar_estado_real(embarcacao_id: str, cameras: list, de=None) -> dict:
                            versao_desejo=excluded.versao_desejo,
                            atualizado_em=excluded.atualizado_em""",
                       (cid, embarcacao_id, est, motivo, fluxo, desde, gravando, gravando_medido, versao, carimbo))
+            # O ALVO (kbps) que o BORDO usa vira o `cameras.alvo` daqui: e' o que a tela do admin mostra
+            # no menu da qualidade. So' quando o bordo manda um alvo — vazio nunca apaga o que ja' ha'.
+            if alvo_do_bordo:
+                c.execute("UPDATE cameras SET alvo=? WHERE id=? AND (alvo IS NULL OR alvo<>?)",
+                          (alvo_do_bordo, cid, alvo_do_bordo))
             mudou = (not antigo) or antigo["estado"] != est or (antigo["motivo"] or "") != motivo
             if est == "no_ar":
                 c.execute("""UPDATE transmissoes SET estado='no_ar',
@@ -2392,6 +2402,34 @@ def vigiar_transmissoes(intervalo: float = 5.0) -> None:
             _vigiar_uma_vez()
         except Exception as e:
             print("[api] aviso: vigia das transmissoes:", type(e).__name__, e, flush=True)
+        time.sleep(intervalo)
+
+
+def _gravador_em_loop(intervalo: float = 20.0) -> None:
+    """VIGIA DO GRAVADOR DO HD (dono, 27/11/2026): reergue o gravador com o desejo LIGADO.
+
+    Medido no PC real: o laco do gravador morreu calado as 13:20:29 (o `gravador.pid` ficou no disco,
+    nenhum ffmpeg de pe') e NADA foi gravado depois — a tela so' dizia "nao esta' de pe'" e ninguem
+    reerguia. Aqui, de tempo em tempo, com o desejo ligado e sem laco vivo, o gravador volta. E' o
+    irmao do vigia das transmissoes: um cuida do vivo, este cuida do HD do radar.
+    """
+    g = _modulo_da_gravacao_continua()
+    if not g:
+        return
+    # BANCADA/TESTE (`LECSOR_SEM_AMBIENTE`): nao ha' gravacao de verdade aqui e o desejo da pasta de
+    # trabalho nao vale — subir um gravador de teste so' sujaria a maquina. Na maquina de captura de
+    # verdade esta variavel NAO existe (o pacote carrega o `ambiente.json`).
+    if (os.environ.get("LECSOR_SEM_AMBIENTE") or "").strip() == "1":
+        return
+    time.sleep(6)
+    while True:
+        try:
+            r = g.garantir()
+            if r.get("subido"):
+                print(f"[api] gravador do HD reerguido (pid {r['subido']}) — o laco anterior tinha "
+                      f"morrido com o desejo ligado", flush=True)
+        except Exception as e:
+            print(f"[api] aviso: garantir o gravador do HD: {type(e).__name__}: {e}", flush=True)
         time.sleep(intervalo)
 
 
@@ -7027,6 +7065,9 @@ def principal() -> int:
     # Vigia da transmissao a pedido do cliente: fecha a sessao sem batimento (tela fechada /
     # computador desligado), corta no tempo maximo e libera a camera quando ninguem mais esta' vendo.
     threading.Thread(target=vigiar_transmissoes, daemon=True).start()
+    # VIGIA DO GRAVADOR DO HD (dono, 27/11/2026): com o desejo do admin LIGADO, o gravador tem de
+    # estar de pe'. No PC real o laco morreu calado e nada o reergueu (o HD ficou sem blocos novos).
+    threading.Thread(target=_gravador_em_loop, daemon=True).start()
     # gravacao que ficou com processo morto (a maquina reiniciou) e' marcada, sem apagar arquivo
     try:
         gravacao_modulo.limpar_orfas()

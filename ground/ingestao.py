@@ -901,6 +901,18 @@ def _args_fonte_viva(tipo: str, dispositivo: str | None, resolucao: str, fps: in
         # resolucao como uma camera — quem manda o tamanho e' o desenhador (PPI 1.024x1.024).
         return ["-f", "rawvideo", "-pix_fmt", "gray", "-s", "1024x1024",
                 "-framerate", str(fps or 30), "-i", "pipe:0"]
+    # O RELE' DO GRAVADOR (dono, 27/11/2026): a camera do radar e' do GRAVADOR (ele a segura 24h para
+    # encher o HD). Se ele esta' de pe', o vivo LE' o fluxo que ele ja' comprimiu no mediamtx local —
+    # nunca abre o dispositivo. Era isto que o servidor fazia (abrir o dshow de novo) e o "liberar a
+    # camera" acabava matando o gravador: 5 blocos de 1 s e o HD parado (medido no PC real).
+    if tipo == "camera" and camera_id:
+        try:
+            import gravacao_continua as _gc
+            if _gc.dono_da_camera(camera_id):
+                return ["-rtsp_transport", "tcp", "-rtbufsize", "256M", "-fflags", "nobuffer",
+                        "-i", _gc.url_do_relay()]
+        except Exception:
+            pass
     # -video_size EXPLICITO quando a camera ACEITA o tamanho pedido: sem ele a webcam entrega o que
     # quiser e o registro ficava SEM resolucao (guardava o nome do dispositivo), o que zerava a
     # entrada/compressao na tela.
@@ -1110,12 +1122,19 @@ def ao_vivo(*, tipo: str = "camera", dispositivo: str | None = None, resolucao: 
                                       else ("radar (sinal de arquivo)" if tipo == "radar" else "teste sintetico"))
     # a webcam do Windows (dshow) so abre UMA vez: dois envios da mesma camera brigam pelo dispositivo
     # e o segundo fica com quadro preto. Melhor recusar com recado claro do que pintar tela preta.
-    if tipo == "camera":
+    if tipo == "camera" and _rele_do_gravador(camera_id):
+        # A CAMERA E' A DO GRAVADOR (dono, 27/11/2026): o vivo NAO abre o dispositivo — ele le' o fluxo
+        # que o gravador publica no mediamtx local. Assim nao ha' briga pela webcam (dshow abre uma vez)
+        # e, principalmente, nao se passa por `liberar_camera()`, que era o que MATAVA o gravador
+        # (5 blocos de 1 s e o laco morto — medido no PC real do dono).
+        print(f"[envios] a camera {camera_id} e' do gravador (gravacao continua): o vivo le' o rele' "
+              f"{_rele_do_gravador(camera_id)}", flush=True)
+    elif tipo == "camera":
         # a webcam do Windows (dshow) so abre UMA vez.
         # ORDEM IMPORTA (medido 18/11/2026): primeiro pergunta se ha' ENVIO VIVO segurando a camera;
         # so' depois de descartar isso e' que se limpa processo PRESO (ffmpeg que morreu sem soltar o
         # dispositivo). Fazendo a limpeza antes, o proprio envio que esta' no ar era morto em silencio
-        # e o segundo envio era aceito — a tela preta que esta' recusa existe para evitar.
+        # e o segundo envio era aceito — a tela preta que esta recusa existe para evitar.
         ocupado = _camera_em_uso(dispositivo)
         if not ocupado:
             # a webcam sempre volta sozinha: se algum processo anterior ficou preso segurando o
@@ -1176,6 +1195,24 @@ def ao_vivo(*, tipo: str = "camera", dispositivo: str | None = None, resolucao: 
                    camera_id=str(camera_id or ident or ""))
 
 
+def _ps_do_liberar(nome: str, rpid: int = 0) -> str:
+    """O PowerShell que mata quem segura a webcam — EXCLUINDO o gravador do HD (dono, 27/11/2026).
+
+    Funcao separada `de proposito`: e' este texto que a prova de tela inspeciona. O ffmpeg do
+    gravador abre a MESMA camera (tem `video=...` na linha de comando) e sem a exclusao do laco
+    (`gravador.pid`), dos filhos dele e de qualquer processo do modulo de gravacao continua esta
+    funcao o matava — 5 blocos de 1 s com "received signal 15" e o HD parado (medido no PC real).
+    """
+    # o seletor @device_pnp_... tem ? e # (curingas do -like): [ ] precisam de escape literal
+    literal = str(nome or "").replace("[", "[[]").replace("]", "[]]")
+    alvo = "*video=" + literal + "*"
+    return ("$r = " + str(int(rpid or 0)) + "; Get-CimInstance Win32_Process | Where-Object { "
+            "$_.ProcessId -ne $PID -and $_.ProcessId -ne $r -and $_.ParentProcessId -ne $r -and "
+            "$_.CommandLine -and $_.CommandLine -like '" + alvo + "' -and "
+            "$_.CommandLine -notlike '*gravacao_continua*' } | ForEach-Object { try { Stop-Process -Id "
+            "$_.ProcessId -Force -ErrorAction Stop; $_.ProcessId } catch {} }")
+
+
 def liberar_camera(dispositivo: str | None = None, espera: float = 1.5) -> dict:
     """Solta a webcam: mata quem estiver segurando o dispositivo (no Windows o dshow abre UMA vez).
 
@@ -1186,12 +1223,15 @@ def liberar_camera(dispositivo: str | None = None, espera: float = 1.5) -> dict:
     nome = _normalizar_dispositivo(dispositivo or DISPOSITIVO_PADRAO)
     if os.name != "nt" or not nome:
         return {"dispositivo": nome, "liberados": 0, "pids": []}
-    # o seletor @device_pnp_... tem ? e # (curingas do -like): [ ] precisam de escape literal
-    literal = nome.replace("[", "[[]").replace("]", "[]]")
-    alvo = "*video=" + literal + "*"
-    ps = ("Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine "
-          "-and $_.CommandLine -like '" + alvo + "' } | ForEach-Object { try { Stop-Process -Id "
-          "$_.ProcessId -Force -ErrorAction Stop; $_.ProcessId } catch {} }")
+    # O GRAVADOR DO HD E' O DONO DA CAMERA DO RADAR (dono, 27/11/2026): o texto do PowerShell (abaixo)
+    # deixa de fora o proprio laco (`gravador.pid`), os filhos dele e os processos do modulo de gravacao.
+    rpid = 0
+    try:
+        import gravacao_continua as _gc
+        rpid = int(_gc.gravador_pid() or 0)
+    except Exception:
+        rpid = 0
+    ps = _ps_do_liberar(nome, rpid)
     pids: list[int] = []
     try:
         bruto = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, timeout=30).stdout
@@ -1199,8 +1239,33 @@ def liberar_camera(dispositivo: str | None = None, espera: float = 1.5) -> dict:
     except Exception:
         pids = []
     if pids:
+        # RASTRO NO LOG DO GRAVADOR (Fase 4 do plano de 27/11/2026): o kill era INVISIVEL do lado do
+        # produto — do lado do gravador so' sobrava o "received signal 15". Agora fica escrito quem
+        # liberou a camera, quantos e quais processos. (O gravador nao entra na lista: ele esta'
+        # excluido acima e E' o dono da camera do radar.)
+        try:
+            import gravacao_continua as _gc
+            _gc._log(f"o app liberou a camera \"{nome}\": {len(pids)} processo(s) parado(s) {pids}")
+        except Exception:
+            pass
         time.sleep(espera)  # o Windows leva um instante para soltar o dispositivo apos o kill
     return {"dispositivo": nome, "liberados": len(pids), "pids": pids}
+
+
+def _rele_do_gravador(camera_id: str | None) -> str:
+    """O endereco do RELE' quando esta camera e' a do GRAVADOR (dono, 27/11/2026).
+
+    O gravador segura a camera do radar 24h; se ele estiver de pe', o vivo tem de LER o fluxo dele
+    (mediamtx local) em vez de abrir o mesmo dispositivo — abrir era o que matava o gravador.
+    Devolve "" quando nao e' o caso (a camera nao e' a do gravador, ou o gravador nao esta de pe').
+    """
+    try:
+        import gravacao_continua as gc
+        if gc.dono_da_camera(camera_id or ""):
+            return gc.url_do_relay()
+    except Exception:
+        pass
+    return ""
 
 
 def _camera_em_uso(dispositivo: str | None, validade_s: int = 12) -> dict | None:

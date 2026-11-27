@@ -197,10 +197,30 @@ def main() -> int:  # noqa: C901
            f"e a lista de discos medida vai junto ({len(res.get('discos') or [])} disco(s))")
 
     # 10) o bloco é MP4 FRAGMENTADO e o prefixo é decodificável (D4: play enquanto chega)
+    # COM O RELE' (27/11/2026) o muxer virou `tee` (bloco no HD + o mesmo encode no mediamtx local), e
+    # as opções do segmento mudaram de lugar: moram DENTRO do spec. A exigência é a mesma — o bloco tem
+    # de sair FRAGMENTADO. Abaixo, o mesmo teste com o relé DESLIGADO garante que a forma antiga segue.
     cmd = g.comando_do_gravador()
-    exigir("-segment_format_options" in cmd
-           and cmd[cmd.index("-segment_format_options") + 1] == "movflags=+frag_keyframe+empty_moov+default_base_moof",
-           "o gravador pede mp4 FRAGMENTADO pela forma que funciona (`-segment_format_options`)")
+    spec = cmd[-1] if cmd else ""
+    exigir("tee" in cmd and "f=segment" in spec,
+           f"com o relé, UM encode serve o HD e o mediamtx local (muxer tee) — cmd: {' '.join(cmd[-3:])}")
+    exigir("segment_format_options=movflags=+frag_keyframe+empty_moov+default_base_moof" in spec,
+           "o gravador pede mp4 FRAGMENTADO pela forma que funciona (`segment_format_options` no tee)")
+    exigir(spec.split("|")[0].endswith(".mp4"),
+           "o PRIMEIRO destino do tee é o BLOCO no HD (o HD nunca depende do relé para gravar)")
+    antigo = os.environ.get("LECSOR_HD_RELAY")
+    os.environ["LECSOR_HD_RELAY"] = "0"
+    try:
+        cmd2 = g.comando_do_gravador()
+        exigir("tee" not in cmd2 and "-segment_format_options" in cmd2
+               and cmd2[cmd2.index("-segment_format_options") + 1]
+               == "movflags=+frag_keyframe+empty_moov+default_base_moof",
+               "com LECSOR_HD_RELAY=0 o gravador volta à forma antiga (`-f segment` direto)")
+    finally:
+        if antigo is None:
+            os.environ.pop("LECSOR_HD_RELAY", None)
+        else:
+            os.environ["LECSOR_HD_RELAY"] = antigo
     ff = shutil.which("ffmpeg")
     if not ff:
         nota("NAO MEDIDO: sem ffmpeg nesta máquina — a prova do prefixo decodificável fica de fora")

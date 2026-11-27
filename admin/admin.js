@@ -3437,7 +3437,14 @@ function cartaoDaCamera(c, emb) {
      dois desde a 0.20.0). */
   sel.dataset.papel = 'alvo';
   sel.title = 'qualidade de envio desta câmera (kbps) — desce para o PC de captura';
-  const alvoAtual = String(c.alvo || '').replace(/k$/i, '');
+  /* DE ONDE VEM O VALOR MOSTRADO (defeito do dono, 3a vez, 27/11/2026 — "altero a qualidade e ela
+     volta para a anterior"): `cameras.alvo` e' do LADO TERRA e chega VAZIO (quem escreve esse campo e'
+     o PC de captura, em `aplicar_config_local`; o lado terra so' tem o que o bordo anuncia, e o anuncio
+     nao levava o alvo). Com o campo vazio o menu caía no 1o item ("3000 kbps (padrão do produto)") e
+     parecia que a escolha nao tinha sido guardada. A verdade do que foi mandado esta' na config
+     PUBLICADA (a mesma que a linha "publicado ao bordo" mostra); `cameras.alvo` fica como reforco. */
+  const alvoPublicado = ((c.config || {}).desejada || []).find((x) => x.chave === 'alvo_kbps');
+  const alvoAtual = String(c.alvo || (alvoPublicado ? alvoPublicado.valor : '') || '').replace(/k$/i, '');
   /* O menu NAO pode ficar em branco (defeito visto no print do dono em 26/11/2026): sem `alvo`
      publicado, `sel.value = ''` nao casa com opcao nenhuma e o navegador mostra o campo vazio — parece
      que nao ha escolha. Com valor vazio a primeira opcao (a que o produto usa hoje) fica escolhida. */
