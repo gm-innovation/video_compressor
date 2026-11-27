@@ -168,3 +168,73 @@ gravador; a varredura continua sem reescrever o rótulo que o admin deu em terra
 - **Fica pendente (honesto)**: instalar a 0.26.0 no **PC de captura real** — o quadro do radar só o
   hardware prova (a bancada não entrega frame); **J5** (o ramo `encerrar` não apaga a gravação nem
   audita) segue aberta para a próxima rodada.
+
+---
+
+## Adendo do dono (26/11/2026, depois de publicar) — duas coisas novas, medidas
+
+### 1) A gravação do radar a bordo: a causa é o PC de captura estar com app ANTIGO (e não o código)
+
+Medido agora (VPS `pipeline.db` + grep no repositório):
+
+- `hd_catalogo` (`bancada` / `radar`) foi escrito **pelo bordo hoje, 27/11/2026 11:51:41Z**, e o `resumo` é
+  `{"ligada": true, "dispositivo": "", "camera": "radar", "bloco_segundos": 60, "blocos": 0, "bytes": 0,
+  "livre_bytes": 195124219904, "total_bytes": 253966151680, "diretorio":
+  "C:\\Users\\HAVOX\\AppData\\Local\\Programs\\LECSOR\\resources\\servidor\\ground\\hd"}` — **sem `motivo`,
+  sem `dispositivo_origem`, sem `camera_rotulo`** e com `camera_id = "radar"` (o pacote da 0.26.0 grava
+  `g.camera_id()`). É o **formato antigo**: o app instalado ali é **< 0.26.0**.
+- `config_aplicada_bordo` `gravacao_continua` (26/11/2026 20:15:10Z) = `"ligada, mas esta maquina nao tem
+  dispositivo de video configurado (LECSOR_HD_DISPOSITIVO): nada sera' gravado"` — **esse texto não existe
+  mais no código** (0 ocorrências no repo); a 0.26.0 diz `"ligada, mas nada sera' gravado: <motivo>"`.
+  É o texto que o dono viu na tela.
+- O PC de captura está **vivo** (fala com a VPS) e o app **não se auto-atualiza** → a 0.26.0 não chegou lá.
+- O admin **já tem** a câmera certa marcada: `cam-device-pnp-usb-vid-345f-pid-2131-mi-00-6-f69`,
+  `tipo='radar'`, `tipo_definido_pelo_admin=1`, `ativo=1` — é exatamente o que o resolvedor procura.
+
+**Fase A (P0) — instalar a 0.26.0 no PC de captura (passo a passo de leigo, para o dono repassar):**
+1. baixar `LECSOR-0.26.0-x64.exe` da release **v0.26.0** (sha256 `c746898e…8556f`);
+2. fechar o app e rodar o instalador por cima (mantém o `ground/hd/ligada.txt`, que é o desejo do HD);
+3. abrir o painel do bordo: a linha **"Dispositivo do HD"** tem de mostrar o aparelho e a origem `tipo`;
+4. em ~1 min a linha "Gravação full-time" sai de `0 bloco(s)`;
+5. provar em terra: `/api/bordo` → bloco `hd` com `dispositivo` + `dispositivo_origem`; `hd_catalogo` com
+   `blocos > 0`.
+
+**Fase B (P0) — o produto tem de DENUNCIAR a versão velha sozinho.** Hoje nada avisa: o admin vê
+"publicada LIGADA" e o bordo diz "nada sera' gravado" sem dizer que é app velho. O bordo manda a versão em
+`estado_bordo`/`saude_bordo`; `/api/bordo` e as telas (admin e bordo) mostram *"versão do bordo X <
+publicada Y — atualizar"*. É a diferença entre "não grava" e "não grava porque o app está velho".
+**Fase C (P1):** o terra marca a linha como **`bordo desatualizado`** quando o `motivo` do bordo não trouxer
+os campos da 0.26.0 (não deixar dizer "o bordo aplicou" o que é aplicação antiga).
+
+### 2) psutil no Python portátil (CPU, memória e rede)
+
+Medido:
+
+- `ground/saude_do_bordo.py` (l. 79/80/105/123) e `ground/api.py` (l. 1716) **usam psutil**; sem ele a
+  saúde sai com `nao_medido` = `"sem psutil neste Windows (instalar psutil para medir)"` — o número não é
+  inventado (certo), mas CPU/memória/rede ficam **sem medir**.
+- `tools/python/` é o **Python embeddable 3.12.7** descompactado do zip oficial: **não tem
+  `Lib/site-packages`** e o `python312._pth` só lista `python312.zip` + `.` com `#import site`
+  comentado → `sys.path` não tem site-packages nenhum. (O `psutil 7.2.2` existe no Python 3.14 desta
+  máquina Hermes, que **não** é o que vai dentro do instalador.)
+
+**Fase A (P0) — psutil dentro do pacote.**
+- `tools/python/python312._pth` → linhas `python312.zip`, `.`, `Lib\site-packages` e `import site`
+  descomentado.
+- `tools/python/Lib/site-packages/psutil/` da wheel `psutil-…-cp312-cp312-win_amd64.whl` (fixar versão e
+  sha256).
+- Conferência **no build** (`desktop/baixar-servidor.sh` e `construir-instaladores.sh`):
+  `tools/python/python.exe -c "import psutil,json;print(json.dumps([psutil.__version__, psutil.cpu_percent(0.2)]))"`
+  → **falha o build se não importar** (build que falha é barato; pacote que sai sem medir é caro).
+- `desktop/baixar-servidor.sh`: baixar a wheel (sha256 fixado) e extrair em `Lib/site-packages`, para o
+  pacote voltar a ser reconstruível do zero (hoje esse passo só existe para o Python e o mediamtx).
+
+**Fase B (P0) — prova de verdade:** com o **python do pacote**, `psutil.cpu_percent()` /
+`virtual_memory()` / `net_io_counters()` medidos; `GET /api/saude` do app instalado com CPU/memória/rede
+**fora** de `nao_medido`.
+**Fase C (P1) — a tela:** `/bordo` → `#ficha-saude` mostra CPU/memória/rede, e um teste prova o **número**
+saindo (não o `nao_medido`).
+**Fase D (P1):** banda por interface (upload/download) para a curva de link do Starlink.
+
+**Ordem sugerida:** Fase A/B do psutil (destrava o número que o dono pediu) → Fase B do item 1 (denúncia da
+versão velha) → as demais P1.
