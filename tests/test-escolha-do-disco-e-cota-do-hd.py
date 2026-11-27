@@ -232,6 +232,19 @@ def main() -> int:  # noqa: C901
             if n_corte <= 0:
                 nota("o prefixo de um mp4 comum é ilegível — é esse o motivo do mp4 fragmentado (D4)")
 
+    # 11) pasta de gravacao que AINDA NAO EXISTE (PC recem-instalado): UMA linha so', com medida
+    #     (medido na VPS em 27/11/2026: a gravacao em volume sem a pasta ainda criada aparecia DUAS vezes —
+    #     "hd do radar" e "aplicativo" — e o admin via dois discos iguais na lista para escolher)
+    os.environ["LECSOR_HD_DIR"] = str(tmp / "disco-b" / "lecsor-radar" / "ainda-nao-nasceu")
+    linhas = s._discos()
+    nomes = [x.get("nome") for x in linhas]
+    exigir(len(linhas) == 1 and nomes == ["hd do radar"],
+           f"pasta de gravacao que ainda nao existe NAO inventa um segundo disco do mesmo volume: {linhas}")
+    exigir(linhas and linhas[0].get("usado_pct") is not None,
+           f"e a linha do disco continua com medida "
+           f"({linhas[0].get('usado_pct') if linhas else None}, erro={linhas[0].get('erro') if linhas else None})")
+    os.environ.pop("LECSOR_HD_DIR", None)
+
     shutil.rmtree(tmp, ignore_errors=True)
     print()
     if falhas:

@@ -225,7 +225,12 @@ def _discos() -> list:
     g = _gravacao_continua()
     p_grav = (g.diretorio() if g else (RAIZ / "ground" / "hd"))
     alvos: list[tuple[str, pathlib.Path]] = [("hd do radar", p_grav)]
-    if not _mesmo_volume(p_grav, RAIZ):
+    # A COMPARACAO E' ENTRE VOLUMES QUE EXISTEM (medido na VPS, 27/11/2026): a pasta de gravacao do app
+    # recem-instalado ainda nao nasceu, e no Linux o `os.stat` de um caminho que nao existe estoura — a
+    # comparacao dava "volumes diferentes" e o MESMO disco saia duas vezes ("hd do radar" e "aplicativo"),
+    # oferecendo dois discos iguais na lista do admin. Com o caminho que existe, o volume e' o mesmo e sai
+    # UMA linha so'.
+    if not _mesmo_volume(_caminho_para_medir(p_grav), RAIZ):
         alvos.append(("aplicativo", RAIZ))
     saida = []
     for nome, p in alvos:
