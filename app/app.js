@@ -819,8 +819,199 @@ function textoDeEspera(seg) {
   return ' há ' + Math.floor(s / 3600) + ' h ' + (Math.floor(s / 60) % 60) + ' min';
 }
 
-/* BLOCO 1 — o HD do computador de captura a bordo: o radar de óleo, gravando o tempo todo. O cliente
-   procura por data e hora, PEDE o trecho e baixa quando chegar (dono, 19/11/2026). */
+/* --------------------------------------------------------------------------------- ESCOLHER O PERÍODO
+   (dono, 27/11/2026: "preciso poder selecionar data e hora, não ter que digitar" · D6 = completo).
+   Três controles clicáveis por ponta — dia (calendário nativo), hora e minuto (listas) — e ATALHOS
+   ("últimos 30 min", "hoje", "ontem"). Nada de campo de texto: a prova de tela mede que NÃO houve
+   digitação. O período sai daqui em `AAAA-MM-DDTHH:MM` (o mesmo formato do nome do bloco). */
+function encherSeletoresDoPeriodo() {
+  const horas = [], minutos = [];
+  for (let h = 0; h < 24; h++) horas.push(String(h).padStart(2, '0'));
+  for (let m = 0; m < 60; m++) minutos.push(String(m).padStart(2, '0'));
+  for (const id of ['hd-de-hora', 'hd-ate-hora']) {
+    const el = $(id); if (!el || el.dataset.pronto) continue;
+    for (const h of horas) { const o = document.createElement('option'); o.value = h; o.textContent = h + ' h'; el.appendChild(o); }
+    el.dataset.pronto = '1';
+  }
+  for (const id of ['hd-de-min', 'hd-ate-min']) {
+    const el = $(id); if (!el || el.dataset.pronto) continue;
+    for (const m of minutos) { const o = document.createElement('option'); o.value = m; o.textContent = m + ' min'; el.appendChild(o); }
+    el.dataset.pronto = '1';
+  }
+}
+
+function partesLocais(quando) {
+  const p = (n) => String(n).padStart(2, '0');
+  return { data: `${quando.getFullYear()}-${p(quando.getMonth() + 1)}-${p(quando.getDate())}`,
+           hora: p(quando.getHours()), min: p(quando.getMinutes()) };
+}
+
+function porNoPeriodo(ponta, quando) {
+  const x = partesLocais(quando);
+  const d = $('hd-' + ponta + '-data'), h = $('hd-' + ponta + '-hora'), m = $('hd-' + ponta + '-min');
+  if (d) d.value = x.data;
+  if (h) h.value = x.hora;
+  if (m) m.value = x.min;
+}
+
+/* O período escolhido agora, em `AAAA-MM-DDTHH:MM` — vazio quando a ponta não foi escolhida. */
+function lerPeriodo() {
+  const uma = (ponta) => {
+    const d = ($('hd-' + ponta + '-data') || {}).value || '';
+    if (!d) return '';
+    const h = ($('hd-' + ponta + '-hora') || {}).value || '00';
+    const m = ($('hd-' + ponta + '-min') || {}).value || '00';
+    return d + 'T' + h + ':' + m;
+  };
+  return { de: uma('de'), ate: uma('ate') };
+}
+
+function aplicarAtalho(qual) {
+  const agora = new Date();
+  const de = new Date(agora.getTime());
+  if (qual === '30min') de.setMinutes(de.getMinutes() - 30);
+  else if (qual === '2h') de.setHours(de.getHours() - 2);
+  else if (qual === 'hoje') { de.setHours(0, 0, 0, 0); }
+  else if (qual === 'ontem') {
+    de.setDate(de.getDate() - 1); de.setHours(0, 0, 0, 0);
+    porNoPeriodo('de', de);
+    const fim = new Date(de.getTime()); fim.setHours(23, 59, 0, 0);
+    porNoPeriodo('ate', fim);
+    desenharTela(); return;
+  }
+  porNoPeriodo('de', de); porNoPeriodo('ate', agora);
+  desenharTela();
+}
+
+/* ----------------------------------------------------------------------------- LINHA DO TEMPO E PLAY
+   (dono, 27/11/2026 · D4 = "do bordo em tempo real" · D5 = "contínua"). A barra mostra O QUE EXISTE: cada
+   bloco é um segmento, os buracos aparecem como buracos e o fim da linha é o "agora". O trecho é puxado do
+   PC de captura pelo caminho que já existe (o cliente pede, o bordo envia) e o player toca o que já chegou
+   (`/api/hd/tocar` serve o arquivo que CRESCE — o bloco é mp4 fragmentado, então o prefixo é decodificável). */
+function trechosDoCatalogo() {
+  const cat = S.hd || { catalogos: [] };
+  const saida = [];
+  for (const c of (cat.catalogos || [])) {
+    for (const b of (c.blocos || [])) {
+      saida.push({ camera_id: c.camera_id, arquivo: b.arquivo, inicio: String(b.inicio || ''),
+                   bytes: b.bytes || 0, embarcacao: c.embarcacao_nome || c.embarcacao_id || '' });
+    }
+  }
+  saida.sort((a, b) => String(a.inicio).localeCompare(String(b.inicio)));
+  return saida;
+}
+
+function pedidoDoTrecho(camera_id, arquivo) {
+  return (((S.hd || {}).pedidos) || []).find((p) => p.camera_id === camera_id && p.arquivo === arquivo) || null;
+}
+
+function montarBarraDoTempo(meu) {
+  const trechos = trechosDoCatalogo();
+  const cx = document.createElement('div'); cx.className = 'barra-tempo';
+  const faixa = document.createElement('div'); faixa.className = 'faixa-blocos';
+  if (!trechos.length) {
+    faixa.appendChild(notaPil('nenhum trecho no HD do bordo ainda — a barra aparece conforme o radar grava'));
+    cx.appendChild(faixa); return cx;
+  }
+  const t0 = new Date(trechos[0].inicio.replace(' ', 'T')).getTime();
+  const t1 = Math.max(new Date(trechos[trechos.length - 1].inicio.replace(' ', 'T')).getTime() + 60000,
+                      Date.now());
+  const vao = Math.max(60000, t1 - t0);
+  /* os BURACOS fazem parte: o que não foi gravado fica visível (nada de barra que parece contínua) */
+  for (const b of trechos) {
+    const ini = new Date(b.inicio.replace(' ', 'T')).getTime();
+    const seg = document.createElement('button');
+    seg.type = 'button';
+    seg.className = 'seg-blocos' + (meu && meu.arquivo === b.arquivo ? ' atual' : '');
+    seg.style.width = Math.max(2, 100 * 60000 / vao) + '%';
+    seg.title = b.inicio.replace('T', ' ').slice(0, 19) + ' · ' + emMB(b.bytes) + ' — clique para ver';
+    seg.textContent = String(b.inicio).slice(11, 16);
+    seg.addEventListener('click', () => tocarTrecho(b.camera_id, b.arquivo));
+    faixa.appendChild(seg);
+  }
+  const agora = document.createElement('span'); agora.className = 'agora-blocos';
+  agora.textContent = 'agora ' + new Date().toTimeString().slice(0, 5);
+  cx.appendChild(faixa); cx.appendChild(agora);
+  return cx;
+}
+
+function notaPil(texto) { const p = document.createElement('p'); p.className = 'nota'; p.textContent = texto; return p; }
+
+/* O player: abre quando o cliente clica em "ver" (ou num segmento da barra). Puxa o trecho do bordo e toca
+   ENQUANTO chega; quando o trecho acaba, a linha do tempo emenda no próximo (D5). */
+function desenharTrecho() {
+  const cx = $('hd-trecho');
+  if (!cx) return;
+  const t = S.tocando;
+  if (!t) { cx.classList.add('oculto'); limpar(cx); cx.dataset.impressao = ''; return; }
+  cx.classList.remove('oculto');
+  const p = pedidoDoTrecho(t.camera_id, t.arquivo);
+  const chegando = p && p.estado === 'pedido';
+  const pronto = p && p.estado === 'enviado';
+  const parcial = (p && p.parcial_bytes) || 0;
+  const impressao = JSON.stringify([t.camera_id, t.arquivo, p && p.estado, parcial]);
+  if (cx.dataset.impressao === impressao) return;   // nada mudou: não recarrega o vídeo
+  cx.dataset.impressao = impressao;
+  const antigo = cx.querySelector('video');
+  const ondeParou = antigo ? antigo.currentTime : 0;
+  limpar(cx);
+  const chapeu = document.createElement('div'); chapeu.className = 'chapeu-trecho';
+  const h = document.createElement('h2'); h.textContent = 'Reprodução do trecho · ' + String(t.arquivo).replace('bloco-', '').replace('.mp4', '')
+    .replace(/(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/, '$3/$2/$1 $4:$5:$6');
+  const fechar = document.createElement('button'); fechar.className = 'pil'; fechar.textContent = 'fechar';
+  fechar.addEventListener('click', () => { S.tocando = null; desenharTrecho(); });
+  chapeu.append(h, fechar);
+  cx.appendChild(chapeu);
+  cx.appendChild(montarBarraDoTempo(t));
+  if (!p) {
+    cx.appendChild(notaPil('pedindo o trecho ao computador de captura…'));
+  } else if (p.estado === 'erro') {
+    cx.appendChild(notaPil('o bordo não conseguiu enviar este trecho: ' + (p.motivo || 'motivo não informado')));
+  } else if (p.estado === 'sem_resposta') {
+    cx.appendChild(notaPil('o bordo não respondeu ainda — as imagens continuam no HD da embarcação.'));
+  } else {
+    const v = document.createElement('video');
+    v.controls = true; v.autoplay = true; v.playsInline = true; v.className = 'video-trecho';
+    v.src = '/api/hd/tocar?id=' + encodeURIComponent(p.id) + '&q=' + (parcial || 0);
+    if (ondeParou > 0.5) v.addEventListener('loadedmetadata', () => { try { v.currentTime = ondeParou; } catch (e) { /* ignora */ } });
+    /* D5: acabou o trecho, emenda no PRÓXIMO da linha do tempo (e o "agora" fecha a linha). */
+    v.addEventListener('ended', () => {
+      const lista = trechosDoCatalogo();
+      const i = lista.findIndex((b) => b.arquivo === t.arquivo);
+      const proximo = i >= 0 ? lista[i + 1] : null;
+      if (proximo) tocarTrecho(proximo.camera_id, proximo.arquivo);
+    });
+    cx.appendChild(v);
+    const estado = document.createElement('div'); estado.className = 'estado-trecho';
+    estado.textContent = pronto
+      ? ('trecho completo em terra · ' + emMB(p.bytes || 0) + ' — guardado no lado terra')
+      : ('chegando do bordo em tempo real: já recebi ' + emMB(parcial) +
+         ' — o vídeo toca o que chegou e continua buscando' + textoDeEspera(p.ha_segundos));
+    cx.appendChild(estado);
+  }
+  const acoes = document.createElement('div'); acoes.className = 'acoes-trecho';
+  if (pronto) {
+    const b = document.createElement('a'); b.className = 'pil'; b.textContent = 'baixar';
+    b.href = '/api/hd/baixar?id=' + encodeURIComponent(p.id);
+    acoes.appendChild(b);
+  }
+  if (p && (p.estado === 'sem_resposta' || p.estado === 'erro')) {
+    const r = document.createElement('button'); r.className = 'pil'; r.textContent = 'pedir de novo';
+    r.addEventListener('click', () => pedirTrechoDoHd(t.camera_id, t.arquivo, null));
+    acoes.appendChild(r);
+  }
+  cx.appendChild(acoes);
+}
+
+/* O cliente clicou em "ver": o trecho é pedido ao bordo (se ainda não foi) e o player abre na hora. */
+function tocarTrecho(camera_id, arquivo) {
+  S.tocando = { camera_id: camera_id, arquivo: arquivo };
+  const p = pedidoDoTrecho(camera_id, arquivo);
+  if (!p || p.estado === 'sem_resposta' || p.estado === 'erro') pedirTrechoDoHd(camera_id, arquivo, null);
+  desenharTrecho();
+}
+
+
 function blocoDoHd() {
   const cat = S.hd || { catalogos: [], pedidos: [] };
   const trechos = [];
@@ -831,8 +1022,9 @@ function blocoDoHd() {
     }
   }
   trechos.sort((a, b) => String(b.inicio).localeCompare(String(a.inicio)));
-  const de = ($('hd-de') || {}).value || '';
-  const ate = ($('hd-ate') || {}).value || '';
+  const periodo = lerPeriodo();
+  const de = periodo.de;
+  const ate = periodo.ate;
   const mostrados = trechos.filter((b) => (!de || b.inicio >= de) && (!ate || b.inicio <= ate + ':59'));
   const resumo = $('hd-resumo');
   /* O CATALOGO VAZIO TEM MOTIVO (dono, 26/11/2026): "não entendi esse bloco" — a tela tem de dizer se o
@@ -872,33 +1064,47 @@ function blocoDoHd() {
     colunas,
     linhas: mostrados.slice(0, 300).map((b) => {
       const p = jaPedido[b.camera_id + '|' + b.arquivo];
-      let acao;
+      /* VER (dono, 27/11/2026: "não aparece nada para dar play na gravação"): o botão existe SEMPRE e abre
+         a linha do tempo com o player — o trecho é puxado do bordo e toca ENQUANTO chega (D4). */
+      const celula = document.createElement('span');
+      celula.className = 'acoes-trecho';
+      const ver = document.createElement('button'); ver.className = 'pil'; ver.textContent = 'ver';
+      ver.title = 'abre a linha do tempo e toca o trecho (puxado do computador de captura)';
+      ver.dataset.acao = 'ver';
+      ver.addEventListener('click', () => tocarTrecho(b.camera_id, b.arquivo));
+      celula.appendChild(ver);
       let situacao = 'no HD do barco';
       if (p && p.estado === 'enviado') {
-        acao = document.createElement('a');
-        acao.href = '/api/hd/baixar?id=' + encodeURIComponent(p.id);
-        acao.textContent = 'baixar';
+        const baixar = document.createElement('a');
+        baixar.href = '/api/hd/baixar?id=' + encodeURIComponent(p.id);
+        baixar.textContent = 'baixar';
+        celula.appendChild(baixar);
         situacao = 'pronto em terra';
       } else if (p && p.estado === 'pedido') {
-        acao = document.createElement('button'); acao.className = 'pil'; acao.disabled = true;
-        acao.textContent = 'chegando…';
+        const espera = document.createElement('span'); espera.className = 'nota';
+        espera.textContent = 'chegando ' + emMB(p.parcial_bytes || 0) + textoDeEspera(p.ha_segundos);
+        celula.appendChild(espera);
         situacao = 'pedido enviado ao barco' + textoDeEspera(p.ha_segundos);
       } else if (p && p.estado === 'sem_resposta') {
-        /* O BORDO NAO RESPONDEU (dono, 26/11/2026: o "chegando…" travado): o pedido venceu, mas o trecho
+        /* O BORDO NAO RESPONTEU (dono, 26/11/2026: o "chegando…" travado): o pedido venceu, mas o trecho
            continua no HD do barco — a tela volta a oferecer "pedir" em vez de mentir que esta' chegando. */
-        acao = document.createElement('button'); acao.className = 'pil'; acao.textContent = 'pedir';
-        acao.title = p.motivo || '';
-        acao.addEventListener('click', () => pedirTrechoDoHd(b.camera_id, b.arquivo, acao));
+        const pedir = document.createElement('button'); pedir.className = 'pil'; pedir.textContent = 'pedir';
+        pedir.title = p.motivo || '';
+        pedir.addEventListener('click', () => pedirTrechoDoHd(b.camera_id, b.arquivo, pedir));
+        celula.appendChild(pedir);
         situacao = 'o bordo não respondeu' + textoDeEspera(p.ha_segundos) + ' (as imagens continuam no HD do barco)';
       } else if (p && p.estado === 'erro') {
-        acao = document.createElement('button'); acao.className = 'pil'; acao.disabled = true;
-        acao.textContent = 'indisponível'; situacao = 'saiu do HD (' + (p.motivo || 'erro') + ')';
+        const ind = document.createElement('span'); ind.className = 'nota';
+        ind.textContent = 'indisponível';
+        celula.appendChild(ind);
+        situacao = 'saiu do HD (' + (p.motivo || 'erro') + ')';
       } else {
-        acao = document.createElement('button'); acao.className = 'pil'; acao.textContent = 'pedir';
-        acao.addEventListener('click', () => pedirTrechoDoHd(b.camera_id, b.arquivo, acao));
+        const pedir = document.createElement('button'); pedir.className = 'pil'; pedir.textContent = 'pedir';
+        pedir.addEventListener('click', () => pedirTrechoDoHd(b.camera_id, b.arquivo, pedir));
+        celula.appendChild(pedir);
       }
       return { embarcacao: b.embarcacao, quando: b.inicio.replace('T', ' ').slice(0, 19),
-               tamanho: emMB(b.bytes), situacao, acao };
+               tamanho: emMB(b.bytes), situacao, acao: celula };
     }),
     vazio: S.hd
       ? 'Nenhum trecho neste horário — tente um intervalo maior (as imagens ficam guardadas no computador de captura e o mais antigo gira quando o disco enche).'
@@ -1025,6 +1231,10 @@ function desenharTela() {
     const bs = [blocoDoHd()];
     if (S.papel !== 'observador') bs.push(blocoDeTerra());
     blocosEmPalco(bs);
+    /* O PLAY (dono, 27/11/2026): a linha do tempo + o player ficam colados na tabela do HD e se atualizam
+       sozinhos enquanto o trecho chega do bordo (o `parcial_bytes` cresce e a impressão muda). */
+    encherSeletoresDoPeriodo();
+    desenharTrecho();
   } else if (t === 'cameras') {
     /* A coluna Tipo (dono, 25/11/2026): radar de óleo e FLIR (térmica) aparecem nomeados — o
        observador (Petrobras/IBAMA) vê só esses dois; o cliente vê os seus. */
@@ -1557,7 +1767,18 @@ if (bRelat) bRelat.addEventListener('click', () => trocarTela('relatorios'));
 /* o ano da linha de direitos vem do relogio da maquina (nunca fica velho na tela) */
 const elAno = $('ano'); if (elAno) elAno.textContent = String(new Date().getFullYear());
 $('hd-filtrar').addEventListener('click', () => desenharTela());
-$('hd-tudo').addEventListener('click', () => { $('hd-de').value = ''; $('hd-ate').value = ''; desenharTela(); });
+/* "ver tudo" limpa as DUAS pontas do período (dia/hora/minuto) — nada de digitar. */
+$('hd-tudo').addEventListener('click', () => {
+  for (const id of ['hd-de-data', 'hd-ate-data']) { const el = $(id); if (el) el.value = ''; }
+  desenharTela();
+});
+/* Os atalhos de período (dono, 27/11/2026): um clique escolhe "de…até" — sem digitar nada. */
+const elAtalhos = $('hd-atalhos');
+if (elAtalhos) {
+  for (const b of elAtalhos.querySelectorAll('button[data-atalho]')) {
+    b.addEventListener('click', () => aplicarAtalho(b.dataset.atalho));
+  }
+}
 
 /* HD do radar: o cliente ve o catalogo, pede o trecho e baixa (o bordo e' quem envia). */
 async function carregarHd() {

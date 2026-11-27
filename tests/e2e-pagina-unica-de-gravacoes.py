@@ -197,8 +197,10 @@ def main() -> int:
                    primeiro[:160].replace("\n", " | "))
             checar("o 2º bloco é o gravado em terra (transmissões)",
                    "Gravado em terra" in segundo, segundo[:160].replace("\n", " | "))
-            checar("a faixa de filtro por data e hora está na página",
-                   pag.locator("#hd-de").count() == 1 and pag.locator("#hd-ate").count() == 1)
+            checar("a faixa de filtro por período está na página (dia + hora + minuto, sem digitar)",
+                   pag.locator("#hd-de-data").count() == 1 and pag.locator("#hd-de-hora").count() == 1
+                   and pag.locator("#hd-de-min").count() == 1 and pag.locator("#hd-ate-data").count() == 1
+                   and pag.locator('#hd-filtro input[type="datetime-local"]').count() == 0)
 
             print()
             print("== 3. o bloco de bordo (o que era a tela 'Radar de óleo (HD)')")

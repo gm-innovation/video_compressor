@@ -901,7 +901,10 @@ function pintarPainel(s) {
   const g = s.global || {};
   const naoMedido = s.nao_medido || {};
   const discos = s.discos || g.discos || [];
-  const pior = discos.reduce((a, x) => (Number(x.usado_pct) > Number(a && a.usado_pct) ? x : a), null);
+  /* Só entra na escolha do "pior volume" o disco que TEM medida: uma linha sem `usado_pct` (volume que não
+     deu para medir) não pode virar um cartão "—" com cara de saúde (dono, 27/11/2026). */
+  const comMedida = discos.filter((x) => x && x.usado_pct !== null && x.usado_pct !== undefined);
+  const pior = comMedida.reduce((a, x) => (Number(x.usado_pct) > Number(a && a.usado_pct) ? x : a), null);
   const rede = (s.rede && s.rede.total) || g.rede || {};
   const semCpu = naoMedido.cpu_memoria;
 

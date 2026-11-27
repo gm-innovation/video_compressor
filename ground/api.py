@@ -878,8 +878,27 @@ def catalogo_do_hd(embarcacao_id: str, camera_id: str = "") -> dict:
     # "chegando…" mudo (dono, 26/11/2026) e sabe quando o pedido caiu por `sem_resposta`.
     for p in pedidos:
         p["ha_segundos"] = _idade_em_segundos(p.get("criado_em"))
+        # QUANTO JA' CHEGOU (dono, 27/11/2026, D4): enquanto o bordo envia, o arquivo CRESCE em terra (a
+        # rota do trecho grava em blocos de 1 MB). O player toca o que ja' chegou e a tela mostra o
+        # progresso — sem prometer tamanho nenhum.
+        p["parcial_bytes"] = _bytes_do_trecho_parcial(p)
     return {"embarcacao_id": embarcacao_id, "catalogos": saida, "pedidos": pedidos,
             "limite_sem_resposta_s": int(segundos_sem_resposta_do_hd())}
+
+
+def _bytes_do_trecho_parcial(p: dict) -> int:
+    """Quantos bytes do trecho já estão em terra (0 = ainda não começou a chegar).
+
+    Enquanto o bordo envia, o arquivo se chama `<id>-<bloco>.mp4`; no fim a rota marca o pedido como
+    `enviado` e guarda o nome final em `trecho`. Serve a tela para dizer o progresso.
+    """
+    if (p.get("estado") or "") != "pedido":
+        return int(p.get("bytes") or 0)
+    try:
+        alvo = hd_dir() / f"{p['id']}-{Path(str(p.get('arquivo') or 'trecho.mp4')).name}"
+        return int(alvo.stat().st_size) if alvo.exists() else 0
+    except Exception:  # noqa: BLE001
+        return 0
 
 
 def pedidos_de_hd(embarcacao_id: str) -> list:
@@ -980,7 +999,8 @@ def fechar_pedidos_do_hd_sem_resposta(agora: dt.datetime | None = None) -> list[
 # app a bordo precisa buscar o tempo todo as atualizacoes". Mesmo desenho da flag: terra PUBLICA (com
 # `versao`), o bordo OLHA, aplica SO' a diferenca e CONFIRMA o que aplicou.
 # --------------------------------------------------------------------------------------------
-CHAVES_DE_CONFIG = ("alvo_kbps", "teto_s", "gravacao_continua", "transmitir", "rotulo", "varrer")
+CHAVES_DE_CONFIG = ("alvo_kbps", "teto_s", "gravacao_continua", "transmitir", "rotulo", "varrer",
+                    "hd_disco", "hd_cota_gb")
 # `varrer` (dono, 26/11/2026): "nesta tela preciso também de um botão para refazer varredura... o app de
 # captura precisa refazer a varredura das câmeras, mas apenas inclui as que não estão aparecendo".
 # O pedido viaja pela configuracao publicada (o terra NAO abre conexao para o bordo, o bordo OLHA),
@@ -1112,6 +1132,27 @@ def publicar_config(embarcacao_id: str, camera_id: str, chave: str, valor: str, 
             return {"erro": "gravacao_continua e' da embarcacao: a gravacao e' do HD da maquina (sem camera_id)"}
         if valor not in ("0", "1"):
             return {"erro": f"gravacao_continua aceita 0 (desligar) ou 1 (ligar) — veio {valor!r}"}
+    if chave == "hd_disco":
+        # QUAL DISCO (dono, 27/11/2026 — D1: "o PC mede e propoe", D3: um disco grava nele, com dois ou
+        # mais o admin escolhe). E' da EMBARCACAO (os discos sao do PC de captura) e o valor e' a RAIZ do
+        # volume que o proprio bordo mediu (`C:\` ... e `""` = a pasta do aplicativo, o padrao). Nao passa
+        # caminho de arquivo, nem camera, nem credencial.
+        if cam:
+            return {"erro": "hd_disco e' da embarcacao: quem tem os discos e' o PC de captura (sem camera_id)"}
+        if "\n" in valor or "\r" in valor or len(valor) > 120:
+            return {"erro": "o disco vem em uma linha de ate 120 caracteres"}
+    if chave == "hd_cota_gb":
+        # QUANTO DO DISCO (dono, 27/11/2026 — D2: GB). Vazio = sem cota escolhida (o produto usa o padrao).
+        if cam:
+            return {"erro": "hd_cota_gb e' da embarcacao: a cota e' do disco da gravacao (sem camera_id)"}
+        if valor:
+            try:
+                cota = float(valor)
+            except (TypeError, ValueError):
+                return {"erro": f"hd_cota_gb precisa ser um numero em GB — veio {valor!r}"}
+            if not 0.1 <= cota <= 100000:
+                return {"erro": "hd_cota_gb fora da faixa do produto (0,1 a 100000 GB)"}
+            valor = f"{cota:g}"
     if chave == "transmitir":
         # Ligar/desligar a transmissao de UMA camera: e' o que o dono chama de "quais cameras transmitem".
         if not cam:
@@ -1280,6 +1321,54 @@ def aplicar_gravacao_continua(valor) -> dict:
             "ligada": ligada, "gravando": gravando}
 
 
+def aplicar_hd_escolhido(chave: str, valor: str) -> dict:
+    """A escolha do ADMIN sobre o disco da gravacao (dono, 27/11/2026: "qual disco e quanto dele").
+
+    Chega pela MESMA rota local das outras chaves (o agente do bordo olha a config publicada em terra e
+    chama aqui — o terra nunca abre conexao para o bordo). `hd_disco` e `hd_cota_gb` sao aplicados UM a um:
+    cada um mexe SO na sua parte e o resto da escolha fica como estava (`definir_escolha` grava o conjunto).
+    Trocar de disco REINICIA o gravador (o ffmpeg estava preso no diretorio antigo) — e o que ja' foi
+    gravado nao e' movido nem apagado (dono, D3).
+    """
+    g = _modulo_da_gravacao_continua()
+    if not g:
+        return {"ok": False,
+                "motivo": "este pacote nao tem o modulo de gravacao continua (ground/gravacao_continua.py)"}
+    try:
+        atual = dict(g.escolha() or {})
+    except Exception:
+        atual = {}
+    disco = str(atual.get("disco") or "")
+    cota = atual.get("cota_gb")
+    if chave == "hd_disco":
+        disco = "" if valor in ("", "aplicativo", "padrao") else valor
+    else:
+        cota = valor or None
+    try:
+        antes = str(g.diretorio())
+    except Exception:
+        antes = ""
+    r = g.definir_escolha(disco, cota)
+    if not r.get("ok"):
+        return {"ok": False, "motivo": r.get("motivo") or "nao consegui aplicar a escolha do HD"}
+    mudou = bool(antes) and str(r.get("pasta") or "") != antes
+    reiniciou = False
+    if mudou:
+        try:
+            reiniciou = bool(g.reiniciar_gravador())
+        except Exception as e:  # noqa: BLE001
+            return {"ok": True, "chave": chave, "valor": valor, "reiniciou": False,
+                    "motivo": (r.get("motivo") or "") + f" — mas o gravador nao reiniciou ({type(e).__name__}: {e})"}
+    gravando = False
+    try:
+        gravando = bool(g.gravando_agora())
+    except Exception:
+        gravando = False
+    return {"ok": True, "chave": chave, "valor": valor, "motivo": r.get("motivo") or "",
+            "pasta": r.get("pasta"), "disco": r.get("disco") or "", "cota_gb": r.get("cota_gb"),
+            "reiniciou": reiniciou, "gravando": gravando}
+
+
 def aplicar_config_local(camera_id: str, chave: str, valor: str) -> dict:
     """Aplica UMA chave no banco DESTA maquina (rota local, o agente do bordo chama).
 
@@ -1364,6 +1453,10 @@ def aplicar_config_local(camera_id: str, chave: str, valor: str) -> dict:
         # O BOTAO DO ADMIN chega por aqui (o agente chama esta rota local): a gravacao continua do radar
         # liga/desliga NA MAQUINA DE CAPTURA — o HD, o dispositivo e o anel sao locais (dono, 26/11/2026).
         return aplicar_gravacao_continua(valor)
+    if chave in ("hd_disco", "hd_cota_gb"):
+        # QUAL DISCO E QUANTO DELE (dono, 27/11/2026): a escolha do admin, aplicada NA MAQUINA (e' ela que
+        # tem os discos). Trocar de disco reinicia o gravador; nada gravado e' movido.
+        return aplicar_hd_escolhido(chave, valor)
     if chave == "transmitir":
         # `transmitir` NAO passa por aqui de proposito: ligar/desligar a transmissao de UMA camera e' do
         # AGENTE, pelo mesmo caminho local que a flag usa (ver `_aplicar_transmitir` em agente_de_ordens).
@@ -1565,8 +1658,16 @@ def _saude_resumida(embarcacao_id: str) -> dict:
         "cpu_pct": r.get("cpu_pct"), "memoria_pct": r.get("memoria_pct"),
         "memoria_livre_mb": r.get("memoria_livre_mb"),
         "discos": [{"nome": d.get("nome"), "usado_pct": d.get("usado_pct"),
-                    "livre_gb": d.get("livre_gb"), "total_gb": d.get("total_gb")} for d in discos],
+                    "livre_gb": d.get("livre_gb"), "total_gb": d.get("total_gb"),
+                    # O VOLUME (letra/raiz) sobe para o admin poder ESCOLHER o disco da gravacao: e' um
+                    # volume da maquina, nao um caminho de arquivo nem segredo (dono, 27/11/2026, D1 — "o
+                    # PC mede e propoe"). Junto vao a cota escolhida e a origem dela.
+                    "caminho": d.get("caminho") or "", "gravando": bool(d.get("gravando")),
+                    "cota_gb": d.get("cota_gb"), "origem_da_escolha": d.get("origem_da_escolha") or "",
+                    "blocos": d.get("blocos"), "bytes": d.get("bytes")} for d in discos],
         "hd_radar_usado_pct": (hd or {}).get("usado_pct"), "hd_radar_livre_gb": (hd or {}).get("livre_gb"),
+        "hd_radar_total_gb": (hd or {}).get("total_gb"), "hd_escolha_cota_gb": (hd or {}).get("cota_gb"),
+        "hd_escolha_origem": (hd or {}).get("origem_da_escolha") or "",
         "ffmpeg": ff.get("presente"), "ffmpeg_versao": ff.get("versao") or ff.get("erro") or "",
         "mediamtx": bool((r.get("mediamtx") or {}).get("ativo")),
         "mediamtx_caminhos": (r.get("mediamtx") or {}).get("caminhos"),
@@ -1650,6 +1751,18 @@ def disponibilidade_7d(embarcacao_id: str, dias: int = 7) -> dict:
             "retratos": sum(d["retratos"] for d in dias_saida)}
 
 
+def _disco_do_radar(s: dict) -> dict:
+    """O disco onde a gravacao do radar acontece, do jeito que o retrato mediu.
+
+    A regua e' o rotulo `hd do radar` do retrato do bordo (`saude_do_bordo._discos()`, que ja' aponta para o
+    diretorio de gravacao de verdade) e, sem ele, o primeiro disco medido. Nada de disco inventado: sem
+    retrato, volta `{}` e a tela diz "nao medido".
+    """
+    discos = [d for d in (s.get("discos") or []) if isinstance(d, dict)]
+    return next((d for d in discos if (d.get("nome") or "") == "hd do radar"),
+                discos[0] if discos else {})
+
+
 def resumo_da_frota(usuario) -> dict:
     """O corpo do dashboard do admin, montado de uma vez (a tela não faz 6 chamadas)."""
     arv = arvore_do_painel(usuario)
@@ -1673,6 +1786,22 @@ def resumo_da_frota(usuario) -> dict:
                     "maquina": s.get("maquina") or "", "versao_app": s.get("versao_app") or "",
                     "cpu_pct": s.get("cpu_pct"), "memoria_pct": s.get("memoria_pct"),
                     "hd_radar_usado_pct": s.get("hd_radar_usado_pct"),
+                    "hd_radar_livre_gb": s.get("hd_radar_livre_gb"),
+                    "hd_radar_total_gb": s.get("hd_radar_total_gb"),
+                    "hd_escolha_cota_gb": s.get("hd_escolha_cota_gb"),
+                    "hd_escolha_origem": s.get("hd_escolha_origem") or "",
+                    # TELEMETRIA EVIDENTE (dono, 27/11/2026: "note que não tem disco e nem rede"): o disco
+                    # da gravacao e a rede da maquina vao NO ITEM da embarcacao, com a mesma regua do
+                    # retrato do bordo. Campo que o bordo nao mediu sai None e a tela diz "nao medido".
+                    "disco_nome": _disco_do_radar(s).get("nome") or "",
+                    "disco_livre_gb": _disco_do_radar(s).get("livre_gb"),
+                    "disco_total_gb": _disco_do_radar(s).get("total_gb"),
+                    "disco_usado_pct": _disco_do_radar(s).get("usado_pct"),
+                    "discos": s.get("discos") or [],
+                    "rede_envio_mbps": (s.get("rede") or {}).get("enviado_mbps"),
+                    "rede_recebimento_mbps": (s.get("rede") or {}).get("recebido_mbps"),
+                    "rede_taxa_mbps": (s.get("rede") or {}).get("taxa_mbps"),
+                    "nao_medido": s.get("nao_medido") or {},
                     "cameras": r.get("cameras") or 0, "no_ar": r.get("no_ar") or 0,
                     "achadas_pela_varredura": r.get("achadas_pela_varredura") or 0,
                     # a telemetria POR CÂMERA/ENCODER continua subindo para o dashboard (o dono pediu
@@ -2835,6 +2964,59 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b)
 
+    def _enviar_video_parcial(self, caminho: Path) -> None:
+        """Serve um mp4 que pode estar AINDA CHEGANDO do bordo — com Range simples.
+
+        O tamanho é lido AGORA (o arquivo cresce enquanto o PC de captura envia) e o `Content-Length` é o
+        que existe neste instante — nunca um número prometido. Como o gravador grava mp4 FRAGMENTADO, o
+        prefixo já é decodificável: o player toca o que chegou e a tela pede o resto (dono, D4).
+        """
+        try:
+            total = caminho.stat().st_size
+        except OSError:
+            return self._json(404, {"erro": "trecho nao encontrado"})
+        inicio, fim, codigo = 0, max(0, total - 1), 200
+        faixa = (self.headers.get("Range") or "").strip()
+        if faixa.startswith("bytes="):
+            try:
+                bruto = faixa[6:].split(",")[0].strip()
+                a, _, b = bruto.partition("-")
+                if a:
+                    inicio = max(0, int(a))
+                    if b:
+                        fim = min(int(b), max(0, total - 1))
+                elif b:
+                    inicio = max(0, total - int(b))
+                codigo = 206
+            except ValueError:
+                inicio, fim, codigo = 0, max(0, total - 1), 200
+        if total <= 0 or inicio >= total:
+            self.send_response(416)
+            self.send_header("Content-Range", f"bytes */{total}")
+            self.end_headers()
+            return
+        n = fim - inicio + 1
+        self.send_response(codigo)
+        self.send_header("Content-Type", "video/mp4")
+        self.send_header("Accept-Ranges", "bytes")
+        if codigo == 206:
+            self.send_header("Content-Range", f"bytes {inicio}-{fim}/{total}")
+        self.send_header("Content-Length", str(n))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            with open(caminho, "rb") as f:
+                f.seek(inicio)
+                restante = n
+                while restante > 0:
+                    pedaco = f.read(min(1 << 20, restante))
+                    if not pedaco:
+                        break
+                    self.wfile.write(pedaco)
+                    restante -= len(pedaco)
+        except (BrokenPipeError, ConnectionResetError):
+            return      # o cliente fechou o player: nada a consertar aqui
+
     def _json(self, codigo: int, corpo, cabecalhos: dict | None = None) -> None:
         b = json.dumps(corpo, ensure_ascii=False).encode()
         self.send_response(codigo)
@@ -3802,6 +3984,32 @@ class Handler(SimpleHTTPRequestHandler):
             if not dono:
                 return self._json(403, {"erro": "este trecho nao e' seu"})
             return self._enviar_arquivo(hd_dir() / p["trecho"], baixar=True)
+        if rota == "/api/hd/tocar":
+            # DAR PLAY NO TRECHO (dono, 27/11/2026: "não aparece nada para dar play na gravação, eu deveria
+            # poder dar play e ver em tempo real com barra de linha do tempo" · D4 = "do bordo em tempo
+            # real"). Serve o arquivo que esta' em terra — INCLUSIVE o que AINDA ESTA' CHEGANDO do bordo: a
+            # rota do trecho grava o corpo em blocos de 1 MB, entao o arquivo existe e CRESCE enquanto o PC
+            # de captura envia. O gravador grava mp4 FRAGMENTADO, entao o navegador toca o que ja' chegou e
+            # a tela busca o resto. Range suportado: a barra de linha do tempo pode avancar.
+            qq = parse_qs(urlparse(self.path).query)
+            pid = (qq.get("id", [""])[0] or "").strip()
+            if not u or not pid:
+                return self._json(401, {"erro": "entre no sistema e informe o trecho"})
+            with conexao() as c:
+                p = c.execute("SELECT * FROM hd_pedidos WHERE id=?", (pid,)).fetchone()
+            if not p:
+                return self._json(404, {"erro": "pedido nao encontrado"})
+            dono = (p["usuario_email"] or "") == (u["email"] or "") or u["papel"] in PAPEL_ADMIN \
+                or u["papel"] in ("operador", "tecnico")
+            if not dono:
+                return self._json(403, {"erro": "este trecho nao e' seu"})
+            if p["estado"] == "erro":
+                return self._json(409, {"erro": p["motivo"] or "o bordo nao conseguiu enviar este trecho"})
+            nome = p["trecho"] or f"{pid}-{Path(p['arquivo'] or 'trecho.mp4').name}"
+            alvo = hd_dir() / nome
+            if not alvo.exists() or not alvo.is_file():
+                return self._json(409, {"erro": "o trecho ainda nao comecou a chegar do bordo"})
+            return self._enviar_video_parcial(alvo)
         if rota in ("/api/metricas", "/api/tempo-real", "/api/metricas/tempo-real"):
             if not (self._pode_operar(u) or self._local()):
                 return self._json(403, {"erro": "so operacao e administrador veem as metricas"})
@@ -5638,6 +5846,30 @@ class Handler(SimpleHTTPRequestHandler):
                                           f"{r['chave']}={r['valor']} (v{r['versao']})",
                     self.client_address[0])
             return self._json(201, r)
+        if rota == "/api/hd/escolher":
+            # QUAL DISCO E QUANTO DELE (dono, 27/11/2026): UMA escolha so' — o disco e a cota viajam JUNTOS,
+            # para o bordo nao ficar num meio-termo (disco novo com a cota antiga, por exemplo). So' o admin
+            # publica; o bordo OLHA a config publicada e aplica na maquina dele (que e' quem tem os discos).
+            if not (u and u["papel"] in PAPEL_ADMIN):
+                return self._json(403, {"erro": "so o administrador escolhe o disco da gravacao"})
+            d = self._corpo()
+            emb = str(d.get("embarcacao_id") or "").strip()
+            disco = str(d.get("disco") if d.get("disco") is not None else "").strip()
+            cota = str(d.get("cota_gb") if d.get("cota_gb") is not None else "").strip()
+            if disco in ("aplicativo", "padrao"):
+                disco = ""
+            r1 = publicar_config(emb, "", "hd_disco", disco, origem=(u["email"] if u else ""))
+            if r1.get("erro"):
+                return self._json(422, r1)
+            r2 = publicar_config(emb, "", "hd_cota_gb", cota, origem=(u["email"] if u else ""))
+            if r2.get("erro"):
+                return self._json(422, r2)
+            auditar(u, "hd_escolhido", f"{emb} disco={disco or 'padrao'} cota={cota or 'sem cota'} (v{r2['versao']})",
+                    self.client_address[0])
+            return self._json(201, {"ok": True, "embarcacao_id": emb, "disco": r1["valor"],
+                                    "cota_gb": r2["valor"], "versao": r2["versao"],
+                                    "chaves": [{"chave": "hd_disco", "versao": r1["versao"]},
+                                               {"chave": "hd_cota_gb", "versao": r2["versao"]}]})
         if rota == "/api/config/aplicar":
             # ROTA LOCAL: quem chama e' o agente do bordo, nesta maquina. Aplica UMA chave aqui e diz
             # na cara quando nao aplica (nada de "achei que apliquei").

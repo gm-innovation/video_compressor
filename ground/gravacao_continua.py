@@ -47,6 +47,11 @@ Ambiente:
     LECSOR_HD_BITRATE          perfil de compressao (padrao 1500k)
     LECSOR_HD_RESOLUCAO        resolucao (padrao 1280x720)
     LECSOR_HD_FPS              quadros por segundo (padrao 30)
+
+A ESCOLHA DO ADMIN (dono, 27/11/2026 — "qual disco e quanto dele") NAO usa variavel de ambiente: fica no
+arquivo `ground/hd/config.json` (`{"disco": "D:\\", "pasta": "...", "cota_gb": 500}`), gravado pela rota
+local quando a config publicada de terra chega. A escolha vence o padrao e perde para o `LECSOR_HD_DIR`
+(override de bancada). O arquivo mora em lugar FIXO — trocar de disco nao apaga a escolha.
 """
 from __future__ import annotations
 
@@ -198,9 +203,154 @@ def gravando_agora() -> bool:
     return (dt.datetime.now() - ultimo).total_seconds() <= 2 * bloco_segundos() + 30
 
 
+# ---------------------------------------------------------------- ESCOLHA DO DISCO E DA COTA (dono, 27/11/2026)
+# Dono: "precisamos definir qual disco e quanto dele será utilizado para gravação" · "D1 sim (o PC mede e
+# propõe) · D2 GB · D3 um disco só grava nele, com dois ou mais o admin escolhe" · D4 · D5 · D6.
+# O BORDO mede os discos e PROPÕE (vão no retrato e no catálogo); o ADMIN escolhe na tela; o comando volta
+# pelo caminho que já existe (config publicada → o bordo olha → a rota local chama `definir_escolha`).
+# O ARQUIVO da escolha mora em lugar FIXO (a pasta do aplicativo) — se morasse no disco escolhido, trocar de
+# disco apagaria a própria escolha. Nada do que foi gravado é movido (D3).
+CONFIG_DO_HD = RAIZ / "ground" / "hd" / "config.json"
+PASTA_NO_DISCO = "lecsor-radar"
+COTA_MINIMA_GB, COTA_MAXIMA_GB = 0.1, 100000.0
+
+
+def _ler_escolha() -> dict:
+    try:
+        d = json.loads(CONFIG_DO_HD.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
+def escolha() -> dict:
+    """A escolha do admin: o disco (`disco`), a pasta que grava (`pasta`) e a cota (`cota_gb`).
+
+    `origem` diz de onde veio: `admin` (escolhida na tela) ou `padrao` (nada escolhido — o produto usa a
+    pasta do aplicativo, como sempre). Sem escolha, `disco`/`cota_gb` são vazios — a tela diz "padrão".
+    """
+    d = _ler_escolha()
+    pasta = str(d.get("pasta") or "").strip()
+    bruto = d.get("cota_gb")
+    try:
+        cota = float(bruto) if bruto not in (None, "") else None
+    except (TypeError, ValueError):
+        cota = None
+    if not pasta and not cota:
+        return {"disco": "", "pasta": "", "cota_gb": None, "origem": "padrao", "em": ""}
+    return {"disco": str(d.get("disco") or ""), "pasta": pasta, "cota_gb": cota,
+            "origem": str(d.get("origem") or "admin"), "em": str(d.get("em") or "")}
+
+
+def cota_bytes() -> int | None:
+    """A cota em BYTES (o espaço que a gravação pode ocupar neste disco) — `None` = sem cota escolhida."""
+    c = escolha().get("cota_gb")
+    if not c:
+        return None
+    return int(max(COTA_MINIMA_GB, float(c)) * 1024 * 1024 * 1024)
+
+
+def definir_escolha(disco: str, cota_gb) -> dict:
+    """Grava a escolha do admin (disco + cota em GB) e leva o DESEJO junto para o disco novo.
+
+    O desejo (`ligada.txt`) fica no disco da gravação; se ele mudasse sem acompanhar, "ligada" se perderia
+    na troca. Devolve `{"ok", "pasta", "cota_gb", "motivo"}` — e recusa disco que não existe nesta máquina
+    (nunca "apliquei" com caminho inventado). Não apaga nem move trecho nenhum (D3).
+    """
+    antes = diretorio()
+    desejo_antes = desejo()
+    disco = (disco or "").strip()
+    cota: float | None
+    try:
+        cota = float(str(cota_gb).strip()) if str(cota_gb or "").strip() else None
+    except (TypeError, ValueError):
+        return {"ok": False, "motivo": f"cota invalida: {cota_gb!r}"}
+    if cota is not None and not (COTA_MINIMA_GB <= cota <= COTA_MAXIMA_GB):
+        return {"ok": False, "motivo": f"cota fora da faixa do produto ({COTA_MINIMA_GB:g} a {COTA_MAXIMA_GB:g} GB) — veio {cota_gb!r}"}
+    if disco:
+        raiz = pathlib.Path(disco)
+        if not raiz.exists():
+            return {"ok": False, "motivo": f"o disco {disco!r} nao existe nesta maquina"}
+        pasta = raiz / PASTA_NO_DISCO
+    else:
+        pasta = RAIZ / "ground" / "hd"
+    try:
+        pasta.mkdir(parents=True, exist_ok=True)
+        CONFIG_DO_HD.parent.mkdir(parents=True, exist_ok=True)
+        CONFIG_DO_HD.write_text(json.dumps(
+            {"disco": disco, "pasta": str(pasta), "cota_gb": cota, "origem": "admin",
+             "em": dt.datetime.now().astimezone().isoformat(timespec="seconds")},
+            ensure_ascii=False, indent=1), encoding="utf-8")
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "motivo": f"nao consegui gravar a escolha ({type(e).__name__}: {e})"}
+    if desejo_antes in ("0", "1") and pasta != antes:
+        try:
+            (pasta / "ligada.txt").write_text(desejo_antes, encoding="utf-8")
+        except Exception:
+            pass
+    return {"ok": True, "pasta": str(pasta), "disco": disco, "cota_gb": cota, "origem": "admin",
+            "motivo": (f"gravacao vai para {pasta}"
+                       + (f", usando no maximo {cota:g} GB deste disco" if cota else ""))}
+
+
+def discos() -> list[dict]:
+    """TODOS os discos fixos desta máquina, medidos — é o que o bordo PROPÕE ao admin (D1).
+
+    O disco onde a gravação está agora vem marcado com `gravando: True`. Sem psutil não se inventa lista:
+    sobra o disco do aplicativo, medido por `shutil` (mesma régua do resto do produto).
+    """
+    saida: list[dict] = []
+    partes = []
+    try:
+        import psutil   # noqa: PLC0415
+        partes = list(psutil.disk_partitions(all=False))
+    except Exception:
+        partes = []
+    for p in partes:
+        mp = str(getattr(p, "mountpoint", "") or "")
+        if not mp or "cdrom" in str(getattr(p, "opts", "") or ""):
+            continue
+        linha = _medir_volume(mp)
+        if linha:
+            saida.append(linha)
+    if not saida:
+        linha = _medir_volume(str(RAIZ), nome="aplicativo")
+        if linha:
+            saida.append(linha)
+    atual = str(diretorio())
+    for d in saida:
+        d["gravando"] = bool(d.get("caminho")) and atual.lower().startswith(str(d["caminho"]).lower())
+        if d["gravando"]:
+            d["pasta"] = atual
+    return saida
+
+
+def _medir_volume(caminho: str, nome: str = "") -> dict | None:
+    try:
+        uso = shutil.disk_usage(caminho)
+    except Exception:
+        return None
+    return {"nome": nome or caminho, "caminho": caminho,
+            "total_gb": round(uso.total / 1e9, 1), "livre_gb": round(uso.free / 1e9, 1),
+            "usado_pct": round(100.0 * uso.used / uso.total, 1) if uso.total else None}
+
+
 def diretorio() -> pathlib.Path:
-    d = pathlib.Path(os.environ.get("LECSOR_HD_DIR") or (RAIZ / "ground" / "hd"))
-    return d
+    """Onde os blocos ficam AGORA: o override de bancada, a escolha do admin ou a pasta do aplicativo."""
+    amb = (os.environ.get("LECSOR_HD_DIR") or "").strip()
+    if amb:
+        return pathlib.Path(amb)
+    p = str(escolha().get("pasta") or "").strip()
+    return pathlib.Path(p) if p else (RAIZ / "ground" / "hd")
+
+
+def reiniciar_gravador() -> bool:
+    """Para e sobe o gravador — usado quando o DISCO da gravação muda (o ffmpeg fica preso no antigo)."""
+    parou = _parar_gravador()
+    if not ligada() or not dispositivo():
+        return parou
+    _subir_gravador()
+    return True
 
 
 def bloco_segundos() -> int:
@@ -380,12 +530,21 @@ def resumo() -> dict:
     # `gravando` e' a MEDIDA, nao o desejo (dono, 27/11/2026: o HD ficou 0 blocos enquanto as telas
     # diziam "gravando"/"ligada"). Vai no resumo para o catalogo de terra e as duas telas: ligada mas
     # sem gravador de pe' tem que aparecer como NAO gravando.
+    esc = escolha()
+    cota = cota_bytes()
+    usado = sum(b["bytes"] for b in bs)
     return {"ligada": ligada(), "gravando": gravando_agora(),
             "dispositivo": r["dispositivo"], "dispositivo_origem": r.get("origem") or "",
             "motivo": r.get("motivo") or "", "camera": camera(), "camera_id": camera_id(),
             "camera_rotulo": rotulo(), "nome_dispositivo": r.get("nome") or "",
             "bloco_segundos": bloco_segundos(), "diretorio": str(diretorio()),
-            "blocos": len(bs), "bytes": sum(b["bytes"] for b in bs),
+            # A ESCOLHA DO ADMIN (dono, 27/11/2026): qual disco, qual pasta e quanto dele. `origem` diz se
+            # foi ele quem escolheu ou se é o padrão da instalação — a tela nunca diz "escolhido" sem ser.
+            "disco": esc.get("disco") or "", "cota_gb": esc.get("cota_gb"),
+            "origem_da_escolha": esc.get("origem") or "padrao",
+            "cota_bytes": cota, "cota_usada_pct": (round(100.0 * usado / cota, 1) if cota else None),
+            "discos": discos(),
+            "blocos": len(bs), "bytes": usado,
             "primeiro": bs[0]["inicio"] if bs else "", "ultimo": bs[-1]["inicio"] if bs else "",
             "livre_bytes": livre, "total_bytes": total,
             "proximo_bloco_em": (max(0.0, bloco_segundos() - (time.time() % bloco_segundos()))
@@ -408,8 +567,13 @@ def manter_anel(quantos: int = 1) -> list[str]:
             uso = shutil.disk_usage(d)
         except OSError:
             return fora
+        # DOIS LIMITES (dono, 27/11/2026): o espaço que NÃO pode acabar no disco (reserva do sistema, como
+        # sempre) e a COTA que o admin escolheu para a gravação ("quanto dele será utilizado"). O que passar
+        # de qualquer um dos dois faz sair o bloco MAIS ANTIGO — o anel, nunca a gravação parada.
         if uso.free >= reserva_bytes():
-            return fora
+            cota = cota_bytes()
+            if not cota or sum(b["bytes"] for b in blocos()) <= cota:
+                return fora
         alvo = _mais_antigo()
         if not alvo:
             return fora
@@ -435,6 +599,13 @@ def comando_do_gravador() -> list:
             "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
             "-b:v", p["bitrate"], "-maxrate", p["bitrate"], "-bufsize", "2M",
             "-g", p["fps"],
+            # MP4 FRAGMENTADO (dono, 27/11/2026, D4: "dar play e ver em tempo real"): o bloco tem de ser
+            # decodificavel ANTES de estar inteiro — e' o que deixa o cliente tocar o trecho ENQUANTO ele
+            # chega do bordo (`/api/hd/tocar` serve o arquivo que CRESCE). MEDIDO: com o `-movflags` antes
+            # do `-f segment` o arquivo sai com o indice NO FIM (ftyp,free,mdat,moov) e o prefixo e'
+            # ilegivel; a forma que vale e' `-segment_format_options movflags=...` — o arquivo sai
+            # ftyp,moov,moof,mdat e o ffprobe LE quadros do arquivo cortado em 60%.
+            "-segment_format_options", "movflags=+frag_keyframe+empty_moov+default_base_moof",
             "-f", "segment", "-segment_time", str(bloco_segundos()),
             "-segment_atclocktime", "1", "-reset_timestamps", "1",
             "-strftime", "1", str(d / "bloco-%Y%m%d-%H%M%S.mp4")]

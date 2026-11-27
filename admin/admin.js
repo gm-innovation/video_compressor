@@ -2132,6 +2132,37 @@ function numeroDaFrota(v, sufixo, casas) {
   return Number(v).toFixed(casas === undefined ? 1 : casas) + (sufixo || '');
 }
 
+/* O DISCO DA GRAVAÇÃO E A REDE, NA LINHA DO CARTÃO (dono, 27/11/2026: "note que não tem disco e nem
+   rede"). A régua é o retrato do PC de captura: disco = onde a gravação do radar está (livre de total,
+   com a cota escolhida quando existe); rede = o que a máquina movimentou no último intervalo. Nada de
+   traço mudo: o que não foi medido diz "não medido". */
+function linhaDoDisco(e) {
+  /* Duas telas, dois nomes para a MESMA medida: o item do dashboard da frota usa `disco_*` e o cartão da
+     embarcação usa `hd_radar_*`. A régua é uma só (o retrato do bordo) — aqui se aceita os dois nomes. */
+  const livre = e.disco_livre_gb !== undefined ? e.disco_livre_gb : e.hd_radar_livre_gb;
+  const total = e.disco_total_gb !== undefined ? e.disco_total_gb : e.hd_radar_total_gb;
+  const pct = e.disco_usado_pct !== undefined ? e.disco_usado_pct : e.hd_radar_usado_pct;
+  const nome = (e.disco_nome ? (e.disco_nome + ' ') : '');
+  if (livre === null || livre === undefined || total === null || total === undefined) {
+    return 'disco do radar: não medido';
+  }
+  return 'disco do radar ' + nome + numeroDaFrota(livre) + ' GB livres de ' + numeroDaFrota(total) +
+    ' GB' + (pct === null || pct === undefined ? '' : ' (' + numeroDaFrota(pct) + '% usado)') +
+    (e.hd_escolha_cota_gb ? ' · cota ' + numeroDaFrota(e.hd_escolha_cota_gb, ' GB', 0) +
+      (e.hd_escolha_origem === 'admin' ? ' (escolha do admin)' : ' (padrão)') : '');
+}
+
+function linhaDaRede(e) {
+  const tot = e.rede || {};
+  const sub = e.rede_envio_mbps !== undefined ? e.rede_envio_mbps : tot.enviado_mbps;
+  const des = e.rede_recebimento_mbps !== undefined ? e.rede_recebimento_mbps : tot.recebido_mbps;
+  const motivo = (e.nao_medido || {}).rede || '';
+  if ((sub === null || sub === undefined) && (des === null || des === undefined)) {
+    return 'rede: não medida' + (motivo ? ' (' + motivo + ')' : '');
+  }
+  return 'rede ↑' + numeroDaFrota(sub) + ' / ↓' + numeroDaFrota(des) + ' Mbps agora';
+}
+
 function tileDaFrota(rot, valor, pe, tom) {
   const d = document.createElement('div');
   d.className = 'frota-num ' + (tom || 'neutro');
@@ -2575,8 +2606,13 @@ function dashItemDaEmbarcacao(e, linhas) {
     + (e.versao_app ? ' · v' + e.versao_app : '');
   const nums = document.createElement('div'); nums.className = 'numeros';
   nums.textContent = 'CPU ' + numeroDaFrota(e.cpu_pct, '%') + ' · memória ' +
-    numeroDaFrota(e.memoria_pct, '%') + ' · HD do radar ' + numeroDaFrota(e.hd_radar_usado_pct, '%') +
-    ' · câmeras no ar ' + e.no_ar + ' de ' + e.cameras;
+    numeroDaFrota(e.memoria_pct, '%') + ' · câmeras no ar ' + e.no_ar + ' de ' + e.cameras;
+  /* A TELEMETRIA EVIDENTE (dono, 27/11/2026): o disco da gravação e a rede da máquina entram na linha do
+     cartão — antes só havia CPU, memória e "HD do radar" (que saía "—" porque a régua olhava uma variável
+     de ambiente que ninguém define). O que o bordo não mediu diz "não medido". */
+  const tel = document.createElement('div'); tel.className = 'numeros';
+  tel.textContent = linhaDoDisco(e) + ' · ' + linhaDaRede(e);
+  if (!e.disco_total_gb) tel.classList.add('nota');
   /* GRAVANDO A BORDO (dono, 26/11/2026): "só preciso no monitoramento saber se está sendo gravado a
      bordo, não preciso ver as imagens". A medida é do BORDO; sem retrato dele a tela diz "não medido" —
      nunca um zero com cara de saúde. */
@@ -2614,7 +2650,7 @@ function dashItemDaEmbarcacao(e, linhas) {
       { rotulo: 'Memória', valor: (l) => (l.memoria_mb === null || l.memoria_mb === undefined ? '—' : Number(l.memoria_mb).toFixed(0) + ' MB') },
     ], individuais, 'nenhum fluxo no ar agora'));
   }
-  const partes = [nome, selo, emb, nums, grav, disp];
+  const partes = [nome, selo, emb, nums, tel, grav, disp];
   if (gaveta) partes.push(gaveta);
   partes.push(acoes);
   item.append(...partes);
@@ -3029,6 +3065,13 @@ function painelDeSaude(emb, cfg) {
   linha.appendChild(seloDe('neutro', 'dispositivos de vídeo ' + num(s.dispositivos)));
   linha.appendChild(seloDe(s.varredura_ok === false ? 'alerta' : 'neutro', 'varredura ' + num(s.varredura)));
   cx.appendChild(linha);
+  /* A TELEMETRIA EVIDENTE NO CARTÃO (dono, 27/11/2026: "note que não tem disco e nem rede"): a linha do
+     disco da gravação e da rede medida, na mesma régua do item do dashboard. Sem medida, diz que não
+     mediu — nunca um traço mudo. */
+  const teln = document.createElement('div'); teln.className = 'numeros';
+  teln.textContent = linhaDoDisco(s) + ' · ' + linhaDaRede(s);
+  if (s.hd_radar_total_gb === null || s.hd_radar_total_gb === undefined) teln.classList.add('nota');
+  cx.appendChild(teln);
   const horas = (s.uptime_s || s.uptime_s === 0) ? Math.round(s.uptime_s / 3600) + ' h no ar' : 'tempo no ar sem medida';
   cx.appendChild(notaDe('PC ' + (s.maquina || '?') + ' · app ' + (s.versao_app || 'versão não informada')
     + (s.so ? ' · ' + s.so : '') + ' · ' + horas
@@ -3179,6 +3222,74 @@ function cartaoDaEmbarcacao(emb) {
       : 'gravação contínua do radar: nada publicado (nasce DESLIGADA)';
     cg.appendChild(notaGrav);
     caixa.appendChild(cg);
+
+    /* QUAL DISCO E QUANTO DELE (dono, 27/11/2026: "precisamos definir qual disco e quanto dele será
+       utilizado para gravação" / "o PC mede e propõe" / cota em GB / "um disco só fica nele, com dois ou
+       mais escolhe"). O PC de captura MEDE os discos e manda no retrato; aqui o admin ESCOLHE. Com UM
+       disco só não há o que escolher (a tela diz isso). A escolha viaja pela config publicada — o mesmo
+       caminho da gravação contínua: o bordo olha, aplica e reinicia o gravador. Nada gravado é movido. */
+    const sHd = emb.saude || {};
+    const discosDoBordo = (sHd.discos || []).filter((d) => d && d.caminho);
+    const cfgHd = (A.teto || {})[emb.id] || { chaves: [], aplicadas: [] };
+    const desejaHd = (cfgHd.chaves || []).filter((x) => x.camera_id === '' && x.chave === 'hd_disco').pop();
+    const desejaCota = (cfgHd.chaves || []).filter((x) => x.camera_id === '' && x.chave === 'hd_cota_gb').pop();
+    const aplicHd = (cfgHd.aplicadas || []).filter((x) => x.camera_id === '' && x.chave === 'hd_disco').pop();
+    const aplicCota = (cfgHd.aplicadas || []).filter((x) => x.camera_id === '' && x.chave === 'hd_cota_gb').pop();
+    const emUso = discosDoBordo.find((d) => d.gravando) || discosDoBordo[0] || null;
+    const cd = document.createElement('div'); cd.className = 'linha-form';
+    const rotHd = document.createElement('span'); rotHd.className = 'nota';
+    rotHd.textContent = discosDoBordo.length
+      ? ('HD do radar: ' + (emUso ? (emUso.caminho + ' (' + numeroDaFrota(emUso.livre_gb) + ' GB livres de '
+            + numeroDaFrota(emUso.total_gb) + ' GB)') : '—')
+         + (sHd.hd_escolha_cota_gb ? ' · cota ' + numeroDaFrota(sHd.hd_escolha_cota_gb, ' GB', 0) : ' · sem cota escolhida')
+         + ' · ' + (sHd.hd_escolha_origem === 'admin' ? 'escolha do admin' : 'padrão da instalação'))
+      : 'HD do radar: o PC de captura ainda não mediu os discos desta máquina (sem retrato de saúde).';
+    cd.appendChild(rotHd);
+    if (discosDoBordo.length <= 1) {
+      cd.appendChild(notaDe(discosDoBordo.length === 1
+        ? 'esta máquina tem um disco só: a gravação fica nele — não há disco para escolher.'
+        : 'o seletor de disco aparece quando o PC de captura medir os discos (retrato de saúde).'));
+    } else if (A.usuario.papel === 'admin') {
+      const sel = document.createElement('select'); sel.className = 'campo'; sel.id = 'hd-disco-' + emb.id;
+      sel.title = 'os discos abaixo foram MEDIDOS pelo próprio PC de captura';
+      for (const d of discosDoBordo) {
+        const o = document.createElement('option'); o.value = d.caminho;
+        o.textContent = d.caminho + ' — ' + numeroDaFrota(d.livre_gb) + '/' + numeroDaFrota(d.total_gb)
+          + ' GB livres' + (d.gravando ? ' (gravando agora)' : '');
+        sel.appendChild(o);
+      }
+      const oPadrao = document.createElement('option'); oPadrao.value = '';
+      oPadrao.textContent = 'padrão da instalação (pasta do aplicativo)';
+      sel.appendChild(oPadrao);
+      sel.value = (desejaHd && String(desejaHd.valor || '')) || (emUso ? emUso.caminho : '');
+      const cota = document.createElement('input'); cota.className = 'campo'; cota.type = 'number';
+      cota.min = '0.1'; cota.step = '0.1'; cota.id = 'hd-cota-' + emb.id;
+      cota.placeholder = 'cota em GB (vazio = sem cota)';
+      cota.title = 'quanto do disco a gravação pode usar; ao bater, o trecho mais antigo sai';
+      cota.value = (desejaCota && String(desejaCota.valor || '')) || (sHd.hd_escolha_cota_gb || '');
+      const btHd = botao('aplicar no PC de captura', 'mini', async () => {
+        const rr = await api('/api/hd/escolher', { method: 'POST', body: JSON.stringify({
+          embarcacao_id: emb.id, disco: sel.value, cota_gb: cota.value }) });
+        await refazerCartaoDaEmbarcacao(emb.id);
+        mostrarRecado(rr.ok ? ('escolha do HD publicada (v' + (((rr.corpo || {}).versao) || '?')
+          + '): o PC de captura aplica e reinicia a gravação')
+          : 'recusado: ' + (((rr.corpo || {}).erro) || JSON.stringify(rr.corpo)), !rr.ok);
+      });
+      btHd.title = 'o PC grava no disco escolhido usando no máximo a cota; o que já foi gravado não é movido nem apagado';
+      cd.append(sel, cota, btHd);
+      const notaHd = document.createElement('span'); notaHd.className = 'nota';
+      notaHd.textContent = desejaHd
+        ? ('escolha publicada: ' + (desejaHd.valor || 'padrão')
+           + (desejaCota && desejaCota.valor ? ' · ' + desejaCota.valor + ' GB' : ' · sem cota')
+           + (aplicHd && aplicHd.versao >= desejaHd.versao
+               ? ' — o bordo aplicou' + (aplicHd.motivo ? ' (' + aplicHd.motivo + ')' : '')
+                 + (aplicCota && aplicCota.motivo ? ' [' + aplicCota.motivo + ']' : '')
+               : ' — aguardando o bordo')
+           + avisoDeVersao(cfgHd))
+        : 'o disco da gravação ainda não foi escolhido: vale o padrão da instalação (pasta do aplicativo).';
+      cd.appendChild(notaHd);
+    }
+    caixa.appendChild(cd);
   }
   caixa.appendChild(notaDe('Câmeras: ' + emb.resumo.cameras + ' · no ar: ' + emb.resumo.no_ar
     + ' · ativas: ' + emb.resumo.ativas

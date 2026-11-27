@@ -73,13 +73,34 @@
     </header>
 
     <div class="faixa-hd oculto" id="hd-filtro">
-      <span class="rotulo-hd">Procurar nos trechos gravados a bordo por data e hora:</span>
-      <input type="datetime-local" id="hd-de" title="De">
-      <input type="datetime-local" id="hd-ate" title="Até">
+      <span class="rotulo-hd">Procurar nos trechos gravados a bordo — escolha o dia e a hora (nada de digitar):</span>
+      <span class="grupo-hd">
+        <span class="rotulo-hd">de</span>
+        <input type="date" id="hd-de-data" title="Dia inicial">
+        <select id="hd-de-hora" title="Hora inicial"></select>
+        <select id="hd-de-min" title="Minuto inicial"></select>
+      </span>
+      <span class="grupo-hd">
+        <span class="rotulo-hd">até</span>
+        <input type="date" id="hd-ate-data" title="Dia final">
+        <select id="hd-ate-hora" title="Hora final"></select>
+        <select id="hd-ate-min" title="Minuto final"></select>
+      </span>
       <button class="pil" id="hd-filtrar">filtrar</button>
       <button class="pil" id="hd-tudo">ver tudo</button>
+      <span class="grupo-hd" id="hd-atalhos">
+        <button class="pil" data-atalho="30min" type="button">últimos 30 min</button>
+        <button class="pil" data-atalho="2h" type="button">últimas 2 h</button>
+        <button class="pil" data-atalho="hoje" type="button">hoje</button>
+        <button class="pil" data-atalho="ontem" type="button">ontem</button>
+      </span>
       <span class="rotulo-hd" id="hd-resumo"></span>
     </div>
+
+    <!-- O PLAY DO TRECHO (dono, 27/11/2026: "não aparece nada para dar play na gravação, eu deveria poder dar
+         play e ver em tempo real com barra de linha do tempo"). Vive FORA da tabela: a barra de linha do tempo
+         (o que existe, os buracos e o "agora") e o player que puxa o trecho do bordo ENQUANTO ele chega. -->
+    <div class="palco-do-trecho oculto" id="hd-trecho"></div>
 
     <div class="palco" id="palco"></div>
 

@@ -153,8 +153,9 @@ def main() -> int:
                    "Gravado a bordo" in bloco_bordo().inner_text(),
                    bloco_bordo().inner_text()[:120].replace("\n", " | "))
 
-            checar("a faixa de filtro por data e hora está na tela",
-                   pag.locator("#hd-de").count() == 1 and pag.locator("#hd-ate").count() == 1)
+            checar("a faixa de filtro por período está na tela (dia + hora + minuto, sem digitar)",
+                   pag.locator("#hd-de-data").count() == 1 and pag.locator("#hd-de-hora").count() == 1
+                   and pag.locator("#hd-de-min").count() == 1 and pag.locator("#hd-ate-data").count() == 1)
             linhas = bloco_bordo().locator("tbody tr")
             checar("a tabela lista os 3 trechos que o PC de captura publicou", linhas.count() == 3,
                    f"na tela: {linhas.count()}")
@@ -168,9 +169,13 @@ def main() -> int:
             checar("os trechos ainda no HD do barco mostram PEDIR", pedir.count() == 2,
                    f"{pedir.count()} botão(ões)")
 
-            # o cliente procura por um horário: o filtro estreita a lista (filtro da página inteira)
-            hoje = time.strftime("%Y-%m-%dT%H:%M", time.localtime(agora))
-            pag.fill("#hd-de", hoje)
+            # o cliente procura por um horário: o filtro estreita a lista (filtro da página inteira).
+            # NADA DE DIGITAR (dono, 27/11/2026 · D6): dia pelo calendário (input type=date), hora e minuto
+            # por lista — o `fill` num input date é o calendário, não texto livre.
+            hoje_dia = time.strftime("%Y-%m-%d", time.localtime(agora))
+            pag.fill("#hd-de-data", hoje_dia)
+            pag.select_option("#hd-de-hora", time.strftime("%H", time.localtime(agora)))
+            pag.select_option("#hd-de-min", time.strftime("%M", time.localtime(agora)))
             pag.click("#hd-filtrar")
             pag.wait_for_timeout(800)
             checar("o filtro por data e hora estreita a lista do bloco de bordo",

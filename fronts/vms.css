@@ -263,3 +263,28 @@ table.historico tr:last-child td{border-bottom:0}
 .faixa-hd .rotulo-hd{font-size:12px;color:var(--fraco,#94a3b8)}
 .faixa-hd input[type=datetime-local]{background:var(--painel,#0f172a);color:inherit;border:1px solid #1e293b;
   border-radius:8px;padding:6px 8px;font-size:12px;font-family:inherit}
+
+/* ------------------------------------------------------------------------------------------------
+   ESCOLHER O PERIODO SEM DIGITAR (dono, 27/11/2026 · D6 completo) e o PLAY DO TRECHO (D4/D5).
+   Nada de campo de texto: dia (calendario nativo) + listas de hora e minuto + atalhos de periodo.
+   ------------------------------------------------------------------------------------------------ */
+.faixa-hd .grupo-hd{display:inline-flex;align-items:center;gap:6px;
+  background:var(--painel,#0f172a);border:1px solid #1e293b;border-radius:8px;padding:4px 8px}
+.faixa-hd input[type=date],.faixa-hd select{background:transparent;color:inherit;border:1px solid #1e293b;
+  border-radius:6px;padding:4px 6px;font-size:12px;font-family:inherit}
+.faixa-hd input[type=date]{color-scheme:dark}
+.faixa-hd button.pil[data-atalho]{font-size:11px}
+.palco-do-trecho{margin:12px 18px 0;padding:12px 14px;border:1px solid #1e293b;border-radius:10px;
+  background:var(--painel,#0f172a);display:flex;flex-direction:column;gap:10px}
+.chapeu-trecho{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.chapeu-trecho h2{margin:0;font-size:14px}
+.barra-tempo{display:flex;flex-direction:column;gap:4px}
+.faixa-blocos{display:flex;align-items:stretch;gap:2px;min-height:22px;width:100%}
+.seg-blocos{flex:0 0 auto;min-width:8px;border:1px solid #1e293b;border-radius:4px;background:#16233b;
+  color:var(--fraco,#94a3b8);font-size:10px;padding:2px 4px;cursor:pointer;overflow:hidden}
+.seg-blocos:hover{border-color:#3b82f6;color:inherit}
+.seg-blocos.atual{background:#1d4ed8;color:#fff;border-color:#3b82f6}
+.agora-blocos{font-size:11px;color:var(--fraco,#94a3b8)}
+.video-trecho{width:100%;max-height:60vh;background:#000;border-radius:8px}
+.estado-trecho{font-size:12px;color:var(--fraco,#94a3b8)}
+.acoes-trecho{display:inline-flex;align-items:center;gap:6px}

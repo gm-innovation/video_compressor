@@ -20,6 +20,18 @@ RAIZ = pathlib.Path(__file__).resolve().parent.parent
 # `ambiente.json` que esta' no repositorio, e passaria a falar com a producao em vez de responder em casa.
 os.environ["LECSOR_SEM_AMBIENTE"] = "1"
 PROVAS = (
+    # RODADA 0.28.0 — A TELEMETRIA EVIDENTE, O DISCO ESCOLHIDO E O PLAY DO TRECHO (dono, 27/11/2026:
+    # "a telemetria do pc de captura precisa estar evidente no dashboard do admin, note que não tem disco
+    # e nem rede" · "precisamos definir qual disco e quanto dele será utilizado para gravação" · "preciso
+    # poder selecionar data e hora, não ter que digitar" · "não aparece nada para dar play na gravação, eu
+    # deveria poder dar play e ver em tempo real com barra de linha do tempo"). D1..D6 = sim / GB / depende
+    # do nº de discos / do bordo em tempo real / contínua / completo. O cartão do admin passa a mostrar o
+    # DISCO da gravação e a REDE; o admin escolhe o disco e a cota em GB de uma lista que o PRÓPRIO PC de
+    # captura mediu; o cliente escolhe o período clicando (calendário + hora + minuto + atalhos) e toca o
+    # trecho com linha do tempo — o bloco sai MP4 FRAGMENTADO, então o play toca o que já chegou (D4).
+    "tests/test-escolha-do-disco-e-cota-do-hd.py",
+    "tests/e2e-play-do-trecho-e-seletor-sem-digitar.py",
+    "tests/e2e-saude-do-bordo-no-admin.py",
     # RODADA 0.27.1 — O GRAVADOR DO HD VOLTA A LER O CADASTRO NO PYTHON EMBUTIDO (dono, 27/11/2026:
     # "no sistema do admin: 'o hd de bordo continua nao gravando as imagens do radar de oleo'" e "no app
     # de bordo: 'radar - gravando - 0 bloco(s) no HD'"). O log do gravador entregou a causa:

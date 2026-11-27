@@ -189,25 +189,104 @@ def _individual() -> list:
     return saida
 
 
+def _gravacao_continua():
+    """O modulo do HD do radar, se este pacote tiver (guardado: sem ele o retrato segue normal)."""
+    try:
+        import gravacao_continua as g   # noqa: PLC0415
+        return g
+    except Exception:
+        try:
+            sys.path.insert(0, str(RAIZ / "ground"))
+            import gravacao_continua as g   # noqa: PLC0415
+            return g
+        except Exception:
+            return None
+
+
+def _mesmo_volume(a, b) -> bool:
+    """`a` e `b` estao no MESMO volume? (Windows: a letra; POSIX: o mesmo device)."""
+    try:
+        if os.name == "nt":
+            return pathlib.Path(str(a)).drive.lower() == pathlib.Path(str(b)).drive.lower()
+        return os.stat(str(a)).st_dev == os.stat(str(b)).st_dev
+    except Exception:
+        return False
+
+
 def _discos() -> list:
-    """Onde o produto grava: a pasta do aplicativo e o HD do radar (o anel de gravacao continua)."""
-    alvos = [("aplicativo", RAIZ)]
-    hd = (os.environ.get("LECSOR_HD_DIR") or "").strip()
-    if hd:
-        alvos.append(("hd do radar", pathlib.Path(hd)))
+    """Onde o produto grava: o HD do radar (o anel da gravacao continua) e o disco do aplicativo.
+
+    REGUA DO "HD DO RADAR" (dono, 27/11/2026: o cartao do admin mostrava "HD do radar —"): e' o diretorio
+    de gravacao DE VERDADE — `gravacao_continua.diretorio()`, que ja' obedece a escolha do admin — e nao
+    uma variavel de ambiente que ninguem define no app instalado. O anel (blocos, bytes, mais antigo) e a
+    COTA escolhida acompanham a linha. Quando a gravacao cai no mesmo volume do aplicativo, sai UMA linha
+    so' (e' o mesmo disco — nao se inventa um disco que nao existe).
+    """
+    g = _gravacao_continua()
+    p_grav = (g.diretorio() if g else (RAIZ / "ground" / "hd"))
+    alvos: list[tuple[str, pathlib.Path]] = [("hd do radar", p_grav)]
+    if not _mesmo_volume(p_grav, RAIZ):
+        alvos.append(("aplicativo", RAIZ))
     saida = []
     for nome, p in alvos:
         try:
-            uso = shutil.disk_usage(str(p))
-            linha = {"nome": nome, "caminho": str(p),
+            # MEDE-SE UM CAMINHO QUE EXISTE (dono, 27/11/2026): a pasta de gravação nasce quando o produto
+            # grava o primeiro bloco — antes disso `shutil.disk_usage` estourava e sobrava uma linha SEM
+            # `usado_pct`, que fazia o cartão do bordo mostrar o disco como "—" (sem medida). O volume é o
+            # mesmo: mede-se o ancestral mais próximo que existe.
+            raiz = _raiz_do_volume(p)
+            uso = shutil.disk_usage(str(_caminho_para_medir(p)))
+            linha = {"nome": nome, "caminho": str(raiz),
                      "total_gb": round(uso.total / 1e9, 1), "livre_gb": round(uso.free / 1e9, 1),
                      "usado_pct": round(100.0 * uso.used / uso.total, 1) if uso.total else None}
             if nome == "hd do radar":
+                linha["pasta"] = str(p)
                 linha.update(_anel_do_hd(p))
+                try:
+                    esc = (g.escolha() if g else {}) or {}
+                except Exception:
+                    esc = {}
+                linha["cota_gb"] = esc.get("cota_gb")
+                linha["origem_da_escolha"] = esc.get("origem") or "padrao"
             saida.append(linha)
         except Exception as e:  # noqa: BLE001
             saida.append({"nome": nome, "caminho": str(p), "erro": f"{type(e).__name__}: {e}"})
     return saida
+
+
+def _caminho_para_medir(p: pathlib.Path) -> pathlib.Path:
+    """O caminho que EXISTE para medir o volume: o próprio, ou o ancestral mais próximo."""
+    atual = pathlib.Path(str(p))
+    for _ in range(12):
+        if atual.exists():
+            return atual
+        if atual.parent == atual:
+            break
+        atual = atual.parent
+    return RAIZ
+
+
+def _raiz_do_volume(p: pathlib.Path) -> pathlib.Path:
+    """A RAIZ do volume de `p` — o que o admin escolhe (`D:\\`, `C:\\`), não a pasta interna do app.
+
+    É a mesma régua do `gravacao_continua.discos()`: o MEDIDO é o volume. A pasta interna vai em `pasta`
+    (a tela do admin mostra o volume para escolher; a gravação conhece o resto).
+    """
+    try:
+        if os.name == "nt":
+            ancora = pathlib.Path(str(p)).anchor
+            return pathlib.Path(ancora) if ancora else pathlib.Path(str(p))
+        atual = pathlib.Path(str(_caminho_para_medir(p)))
+        while atual.parent != atual:
+            try:
+                if os.stat(str(atual.parent)).st_dev != os.stat(str(atual)).st_dev:
+                    break
+            except OSError:
+                break
+            atual = atual.parent
+        return atual
+    except Exception:  # noqa: BLE001
+        return pathlib.Path(str(p))
 
 
 def _anel_do_hd(pasta: pathlib.Path) -> dict:

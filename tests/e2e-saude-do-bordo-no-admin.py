@@ -334,6 +334,70 @@ def main() -> int:
                     os.environ["LECSOR_AGENTE_ESTADO"] = guardado
             exigir(vivo.get("laco_vivo") is True,
                    f"a saude le onde o AGENTE escreve ({padrao}) e ve o laco vivo: {vivo}")
+
+            # ---- 9. a TELEMETRIA do PC de captura no CARTÃO: DISCO e REDE (dono, 27/11/2026, 0.28.0) ----
+            # "a telemetria do pc de captura precisa estar evidente no dashboard do admin, note que não tem
+            #  disco e nem rede" · "precisamos definir qual disco e quanto dele será utilizado".
+            agora9 = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+            retrato9 = {
+                "gerado_em": agora9, "cpu_pct": 19.2, "memoria_pct": 60.2, "versao_app": versao_daqui,
+                "discos": [
+                    {"nome": "hd do radar", "caminho": "D:\\", "total_gb": 931.5, "livre_gb": 400.0,
+                     "usado_pct": 57.1, "blocos": 12, "bytes": 1500000000, "mais_antigo": "2026-11-27T09:00:00",
+                     "cota_gb": 50.0, "origem_da_escolha": "admin"},
+                    {"nome": "aplicativo", "caminho": "C:\\", "total_gb": 254.0, "livre_gb": 194.8,
+                     "usado_pct": 23.3},
+                ],
+                "rede": {"interfaces": [{"nome": "Ethernet", "enviado_mb": 3067.0, "recebido_mb": 412.0,
+                                         "enviado_mbps": 3.067, "recebido_mbps": 0.412}],
+                         "total": {"enviado_mbps": 3.067, "recebido_mbps": 0.412, "taxa_mbps": 3.48}},
+                "gravacao_continua": {"ligada": True, "gravando": True, "disco": "D:\\", "cota_gb": 50.0},
+            }
+            executa(terra_db, """INSERT INTO saude_bordo (embarcacao_id,recebido_em,maquina,versao_app,estado,retrato)
+                                 VALUES (?,?,?,?,?,?)""",
+                    (EMB, agora9, "PC-CAPTURA-PROVA", versao_daqui, "ok", json.dumps(retrato9)))
+            pag.click('button.item[data-tela="empresas"]')
+            pag.wait_for_selector(".cartao-empresa", timeout=20000)
+            for i in range(pag.locator(".cartao-empresa").count()):
+                pag.locator(".cartao-empresa").nth(i).locator("text=Abrir").first.click()
+                try:
+                    pag.wait_for_selector(cartao, timeout=8000)
+                    break
+                except Exception:  # noqa: BLE001
+                    pag.click('button.item[data-tela="empresas"]')
+                    pag.wait_for_selector(".cartao-empresa", timeout=10000)
+            pag.wait_for_function(
+                "s => /disco do radar/.test((document.querySelector(s) || {}).textContent || '')",
+                arg=cartao, timeout=20000)
+            t9 = pag.inner_text(cartao)
+            exigir("disco do radar" in t9 and "400.0 GB livres de 931.5 GB" in t9 and "57.1% usado" in t9,
+                   "o cartão mostra o DISCO da gravação: livre de total e % usado (era 'HD do radar —')")
+            exigir("rede ↑3.1 / ↓0.4 Mbps agora" in t9,
+                   "o cartão mostra a REDE medida agora (o dono: 'não tem disco e nem rede')")
+            exigir("cota 50 GB (escolha do admin)" in t9,
+                   "e a COTA escolhida, dita como escolha do admin")
+
+            # ---- 10. QUAL DISCO E QUANTO DELE: o admin escolhe da lista MEDIDA pelo próprio PC ---------
+            sel9 = f"#hd-disco-{EMB}"
+            cota9 = f"#hd-cota-{EMB}"
+            exigir(pag.locator(sel9).count() == 1 and pag.locator(cota9).count() == 1,
+                   "com DOIS discos medidos aparece o seletor de disco e o campo da cota")
+            opcoes = pag.locator(sel9 + " option").all_inner_texts()
+            exigir(len(opcoes) == 3 and any("D:\\" in o for o in opcoes) and any("C:\\" in o for o in opcoes),
+                   f"o seletor lista os discos que o PC de captura MEDIU (+ o padrão): {opcoes}")
+            pag.select_option(sel9, "C:\\")
+            pag.fill(cota9, "20")
+            pag.locator(cartao).locator("text=aplicar no PC de captura").first.click()
+            time.sleep(2.5)
+            escolhido = todos(terra_db, """SELECT chave,valor FROM config_bordo
+                                           WHERE embarcacao_id=? AND camera_id='' AND chave IN ('hd_disco','hd_cota_gb')
+                                           ORDER BY chave""", (EMB,))
+            mapa = {x["chave"]: x["valor"] for x in escolhido}
+            exigir(mapa.get("hd_disco") == "C:\\" and mapa.get("hd_cota_gb") == "20",
+                   f"a escolha do disco e da cota vai publicada para o bordo: {mapa}")
+            exigir(bool(todos(terra_db, "SELECT 1 FROM auditoria_acesso WHERE acao='hd_escolhido'")),
+                   "e fica na trilha de auditoria quem escolheu o disco e a cota")
+            exigir(not erros, "sem erro de javascript depois da escolha do HD: " + "; ".join(erros[:2]))
             nav.close()
     finally:
         for p in procs:
