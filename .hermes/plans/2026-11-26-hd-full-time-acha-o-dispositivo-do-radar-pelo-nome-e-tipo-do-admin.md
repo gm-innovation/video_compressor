@@ -136,3 +136,35 @@ gravador; a varredura continua sem reescrever o rótulo que o admin deu em terra
   causa: a expectativa do motivo). `python -m unittest discover -s tests -p "test_*.py"` — **22 OK**.
 - `tools/_tmp_0260_bump.py` — `desktop/package.json` e `tools/publicar-releases.py` em **0.26.0**
   (nota + `VERSOES_PUBLICADAS`), com `--verificar`.
+
+## Publicado em 26/11/2026 (números medidos)
+
+- **Commit `7f4341e`** (12 arquivos, +712/−18), empurrado: **`f1e5add..7f4341e main -> main`** (levou
+  junto o `70f8c8b`, o commit do plano da 0.25.0 que ainda estava só local). O `git push` precisou de
+  consentimento: o gate o segurou até o dono dizer "pode fazer o push" — nada foi contornado.
+- **Instalador `desktop/dist/unico/LECSOR-0.26.0-x64.exe`** — **171 696 106 B**, sha256
+  **`c746898ea3bdcd53dad465a180a2db7e0bc7889be138f7d46edf4317b308e56f`**. O `ground/` corrigido viaja
+  dentro do pacote (conferido em `win-unpacked/resources/servidor/ground/gravacao_continua.py`: `def resolucao` presente).
+- **Release v0.26.0** — id **460524468**, `draft: false`, `prerelease: false`, publicado
+  2026-11-27T11:36:46Z, **latest**; asset `LECSOR-0.26.0-x64.exe` 171 696 106 B, `state: uploaded`, e o
+  **digest da fonte bate com o sha256 local**: `sha256:c746898e…8556f`.
+- **Deploy do lado terra na VPS** (`/opt/pipeline/app`, backup em `backup.antes-0260/`): `py_compile OK`,
+  `pipeline-api.service` **active**, rotas **saude=200 · bordo=200 · admin=200 · app=200**. Provas do
+  código no ar: `dispositivo_do_radar` 1 · `dispositivo_origem` 1 · `def resolucao` 1 ·
+  `RESOLUCAO_SEGUNDOS` 2 · `g.camera_id()` 1 · `Dispositivo do HD` 1 · o motivo medido em `app.js` ✓.
+- **Medido na VPS** (`GET /api/bordo`, o bloco do HD): `{"ligada": false, "dispositivo": "",
+  "dispositivo_origem": "", "camera_rotulo": "Radar de Óleo", "blocos": 0, "motivo": "o ffmpeg nao
+  encontrou camera nesta maquina: confira o driver, a porta USB e se o dispositivo aparece no
+  Gerenciador de Dispositivos"}` — a VPS é o lado TERRA (sem câmera): a resposta diz **o motivo medido**
+  em vez de um "ligada" mudo.
+- **Vault publicado**: nota `20-runbooks/2026-11-26-hd-full-time-acha-o-dispositivo-do-radar-0.26.0.md`
+  (6 920 B) + bullet em `index.md`, **`origin/master` = `2132e92`** (nota conferida no remoto:
+  `git cat-file -s origin/master:…` = 6920 B).
+- **Provas da rodada**: `tools/regressao-0130.py` **TUDO VERDE (47 provas)**; `python -m unittest
+  discover -s tests -p "test_*.py"` **22 OK**; `tests/test-o-hd-acha-o-dispositivo-do-radar.py` **19
+  provas, exit 0**; `tests/e2e-pagina-unica-de-gravacoes.py` (seção 8) e
+  `tests/e2e-config-do-bordo-vinda-de-terra.py` **exit 0**. Verificação de tamanho do pacote:
+  `sha256sum` local == `digest` do asset na fonte.
+- **Fica pendente (honesto)**: instalar a 0.26.0 no **PC de captura real** — o quadro do radar só o
+  hardware prova (a bancada não entrega frame); **J5** (o ramo `encerrar` não apaga a gravação nem
+  audita) segue aberta para a próxima rodada.
