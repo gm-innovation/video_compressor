@@ -371,3 +371,25 @@ pacote: `ModuleNotFoundError: No module named 'api'`.
 **O que só o hardware resolve:** o PC de captura (DESKTOP-78DSH57, usuário HAVOX) continua com o app
 **0.25.0**; instalar o `LECSOR-0.27.1-x64.exe` naquele computador é o que faz o gravador subir e o HD
 gravar de verdade.
+
+### Publicado em 27/11/2026 (números medidos)
+
+- **Commit `38167ea`** — "0.27.1: o gravador do HD volta a ler o cadastro no Python do pacote" (10
+  arquivos, **+299/−8**) → `git push origin main` = **`c179fc7..38167ea`**.
+- **Instalador `LECSOR-0.27.1-x64.exe`** — **171 887 549 B**, sha256
+  `c3770d3dd0943dce875a85b71b66e5a3ce79af5dbb2a2b91025c9ea7eeef7de0` (o build imprimiu
+  `psutil no pacote: 7.2.2` antes de empacotar).
+- **Release v0.27.1** — id **460659522**, `latest`, publicada **2026-11-27T13:50:06Z**; asset
+  `LECSOR-0.27.1-x64.exe` (171 887 549 B) com **digest igual ao sha256 local**
+  (`sha256:c3770d3d…7de0`), conferido pela API do GitHub.
+- **Deploy na VPS** (`deploy-0271.sh`): backup `backup.antes-0271/`, `py_compile OK`,
+  `pipeline-api.service` **active**, `saude=200 · bordo=200 · admin=200 · app=200`; provas no arquivo que
+  subiu: `fix do sys.path no gravador: 1`, `gravando no resumo: 1`, `a MEDIDA no processo do radar: 2`,
+  `gravando publicado na gravacao: 1`, `NADA está sendo gravado no bordo: 1`, `VERSION: 0.27.1`.
+- **Medido na VPS** (`GET /api/bordo`): `{'ligada': False, 'gravando': False, 'blocos': 0, 'motivo': 'o
+  ffmpeg nao encontrou camera nesta maquina: …'}` — o campo `gravando` está no ar.
+- **Provas**: `tools/regressao-0130.py` **52/52 verde** (`reg-0271.log`, exit 0); `unittest discover`
+  **22/22 OK**; `tests/test-o-gravador-fala-com-o-cadastro-no-python-embutido.py` exit 0 (RED sem a
+  correção = 2 falhas); `tests/e2e-dashboard-de-verdade-e-card-compacto.py` exit 0 com a seção 6a.
+- **Vault**: nota `20-runbooks/2026-11-27-o-gravador-do-hd-volta-a-ler-o-cadastro-0.27.1.md` (6 638 B) +
+  bullet no `index.md` → **`origin/master` = `beb5d4c`** (nota e bullet provados no remoto).
