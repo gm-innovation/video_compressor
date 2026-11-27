@@ -288,6 +288,26 @@ cartão da embarcação**. Três provas e2e caíram de uma vez (`test-tela-sem-p
 `e2e-qualidade-e-teto-em-empresas`, `e2e-saude-e-desempenho-na-area`). Corrigido lendo `A.teto` de novo na
 linha do painel (`admin.js`); as três voltaram verdes. **A prova unitária não pegaria: foi o e2e de tela.**
 
+### Publicado em 27/11/2026 (números medidos)
+
+- **Commit `b2eaa38`** (14 arquivos, +837/−8) — push `a6eda1b..b2eaa38 main -> main` (autorizado pelo
+  "faça o push" do dono).
+- **Instalador `LECSOR-0.27.0-x64.exe`** — **171 886 882 B**, sha256
+  `b482157d8610c0de7f707969467c7222ba1f10b4665a19168844974ce6a59329` (o build provou
+  `psutil no pacote: 7.2.2` antes de empacotar).
+- **Release v0.27.0** — id **460584200**, `latest`, publicada 2026-11-27T12:37:55Z, asset `uploaded` e o
+  **digest da fonte igual ao sha256 local** (`sha256:b482157d…9329`).
+- **Deploy na VPS**: backup `backup.antes-0270/`, `py_compile OK`, `pipeline-api.service` **active**,
+  `saude=200 · bordo=200 · admin=200 · app=200`; provas no arquivo que subiu (`def versao_do_app`,
+  `def comparar_versao`, `bordo_desatualizado`, `function avisoDeVersao`, `App deste PC`, `VERSION` =
+  `0.27.0`).
+- **Medido na VPS** (`GET /api/config?embarcacao_id=bancada`): `{'lado': 'terra', 'versao_do_bordo':
+  '0.25.0', 'versao_publicada': '0.27.0', 'bordo_desatualizado': True, 'motivo_da_versao': "o PC de
+  captura esta' na v0.25.0 e a publicada e' a v0.27.0 — atualizar o app de captura"}` — a denúncia no ar,
+  sobre o PC real.
+- **Vault**: nota `20-runbooks/2026-11-27-denuncia-do-app-de-captura-antigo-e-psutil-no-pacote-0.27.0.md`
+  (7 966 B) + bullet no `index.md` → **`origin/master` = `f42fa91`** (nota + bullet provados no remoto).
+
 ### Continua pendente (depende do hardware, não do código)
 
 O PC de captura real roda **0.25.0** e o app **não se auto-atualiza**: só instalar o instalador
