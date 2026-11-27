@@ -6329,7 +6329,13 @@ class Handler(SimpleHTTPRequestHandler):
             g = dict(gravacao_continua.resumo() or {})
             if g.get("ligada"):
                 p = _pega(str(g.get("camera") or "radar"), "")
-                p["gravando"] = True
+                # A MEDIDA, nao o desejo (dono, 27/11/2026): o HD passou dias com 0 blocos e a tela
+                # escrevia "radar — gravando · 0 bloco(s) no HD" porque aqui bastava o desejo ligado.
+                p["gravando"] = bool(g.get("gravando"))
+                if not p["gravando"]:
+                    p["observacao"] = ("a gravacao full-time esta ligada (desejo do admin), mas o gravador "
+                                       "NAO esta de pe — nada esta sendo gravado"
+                                       + (": " + str(g.get("motivo")) if g.get("motivo") else ""))
                 p["desde_gravacao"] = g.get("ultimo") or ""
                 p["hd"] = {"diretorio": g.get("diretorio"), "blocos": g.get("blocos"),
                            "bytes": g.get("bytes"), "livre_bytes": g.get("livre_bytes"),
@@ -6353,7 +6359,8 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             import gravacao_continua
             g = dict(gravacao_continua.resumo() or {})
-            return {"ligada": bool(g.get("ligada")), "camera": g.get("camera") or "radar",
+            return {"ligada": bool(g.get("ligada")), "gravando": bool(g.get("gravando")),
+                    "camera": g.get("camera") or "radar",
                     "camera_id": g.get("camera_id") or "", "camera_rotulo": g.get("camera_rotulo") or "",
                     "dispositivo": g.get("dispositivo") or "", "dispositivo_origem": g.get("dispositivo_origem") or "",
                     "nome_dispositivo": g.get("nome_dispositivo") or "", "motivo": g.get("motivo") or "",

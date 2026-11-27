@@ -505,10 +505,16 @@ async function carregar() {
   selo($('selo-agora'), agora, agora === 'nada no ar' ? 'neutro' : 'ok');
   ficha($('ficha-agora'), [
     ['Processos ativos', proc.filter(p => p.estado !== 'parado').length + ' de ' + proc.length],
+    /* LIGADA != GRAVANDO (dono, 27/11/2026): o HD passou dias com 0 blocos e esta linha escrevia
+       "ligada" (o DESEJO). Agora, com a medida do gravador em maos, a tela diz que NADA esta' sendo
+       gravado — e por que^. */
     ['Gravação full-time', grav.erro ? ('não consegui ler: ' + grav.erro)
-        : (grav.ligada ? ('ligada — ' + (grav.camera_rotulo || grav.camera || 'radar') + ', ' + (grav.blocos ?? 0) + ' bloco(s)'
+        : (grav.ligada ? (grav.gravando === false
+            ? ('ligada, mas NADA está sendo gravado — o gravador não está de pé'
+               + (grav.motivo ? ' (' + grav.motivo + ')' : ''))
+            : ('ligada — ' + (grav.camera_rotulo || grav.camera || 'radar') + ', ' + (grav.blocos ?? 0) + ' bloco(s)'
                          + (grav.ultimo ? ' · o último começou ' + String(grav.ultimo).replace('T', ' ').slice(0, 16)
-                                        : ' · nenhum bloco ainda'))
+                                        : ' · nenhum bloco ainda')))
                        : 'desligada (quem liga é o admin)')],
     /* QUAL dispositivo e POR QUÊ (dono, 26/11/2026): o tipo que o admin escolheu em terra manda; sem
        casar, a tela diz o motivo em vez de mostrar "ligada" como se estivesse gravando. */

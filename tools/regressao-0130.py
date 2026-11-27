@@ -20,6 +20,16 @@ RAIZ = pathlib.Path(__file__).resolve().parent.parent
 # `ambiente.json` que esta' no repositorio, e passaria a falar com a producao em vez de responder em casa.
 os.environ["LECSOR_SEM_AMBIENTE"] = "1"
 PROVAS = (
+    # RODADA 0.27.1 — O GRAVADOR DO HD VOLTA A LER O CADASTRO NO PYTHON EMBUTIDO (dono, 27/11/2026:
+    # "no sistema do admin: 'o hd de bordo continua nao gravando as imagens do radar de oleo'" e "no app
+    # de bordo: 'radar - gravando - 0 bloco(s) no HD'"). O log do gravador entregou a causa:
+    # "nao consegui ler o cadastro desta maquina (ModuleNotFoundError: No module named 'api')". O
+    # `python312._pth` do Python embutido do pacote nao poe a pasta do script no `sys.path`, entao o
+    # `import api` do laco explodia e o gravador saia na primeira linha (0 blocos, sem `gravador.log`).
+    # A mesma rodada faz a TELA parar de mentir: "gravando" agora e' a MEDIDA (`gravando_agora()`), nao
+    # o desejo do admin — no bordo, no `/api/bordo` e no catalogo que vai para terra.
+    "tests/test-o-gravador-fala-com-o-cadastro-no-python-embutido.py",
+    "tests/e2e-dashboard-de-verdade-e-card-compacto.py",
     # RODADA 0.27.0 — O APP DO PC DE CAPTURA ANTIGO E O PSUTIL DENTRO DO PACOTE (dono, 26/11/2026:
     # "gravação contínua: publicada LIGADA — o bordo: ligada (ligada, mas esta maquina nao tem dispositivo
     # de video configurado (LECSOR_HD_DISPOSITIVO): nada sera' gravado) ... precisamos resolver isso" e

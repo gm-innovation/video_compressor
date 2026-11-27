@@ -232,6 +232,13 @@ def _modulo_da_api():
     m = sys.modules.get("__main__")
     if m is not None and hasattr(m, "dispositivo_do_radar"):
         return m
+    # O python EMBUTIDO do pacote (`tools/python/python312._pth`) monta o `sys.path` só com
+    # `python312.zip`, `.` e `Lib\site-packages`: a pasta DO SCRIPT não entra. Rodando o laco
+    # como processo separado (o caso do app instalado), o `import api` explodia com
+    # `ModuleNotFoundError: No module named 'api'` e o gravador saia sem gravar nada.
+    aqui = str(pathlib.Path(__file__).resolve().parent)
+    if aqui not in sys.path:
+        sys.path.insert(0, aqui)
     import api  # noqa: PLC0415  (o gravador rodando sozinho, fora do servidor)
     return api
 
@@ -370,7 +377,11 @@ def resumo() -> dict:
         livre, total = uso.free, uso.total
     except OSError:
         livre = total = 0
-    return {"ligada": ligada(), "dispositivo": r["dispositivo"], "dispositivo_origem": r.get("origem") or "",
+    # `gravando` e' a MEDIDA, nao o desejo (dono, 27/11/2026: o HD ficou 0 blocos enquanto as telas
+    # diziam "gravando"/"ligada"). Vai no resumo para o catalogo de terra e as duas telas: ligada mas
+    # sem gravador de pe' tem que aparecer como NAO gravando.
+    return {"ligada": ligada(), "gravando": gravando_agora(),
+            "dispositivo": r["dispositivo"], "dispositivo_origem": r.get("origem") or "",
             "motivo": r.get("motivo") or "", "camera": camera(), "camera_id": camera_id(),
             "camera_rotulo": rotulo(), "nome_dispositivo": r.get("nome") or "",
             "bloco_segundos": bloco_segundos(), "diretorio": str(diretorio()),

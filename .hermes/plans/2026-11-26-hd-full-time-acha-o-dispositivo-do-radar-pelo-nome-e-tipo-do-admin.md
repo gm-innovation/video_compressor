@@ -313,3 +313,61 @@ linha do painel (`admin.js`); as três voltaram verdes. **A prova unitária não
 O PC de captura real roda **0.25.0** e o app **não se auto-atualiza**: só instalar o instalador
 `LECSOR-0.27.0-x64.exe` naquele computador (usuário HAVOX) faz o radar gravar **de verdade** e as imagens
 aparecerem no HD do bordo. O produto agora **denuncia** a versão velha nas duas telas.
+
+---
+
+## Executado em 27/11/2026 — rodada 0.27.1 (o gravador não achava o cadastro no Python do pacote)
+
+**Denúncia do dono, com a tela na mão:** *"no sistema do admin: 'o hd de bordo continua nao gravando as
+imagens do radar de oleo'"* · *"no app de bordo: 'radar - gravando - 0 bloco(s) no HD'"* ·
+*"D:\gravacao-continua.log só tem um arquivo"*.
+
+**O log entregou a causa:**
+
+```
+2026-11-27 09:46:34 gravador subido pelo desejo do admin (pid 4908)
+2026-11-27 09:46:34 gravacao continua ligada mas SEM dispositivo de video: nao consegui ler o cadastro
+   desta maquina (ModuleNotFoundError: No module named 'api') — nada a fazer
+```
+
+**Causa-raiz (reproduzida na bancada):** o gravador roda como processo separado (é o desenho: ele não pode
+depender do servidor de captura) com o `python.exe` **embutido** do pacote
+(`tools/python/python312._pth`). O `._pth` monta o `sys.path` só com `python312.zip`, `.` e
+`Lib\site-packages` — **a pasta do script não entra** (ao contrário do Python do sistema) — e o
+`import api` (o cadastro desta máquina) explodia. O laço saía na **primeira linha**: 0 blocos, e o
+`log/gravador.log` do ffmpeg (que só nasce dentro do `gravar()`) nunca existia. Reproduzido com o Python do
+pacote: `ModuleNotFoundError: No module named 'api'`.
+
+**Correções (cirúrgicas):**
+
+1. `ground/gravacao_continua.py::_modulo_da_api()` — a pasta do próprio arquivo entra no `sys.path` antes
+   do `import api`.
+2. `ground/gravacao_continua.py::resumo()` — ganhou **`gravando`** (a MEDIDA: `gravando_agora()`), não o
+   desejo.
+3. `ground/api.py::_processos_do_bordo()` — `p["gravando"]` passa a vir da medida (antes era `True` só com
+   o desejo ligado: era essa linha que escrevia "radar — gravando · 0 bloco(s) no HD"), e o processo ganha
+   `observacao` quando a gravação está ligada e o gravador não está de pé.
+4. `ground/api.py::_gravacao_do_bordo()` — publica `gravando`.
+5. `bordo/index.html` — a linha "Gravação full-time" diz **"ligada, mas NADA está sendo gravado — o
+   gravador não está de pé"** (com o motivo) quando a medida diz que não está gravando.
+
+**Provas (27/11/2026):**
+
+- `tests/test-o-gravador-fala-com-o-cadastro-no-python-embutido.py` (**novo**) — roda com o **Python do
+  pacote**: (a) o `sys.path` do embutido não tem a pasta do laço; (b) `--estado` devolve o motivo REAL
+  (`"a camera 'Radar da bancada (prova)' (tipo radar) nao casou com nenhum dispositivo desta ma..."`),
+  nunca o erro de import; (c) o laço `--uma-vez` sobe e chega a gravar (`gravacao continua no ar`).
+  **RED** (sem a correção, via `git stash`): 2 falhas, motivo `ModuleNotFoundError: No module named 'api'`.
+  **GREEN** (com a correção): exit 0.
+- `tests/e2e-dashboard-de-verdade-e-card-compacto.py` — seção nova **6a** (exit 0): sem gravador de pé a
+  tela diz `ligada, mas NADA está sendo gravado — o gravador não está de pé (…)` e a linha do radar fica
+  `radar — parado · 0 bloco(s) no HD · a gravacao full-time esta ligada (desejo do admin), mas o gravador
+  NAO esta de pé`; com gravador de pé e bloco novo: `ligada — radar, 1 bloco(s)` e
+  `radar — gravando · gravando desde … · 1 bloco(s) no HD`.
+- `python -m py_compile` OK; `node --check` do `bordo/index.html`, `admin/admin.js` e `app/app.js` OK.
+- Versão: `VERSION` + `desktop/package.json` = **0.27.1** (`tools/_tmp_0271_bump.py`, com a nota de release
+  em `tools/publicar-releases.py`).
+
+**O que só o hardware resolve:** o PC de captura (DESKTOP-78DSH57, usuário HAVOX) continua com o app
+**0.25.0**; instalar o `LECSOR-0.27.1-x64.exe` naquele computador é o que faz o gravador subir e o HD
+gravar de verdade.

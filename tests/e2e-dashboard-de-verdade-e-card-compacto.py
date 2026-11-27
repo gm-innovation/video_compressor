@@ -350,6 +350,56 @@ def main() -> int:
             checar("a nota declara a serie (de onde ela vem)", len(painel["nota"]) > 20, painel["nota"][:80])
             checar("existe o Modo TV", painel["tv"])
 
+            print("\n== 6a. LIGADA != GRAVANDO: o HD do radar com 0 blocos (dono, 27/11/2026) ==")
+            # O dono, com a tela na mao: "no sistema do admin: 'o hd de bordo continua nao gravando as
+            # imagens do radar de oleo' / no app de bordo: 'radar - gravando - 0 bloco(s) no HD'". A causa
+            # foi o `import api` do gravador (Python embutido) — mas a TELA mentia por conta propria: ela
+            # escrevia "gravando" lendo o DESEJO do admin. Aqui se mede o DESENHO nos DOIS estados reais
+            # desta maquina: (1) desejo ligado e gravador caido; (2) gravador de pe' com bloco novo.
+            hd_do_bordo = tmp / "hd"
+            hd_do_bordo.mkdir(parents=True, exist_ok=True)
+            js_linha_do_hd = """() => {
+              const dt = Array.from(document.querySelectorAll('#ficha-agora dt'))
+                .find((d) => /full-time/i.test(d.textContent || ''));
+              return dt && dt.nextElementSibling ? dt.nextElementSibling.textContent : '';
+            }"""
+            (hd_do_bordo / "ligada.txt").write_text("1", encoding="utf-8")
+            bordo.evaluate("() => carregar()")
+            try:
+                bordo.wait_for_function(
+                    "() => /NADA est. sendo gravado/i.test(document.body.innerText)", timeout=ESPERA)
+            except Exception as e:  # noqa: BLE001
+                print("       aviso: a ficha nao chegou a dizer 'NADA esta sendo gravado':", type(e).__name__)
+            linha = bordo.evaluate(js_linha_do_hd)
+            print("        ligada sem gravador:", linha[:130])
+            checar("ligada SEM gravador de pe': a tela diz que NADA esta' sendo gravado",
+                   "nada está sendo gravado" in linha.lower(), linha[:130])
+            checar("e a tela NAO escreve mais 'gravando' para um HD parado",
+                   "radar — gravando" not in bordo.inner_text("#processos"),
+                   bordo.inner_text("#processos")[:130].replace("\n", " | "))
+            # Agora o gravador de VERDADE nesta maquina: um bloco agora e o pid de um processo vivo.
+            (hd_do_bordo / ("bloco-" + time.strftime("%Y%m%d-%H%M%S") + ".mp4")).write_bytes(b"0" * 8192)
+            (hd_do_bordo / "gravador.pid").write_text(str(os.getpid()), encoding="utf-8")
+            bordo.evaluate("() => carregar()")
+            try:
+                bordo.wait_for_function(
+                    "() => /ligada — /.test(document.body.innerText)", timeout=ESPERA)
+            except Exception as e:  # noqa: BLE001
+                print("       aviso: a ficha nao voltou a dizer 'ligada':", type(e).__name__)
+            linha = bordo.evaluate(js_linha_do_hd)
+            processos = bordo.inner_text("#processos")
+            print("        com gravador de pe':", linha[:130], "|", processos[:110].replace("\n", " | "))
+            checar("com o gravador de pe' e bloco novo a tela diz 'ligada' (agora e' verdade)",
+                   "ligada — " in linha and "nada está sendo gravado" not in linha.lower(), linha[:130])
+            checar("e o processo do radar aparece gravando (com o bloco no HD)",
+                   "radar — gravando" in processos and "bloco(s) no HD" in processos,
+                   processos[:150].replace("\n", " | "))
+            (hd_do_bordo / "ligada.txt").write_text("0", encoding="utf-8")
+            try:
+                (hd_do_bordo / "gravador.pid").unlink()
+            except OSError:
+                pass
+
             print("\n== 6b. sem serie, a tela DIZ 'sem serie' (nao inventa curva) ==")
             bordo.evaluate("() => { for (const c of CURVAS) desenharCurva(c, []); }")
             vazio = bordo.evaluate("""() => {
