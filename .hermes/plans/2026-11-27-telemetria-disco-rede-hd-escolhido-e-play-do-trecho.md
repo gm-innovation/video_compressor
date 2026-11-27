@@ -224,11 +224,13 @@ recriado** enquanto o trecho chega. **Medido** por `tests/e2e-play-do-trecho-e-s
 (14 provas, incluindo 200 + tamanho exato, `Range` 206/100 B, o mesmo `<video>` após 6 s e o texto
 "chegando do bordo em tempo real: já recebi 0.4 MB") e por `tests/test-escolha-do-disco-e-cota-do-hd.py`.
 
-**Fase 5 — EM ANDAMENTO.** Provas na regressão curada: FEITO (`tools/regressao-0130.py` com o bloco
-0.28.0). Falta: rodada completa da regressão, `unittest`, bump para 0.28.0, instalador, release, deploy na
-VPS e nota do vault.
+**Fase 5 — FEITA.** Provas na regressão curada: FEITO (`tools/regressao-0130.py` com o bloco 0.28.0) e
+rodada completa **55/55 verde**, `unittest` **22/22**, bump para 0.28.0 (e 0.28.1, com o achado do deploy),
+instalador `LECSOR-0.28.1-x64.exe` (171 899 304 B, sha256 `6ba61c94…7329`), releases **460797812** (0.28.0)
+e **460821834** (0.28.1, `latest`), deploy na VPS exit 0 nas duas (`active`, `200/200/200/200`) e nota no
+vault (`2854073`).
 
-**Aberto (não é desta rodada):** instalar a 0.28.0 no PC de captura real (HAVOX, hoje 0.25.0) — só então
+**Aberto (não é desta rodada):** instalar a **0.28.1** no PC de captura real (HAVOX, hoje 0.25.0) — só então
 aparecem o disco e a rede daquele PC, e o HD do radar grava no disco escolhido. O app **não se
 auto-atualiza**.
 
