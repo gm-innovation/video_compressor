@@ -995,8 +995,81 @@ LIMITE_NOME_CAMERA = 120
 CHAVE_NOME_CAMERA = "rotulo"
 
 
+def versao_do_app() -> str:
+    """A versao do app NESTE lado. Ordem: `LECSOR_VERSAO_APP` (o Electron escreve no boot, em
+    `desktop/main.js`), depois o arquivo `VERSION` da raiz (que o deploy do lado terra leva junto) e, por
+    ultimo, o `desktop/package.json` do repositorio. Se nada existir, devolve "" — nunca chuta.
+
+    Existe por causa do que o dono viu em 26/11/2026: o admin mostrava "gravação contínua: publicada
+    LIGADA" e o bordo respondia "nada sera' gravado" **com o texto da versao antiga** — o PC de captura
+    estava na 0.25.0 e nada no produto dizia isso. Sem a versao, "nao grava" e' indistinguivel de "nao
+    grava porque o app esta' velho".
+    """
+    v = (os.environ.get("LECSOR_VERSAO_APP") or "").strip()
+    if v:
+        return v
+    for p in (RAIZ / "VERSION", RAIZ / "desktop" / "package.json"):
+        try:
+            if not p.exists():
+                continue
+            if p.name == "package.json":
+                return str(json.loads(p.read_text(encoding="utf-8")).get("version") or "").strip()
+            return p.read_text(encoding="utf-8").strip()
+        except Exception:  # noqa: BLE001
+            continue
+    return ""
+
+
+def versao_em_trio(versao: str) -> tuple:
+    """'0.25.0' -> (0, 25, 0). Devolve () quando nao der para comparar (nada de adivinhar)."""
+    partes = [int(p) for p in re.split(r"[^0-9]+", str(versao or "").strip()) if p != ""]
+    return tuple(partes)
+
+
+def comparar_versao(do_bordo: str, publicada: str) -> dict:
+    """O app do PC de captura esta' ANTIGO? Devolve `desatualizado` (True/False/None) + o motivo.
+
+    `None` = nao se sabe (o bordo nao informou a versao, ou a versao nao e' comparavel) — e isso NAO
+    pode virar um "esta' tudo certo": o silencio de um app velho e' justamente o caso a denunciar.
+    """
+    b, p = str(do_bordo or "").strip(), str(publicada or "").strip()
+    if not b:
+        return {"desatualizado": None,
+                "motivo": "o bordo ainda nao informou a versao do app (pode ser um app antigo)"}
+    if not p:
+        return {"desatualizado": None,
+                "motivo": f"esta tela nao sabe a versao publicada (o bordo esta' na v{b})"}
+    tb, tp = versao_em_trio(b), versao_em_trio(p)
+    if not tb or not tp:
+        return {"desatualizado": None,
+                "motivo": f"nao consegui comparar as versoes (bordo v{b}, publicada v{p})"}
+    if tb < tp:
+        return {"desatualizado": True,
+                "motivo": f"o PC de captura esta' na v{b} e a publicada e' a v{p} — atualizar o app de captura"}
+    return {"desatualizado": False, "motivo": ""}
+
+
+def _versao_do_bordo(embarcacao_id: str) -> str:
+    """A ultima versao que o PC de captura contou de si mesmo (`saude_bordo.versao_app`).
+
+    Se ESTA maquina e' a de captura (o app a bordo, `LECSOR_EMBARCACAO_BORDO`), quem sabe a versao e' ela
+    mesma — e o retrato local pode nem existir.
+    """
+    if (os.environ.get("LECSOR_EMBARCACAO_BORDO") or "").strip() == (embarcacao_id or "").strip():
+        return versao_do_app()
+    with conexao() as c:
+        linha = c.execute("""SELECT versao_app FROM saude_bordo WHERE embarcacao_id=?
+                             ORDER BY id DESC LIMIT 1""", ((embarcacao_id or "").strip(),)).fetchone()
+    return str((linha["versao_app"] if linha else "") or "").strip()
+
+
 def config_publicada(embarcacao_id: str) -> dict:
-    """O que TERRA quer (com a versao maxima) + o que o BORDO ja' contou que aplicou."""
+    """O que TERRA quer (com a versao maxima) + o que o BORDO ja' contou que aplicou.
+
+    Leva junto a **versao do app do bordo** e a **deste lado**: e' o que deixa a tela dizer "publicada
+    LIGADA, mas o PC de captura esta' na v0.25.0 (a publicada e' a v0.27.0)" em vez de mostrar um
+    "o bordo: nada sera' gravado" que parece defeito do produto.
+    """
     with conexao() as c:
         chaves = [dict(x) for x in c.execute(
             """SELECT camera_id,chave,valor,versao,origem,atualizado_em FROM config_bordo
@@ -1004,8 +1077,15 @@ def config_publicada(embarcacao_id: str) -> dict:
         aplicadas = [dict(x) for x in c.execute(
             """SELECT camera_id,chave,valor,versao,motivo,atualizado_em FROM config_aplicada_bordo
                WHERE embarcacao_id=? ORDER BY camera_id,chave""", (embarcacao_id,)).fetchall()]
+    local = (os.environ.get("LECSOR_EMBARCACAO_BORDO") or "").strip() == (embarcacao_id or "").strip()
+    do_bordo = _versao_do_bordo(embarcacao_id)
+    publicada = versao_do_app() if not local else ""
+    comp = comparar_versao(do_bordo, publicada)
     return {"embarcacao_id": embarcacao_id, "versao": max([int(x["versao"]) for x in chaves], default=0),
-            "chaves": chaves, "aplicadas": aplicadas}
+            "chaves": chaves, "aplicadas": aplicadas,
+            "lado": "bordo" if local else "terra",
+            "versao_do_bordo": do_bordo, "versao_publicada": publicada,
+            "bordo_desatualizado": comp["desatualizado"], "motivo_da_versao": comp["motivo"]}
 
 
 def publicar_config(embarcacao_id: str, camera_id: str, chave: str, valor: str, origem: str = "") -> dict:

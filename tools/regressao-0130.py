@@ -20,6 +20,18 @@ RAIZ = pathlib.Path(__file__).resolve().parent.parent
 # `ambiente.json` que esta' no repositorio, e passaria a falar com a producao em vez de responder em casa.
 os.environ["LECSOR_SEM_AMBIENTE"] = "1"
 PROVAS = (
+    # RODADA 0.27.0 — O APP DO PC DE CAPTURA ANTIGO E O PSUTIL DENTRO DO PACOTE (dono, 26/11/2026:
+    # "gravação contínua: publicada LIGADA — o bordo: ligada (ligada, mas esta maquina nao tem dispositivo
+    # de video configurado (LECSOR_HD_DISPOSITIVO): nada sera' gravado) ... precisamos resolver isso" e
+    # "para termos as informações de cpu, memória e rede, precisamos instalar o psutil"). Medido: o PC de
+    # captura (DESKTOP-78DSH57) reporta `versao_app: 0.25.0` e `nao_medido` = "sem psutil neste Windows".
+    # O produto passou a DENUNCIAR o app antigo (nomeando as duas versoes) e o psutil viaja DENTRO do
+    # pacote — o python que o cliente recebe mede CPU, memoria e rede.
+    "tests/test-psutil-no-portatil.py",
+    "tests/test-versao-do-bordo-e-publicada.py",
+    # RODADA 0.26.0 — o HD full-time do radar acha o dispositivo pelo TIPO/NOME do admin e diz o motivo
+    # nas duas telas. (A prova existia desde a 0.26.0 mas nao estava na lista — entrou aqui.)
+    "tests/test-o-hd-acha-o-dispositivo-do-radar.py",
     # RODADA 0.23.0 — O AO VIVO DO ADMIN LIGA E PARA, E O MONITORAMENTO DIZ SE ESTA' GRAVANDO A BORDO
     # (dono, 26/11/2026: "eu devo poder ligar e parar a camera tambem, 'imagens gravadas a bordo' nao faz
     # sentido, so' preciso no monitoramento saber se esta' sendo gravado a bordo, nao preciso ver as

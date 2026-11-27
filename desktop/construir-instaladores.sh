@@ -18,6 +18,15 @@ for b in ../tools/ffmpeg/ffmpeg.exe ../tools/ffmpeg/ffprobe.exe ../tools/python/
   [ -s "$b" ] || { echo "ERRO: $b ausente — o instalador precisa dele dentro do pacote"; exit 1; }
 done
 
+# O PSUTIL DENTRO DO PACOTE (dono, 26/11/2026): sem ele o retrato de saude sobe CPU/memoria/rede como
+# "nao medido" (o embeddable nao leva site-packages sozinho). Aqui a checagem e' a de verdade: o PYTHON DO
+# PACOTE tem de importar. Falha o build — barato — em vez de descobrir no campo que o painel nao mede.
+[ -s ../tools/python/Lib/site-packages/psutil/__init__.py ] || {
+  echo "ERRO: psutil ausente em tools/python/Lib/site-packages — rode: python tools/psutil_no_portatil.py"; exit 1; }
+../tools/python/python.exe -c "import psutil" || {
+  echo "ERRO: o Python do pacote nao importa psutil (o painel de saude sairia sem CPU/memoria/rede)"; exit 1; }
+echo "psutil no pacote: $(../tools/python/python.exe -c 'import psutil; print(psutil.__version__)')"
+
 construir() {
   nome="$1"; superficie="$2"; papel="$3"; id="$4"; leva_ambiente="$5"
   echo "== instalador: $nome (superficie $superficie, papel $papel)"

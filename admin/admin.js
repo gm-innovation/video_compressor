@@ -3009,7 +3009,7 @@ async function areaDaEmpresa(t, empresa) {
    conseguiu medir, nunca "ok" por omissao. */
 function tomDaSaude(estado) { return ({ ok: 'ok', atencao: 'alerta', problema: 'ruim' })[estado] || 'neutro'; }
 
-function painelDeSaude(emb) {
+function painelDeSaude(emb, cfg) {
   const s = emb.saude || {};
   const cx = document.createElement('div'); cx.className = 'saude-emb';
   if (!s.estado) {
@@ -3033,7 +3033,8 @@ function painelDeSaude(emb) {
   cx.appendChild(notaDe('PC ' + (s.maquina || '?') + ' · app ' + (s.versao_app || 'versão não informada')
     + (s.so ? ' · ' + s.so : '') + ' · ' + horas
     + ' · último retrato ' + (s.em || '—')
-    + (emb.maquinas && emb.maquinas.length ? ' · PC(s) com esta licença: ' + emb.maquinas.map((m) => m.maquina).join(', ') : '')));
+    + (emb.maquinas && emb.maquinas.length ? ' · PC(s) com esta licença: ' + emb.maquinas.map((m) => m.maquina).join(', ') : '')
+    + avisoDeVersao(cfg)));
   const fora = (s.sinais || []).filter((x) => x.estado && x.estado !== 'ok');
   if (fora.length) {
     const ul = document.createElement('ul'); ul.className = 'sinais';
@@ -3051,6 +3052,24 @@ function painelDeSaude(emb) {
   if (nm.length) cx.appendChild(notaDe('o bordo não conseguiu medir: ' + nm.join(', ')
     + ' — sem essa medida não dá para afirmar que está tudo bem.'));
   return cx;
+}
+
+/* A VERSAO DO APP DO PC DE CAPTURA (dono, 26/11/2026). Sem isto o admin ve "publicada LIGADA" e, no
+   bordo, um "nada sera' gravado" que PARECE defeito do produto — quando o caso e' o app de captura
+   estar velho. `bordo_desatualizado === null` e' "nao se sabe" (o bordo nao informou a versao, ou nao
+   deu para comparar): isso NUNCA vira "esta tudo certo". */
+function avisoDeVersao(cfg) {
+  const c = cfg || {};
+  if (c.bordo_desatualizado === true) {
+    return ' — ⚠ ' + (c.motivo_da_versao || 'o app do PC de captura está desatualizado');
+  }
+  if (c.bordo_desatualizado === false) {
+    return ' · app do PC de captura v' + (c.versao_do_bordo || '?') + ' (em dia)';
+  }
+  if (c.lado === 'terra' && c.versao_do_bordo) {
+    return ' · ' + (c.motivo_da_versao || 'não deu para comparar as versões');
+  }
+  return '';
 }
 
 function cartaoDaEmbarcacao(emb) {
@@ -3155,7 +3174,8 @@ function cartaoDaEmbarcacao(emb) {
         + (aplicGrav && aplicGrav.versao >= desejaGrav.versao
             ? 'o bordo: ' + (String(aplicGrav.valor) === '1' ? 'ligada' : 'desligada')
               + (aplicGrav.motivo ? ' (' + aplicGrav.motivo + ')' : '')
-            : 'aguardando o bordo'))
+            : 'aguardando o bordo')
+        + avisoDeVersao(cfgGrav))
       : 'gravação contínua do radar: nada publicado (nasce DESLIGADA)';
     cg.appendChild(notaGrav);
     caixa.appendChild(cg);
@@ -3163,7 +3183,10 @@ function cartaoDaEmbarcacao(emb) {
   caixa.appendChild(notaDe('Câmeras: ' + emb.resumo.cameras + ' · no ar: ' + emb.resumo.no_ar
     + ' · ativas: ' + emb.resumo.ativas
     + (emb.resumo.achadas_pela_varredura ? ' · achadas pela varredura: ' + emb.resumo.achadas_pela_varredura : '')));
-  caixa.appendChild(painelDeSaude(emb));
+  /* A config publicada desta embarcação (a MESMA que o bloco da gravação contínua leu lá dentro): o painel
+     de saúde usa ela para ACUSAR o app de captura velho (o dono, 26/11/2026). `cfgGrav` nasce dentro do
+     bloco do admin, então aqui se lê de novo de A.teto — a fonte é a mesma. */
+  caixa.appendChild(painelDeSaude(emb, (A.teto || {})[emb.id] || { chaves: [], aplicadas: [] }));
   caixa.appendChild(fichaLicenca(emb));
   const cams = document.createElement('div'); cams.className = 'cartes-cameras';
   for (const c of emb.cameras) cams.appendChild(cartaoDaCamera(c, emb));

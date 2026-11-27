@@ -519,6 +519,11 @@ async function carregar() {
                                   : grav.dispositivo_origem === 'cadastro' ? 'cadastro do HD'
                                   : 'tipo que o admin escolheu'))
         : (grav.erro ? 'não consegui ler' : (grav.motivo || 'não achei o dispositivo do radar — marque a câmera como radar de óleo no admin'))],
+    /* A VERSAO DESTE PC (dono, 26/11/2026): a tela do admin compara a versao daqui com a publicada e
+       acusa "bordo desatualizado" — o numero daqui e' a prova. Sem versao informada, a tela NAO diz
+       "em dia": a versao velha e' justamente a que nao se anuncia. */
+    ['App deste PC', (d.app && d.app.versao_app ? ('v' + d.app.versao_app) : 'versão não informada — se a tela do admin acusar app antigo, é este o caso')
+        + ((d.app && d.app.texto) ? '  ·  ' + d.app.texto : '')],
     ['HD da gravação', grav.diretorio
         ? (grav.diretorio + '  ·  ' + (mb(grav.bytes) || '0 KB') + ' gravados  ·  ' +
            (mb(grav.livre_bytes) || '?') + ' livre(s) de ' + (mb(grav.total_bytes) || '?')) : '—'],

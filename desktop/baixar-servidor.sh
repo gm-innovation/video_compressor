@@ -63,6 +63,15 @@ else
   echo "python portatil ja existe: $("$RAIZ/tools/python/python.exe" --version)"
 fi
 
+# ---- psutil (CPU, memoria e rede do retrato de saude) --------------------------------------
+# Dono (26/11/2026): "para termos as informações de cpu, memória e rede, precisamos instalar o psutil".
+# O retrato de saude (ground/saude_do_bordo.py) mede CPU/memoria/rede por psutil e, sem ele, sobe
+# `nao_medido` com o motivo — honesto, porem mudo. O Python embeddable NAO tem `Lib/site-packages` (nem
+# `import site` no `python312._pth`), entao o pacote saia sem medir. O script abaixo poe a wheel fixada
+# (sha256) e ABORTA se o python do pacote nao medir — instalador que sai sem medir e' instalador quebrado.
+echo "psutil no Python portatil (CPU, memoria e rede do retrato de saude)"
+"$PY" "$(nativo "$RAIZ/tools/psutil_no_portatil.py")" || { echo "ERRO: psutil nao entrou/nao mediu no Python portatil"; exit 1; }
+
 # ---- mediamtx ------------------------------------------------------------------------------
 if [ ! -f "$RAIZ/tools/mediamtx/mediamtx.exe" ]; then
   echo "baixando o mediamtx (v1.21.3)"

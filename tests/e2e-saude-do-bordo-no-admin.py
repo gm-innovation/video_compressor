@@ -270,6 +270,52 @@ def main() -> int:
                    "a tela mostra o semáforo")
             exigir("O que fazer" in texto, "e a coluna 'O que fazer' (o admin nao fica sem próximo passo)")
             exigir(not erros, "sem erro de javascript na tela de saude do bordo: " + "; ".join(erros[:2]))
+
+            # ---- 8. o admin DENUNCIA o app de captura ANTIGO (dono, 26/11/2026) -------------------
+            # O dono viu "gravação contínua: publicada LIGADA — o bordo: ligada (ligada, mas esta maquina
+            # nao tem dispositivo de video configurado (LECSOR_HD_DISPOSITIVO): nada sera' gravado)" e
+            # concluiu, com razao, que as imagens do radar nao estavam sendo gravadas. O texto era da
+            # versao ANTIGA (0.25.0) e NADA na tela dizia isso. Aqui: um bordo velho (v0.0.9) e' acusado
+            # na tela do admin, com as duas versoes.
+            versao_daqui = (RAIZ / "VERSION").read_text(encoding="utf-8").strip()
+            executa(terra_db, """INSERT INTO saude_bordo (embarcacao_id,recebido_em,maquina,versao_app,estado,retrato)
+                                 VALUES (?,?,?,?,?,?)""",
+                    (EMB, dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), "PC-ANTIGO", "0.0.9",
+                     "ok", json.dumps({"versao_app": "0.0.9", "maquina": "PC-ANTIGO"})))
+            st, _ = pedir("POST", base_terra + "/api/config",
+                          {"embarcacao_id": EMB, "camera_id": "", "chave": "gravacao_continua", "valor": "1"},
+                          cookie=admin)
+            exigir(st == 201, f"o admin publica a gravacao continua (HTTP {st}) — a tela do dono")
+            # A tela lista EMPRESAS; o cartao da embarcacao aparece depois de ABRIR a empresa dela
+            # (pode haver mais de uma empresa — abre-se a que tem a nossa).
+            cartao = f'.cartao-embarcacao[data-emb="{EMB}"]'
+            pag.click('button.item[data-tela="empresas"]')
+            pag.wait_for_selector(".cartao-empresa", timeout=20000)
+            achou = False
+            for i in range(pag.locator(".cartao-empresa").count()):
+                pag.locator(".cartao-empresa").nth(i).locator("text=Abrir").first.click()
+                try:
+                    pag.wait_for_selector(cartao, timeout=8000)
+                    achou = True
+                    break
+                except Exception:  # noqa: BLE001
+                    pag.click('button.item[data-tela="empresas"]')
+                    pag.wait_for_selector(".cartao-empresa", timeout=10000)
+            exigir(achou, f"aberta a empresa da embarcacao {EMB} (o cartao aparece na tela do admin)")
+            if not achou:
+                nota("empresas na tela: " + " | ".join(pag.locator(".cartao-empresa").all_inner_texts())[:300])
+                return 1
+            pag.wait_for_function(
+                "s => /publicada LIGADA/.test((document.querySelector(s) || {}).textContent || '')",
+                arg=cartao, timeout=20000)
+            texto2 = pag.inner_text(cartao)
+            exigir("atualizar o app de captura" in texto2,
+                   "a tela do admin ACUSA o PC de captura antigo (com o que fazer: atualizar)")
+            exigir("0.0.9" in texto2 and versao_daqui in texto2,
+                   f"e mostra as DUAS versoes (bordo v0.0.9 < publicada v{versao_daqui})")
+            exigir("publicada LIGADA" in texto2,
+                   "junto da linha da gravacao continua (o texto exato que o dono viu)")
+            exigir(not erros, "sem erro de javascript na tela de empresas: " + "; ".join(erros[:2]))
             # 7) FONTE UNICA do caminho do estado do agente: a saude TEM de ler onde o agente escreve.
             #    Havia dois padroes (saude: ground/agente-vivo.json; agente: ordens/agente-vivo.json) e a
             #    saude dizia "o agente nunca escreveu o estado" numa maquina que estava trabalhando.

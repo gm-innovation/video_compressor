@@ -238,3 +238,58 @@ saindo (não o `nao_medido`).
 
 **Ordem sugerida:** Fase A/B do psutil (destrava o número que o dono pediu) → Fase B do item 1 (denúncia da
 versão velha) → as demais P1.
+
+---
+
+## Executado em 27/11/2026 — rodada 0.27.0 (a denúncia + o psutil), provado
+
+### (a) O produto DENUNCIA o app de captura antigo — o que fez o dono ver "nada sera' gravado"
+
+O texto que o dono viu (`...nada sera' gravado`, citando `LECSOR_HD_DISPOSITIVO`) é da **versão antiga**:
+o PC de captura (DESKTOP-78DSH57, `C:\Users\HAVOX\...\Programs\LECSOR`) roda **0.25.0** e o app **não se
+auto-atualiza**. O produto tinha de **dizer isso**, em vez de parecer defeito.
+
+- `ground/api.py`: `versao_do_app()` (`LECSOR_VERSAO_APP` → `VERSION` da raiz → `desktop/package.json`),
+  `versao_em_trio()`, `comparar_versao()` e `_versao_do_bordo()`; `/api/config` devolve `lado`,
+  `versao_do_bordo`, `versao_publicada`, `bordo_desatualizado` (True/False/None) e `motivo_da_versao`.
+  **`None` (não se sabe) NUNCA vira "está tudo certo"** — o silêncio de um app velho é o caso a denunciar.
+- `admin/admin.js`: `avisoDeVersao(cfg)` na linha da gravação contínua **e** no painel de saúde do cartão
+  da embarcação ("Empresas e configuração"); `painelDeSaude(emb, cfg)` passou a receber a config.
+- `bordo/index.html`: linha "App deste PC" na ficha (sem versão informada, não diz "em dia").
+- `VERSION` (novo, `0.27.0`) viaja dentro do pacote como `servidor/VERSION` (`desktop/package.json`).
+
+### (b) psutil dentro do pacote — CPU, memória e rede deixam de sair "nao medido"
+
+- `tools/psutil_no_portatil.py` (novo): baixa a wheel **psutil 7.2.2** fixada
+  (`sha256 eb7e81434c8d223ec4a219b5fc1c47d0417b12be7ea866e24fb5ad6e84b3d988`), extrai em
+  `tools/python/Lib/site-packages/` e conserta o `python312._pth` (`python312.zip`, `.`,
+  `Lib\site-packages`, `import site`); `--somente-conferir` mede com o **próprio python do pacote**.
+- `desktop/baixar-servidor.sh` e `desktop/construir-instaladores.sh`: **o build FALHA** se o python do
+  pacote não importar o psutil — build que não mede é build quebrado.
+- Medido com o python do pacote (`tools/python/python.exe`):
+  `{"psutil": "7.2.2", "cpu_pct": 31.4, "mem_mb": 32061, "rede": ["bytes_sent", "bytes_recv"]}`.
+
+### Provas (medidas nesta máquina)
+
+- `python -m unittest discover -s tests -p "test_*.py"` → **22 testes, OK**.
+- `tools/regressao-0130.py` → **50/50 provas verdes** (`%LOCALAPPDATA%\Temp\reg-0270-final.log`), já com
+  as duas provas novas na lista (`tests/test-versao-do-bordo-e-publicada.py`, 5 provas;
+  `tests/test-psutil-no-portatil.py`, 4 provas) e com a prova da 0.26.0 que **não estava** na lista
+  (`tests/test-o-hd-acha-o-dispositivo-do-radar.py`).
+- `tests/e2e-saude-do-bordo-no-admin.py`, seção 8 (nova): com um bordo **v0.0.9** no banco e a publicada
+  **v0.27.0**, o cartão do admin mostra `atualizar o app de captura` **e as duas versões**, junto da linha
+  "gravação contínua: publicada LIGADA" — e sem erro de JavaScript na tela.
+
+### Defeito que a prova pegou (corrigido)
+
+`cfgGrav` nascia **dentro** do bloco `if (papel === 'admin')` do `admin.js` e a linha do painel de saúde
+(que ficou **fora** do bloco) usava a variável → `cfgGrav is not defined` **abortava a renderização do
+cartão da embarcação**. Três provas e2e caíram de uma vez (`test-tela-sem-piscar-e-varredura`,
+`e2e-qualidade-e-teto-em-empresas`, `e2e-saude-e-desempenho-na-area`). Corrigido lendo `A.teto` de novo na
+linha do painel (`admin.js`); as três voltaram verdes. **A prova unitária não pegaria: foi o e2e de tela.**
+
+### Continua pendente (depende do hardware, não do código)
+
+O PC de captura real roda **0.25.0** e o app **não se auto-atualiza**: só instalar o instalador
+`LECSOR-0.27.0-x64.exe` naquele computador (usuário HAVOX) faz o radar gravar **de verdade** e as imagens
+aparecerem no HD do bordo. O produto agora **denuncia** a versão velha nas duas telas.
