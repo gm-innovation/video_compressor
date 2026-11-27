@@ -231,3 +231,33 @@ VPS e nota do vault.
 **Aberto (não é desta rodada):** instalar a 0.28.0 no PC de captura real (HAVOX, hoje 0.25.0) — só então
 aparecem o disco e a rede daquele PC, e o HD do radar grava no disco escolhido. O app **não se
 auto-atualiza**.
+
+---
+
+## 0.28.1 — a correção do achado na prova do deploy (27/11/2026)
+
+**Achado (medido, não suposto).** A prova do deploy da 0.28.0 na VPS imprimiu o retrato que o bordo publica,
+e ele trazia **DUAS linhas apontando para o MESMO volume**:
+
+```
+[{'nome': 'hd do radar', 'caminho': '/', 'livre_gb': 49.8, 'total_gb': 102.9, 'usado_pct': 51.6, 'cota_gb': None},
+ {'nome': 'aplicativo',  'caminho': '/', 'livre_gb': 49.8, 'total_gb': 102.9, 'usado_pct': 51.6, 'cota_gb': None}]
+```
+
+**Causa:** a pasta de gravação (`ground/hd`) nasce quando o produto grava o primeiro bloco; **no Linux o
+`os.stat` de um caminho que ainda não existe estoura** e `_mesmo_volume` respondia "volumes diferentes" — o
+disco do aplicativo entrava como um segundo disco. No Windows o defeito não aparecia (a régua lá é a letra
+da unidade), e por isso a bancada ficou verde. Consequência real: o admin via **dois discos iguais** na
+lista de escolha.
+
+**Correção:** a comparação passou a ser entre **volumes que existem** (`_caminho_para_medir` — o mesmo
+caminho que já mede o disco), mantendo o comportamento do Windows.
+
+**Prova:** `_discos()` na VPS antes (2 linhas) / depois (1 linha); seção 11 nova em
+`tests/test-escolha-do-disco-e-cota-do-hd.py`; regressão curada **55/55**; `unittest` **22/22**.
+
+**Fora do plano, mas dentro do pedido:** a VPS não tinha `psutil` no `python3` — o retrato do lado terra
+dizia "sem psutil: rede não medida" (era o "nem rede" do dono, do lado de terra). Instalado
+(`python3-psutil` 5.9.8, medido: `nao_medido = {}` e as interfaces com enviado/recebido). **No PC de
+captura o psutil já viaja dentro do pacote**, desde a 0.27.0 — é ele que faz o disco e a rede aparecerem no
+cartão do admin.
